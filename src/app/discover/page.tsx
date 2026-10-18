@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Title, keyOf, MediaType } from "@/types/title";
 import { load, reset, save, State } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
@@ -15,12 +15,16 @@ export default function Discover() {
     displayed: [],
     shown: [],
     watchlist: [],
+    dismissed: [],
   });
   const [titles, setTitles] = useState<Title[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
   const [region, setRegion] = useState<RegionFilter>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const isInitialMount = useRef(true);
+  const pageMapRef = useRef<Record<string, number>>({});
 
   const count = state.watched.length;
 
@@ -31,22 +35,63 @@ export default function Discover() {
       return n;
     });
 
-  const fetchBatch = async (resetPage = false) => {
+  // Collect all media keys that should never appear on the Discover page
+  const getExcludeKeys = (s: State) => {
+    return new Set([
+      ...s.watched.map(keyOf),
+      ...s.displayed,
+      ...(s.dismissed || []),
+    ]);
+  };
+
+  const fetchBatch = async (
+    currentState: State,
+    currentFilter = filter,
+    currentRegion = region,
+    resetPage = false
+  ) => {
     setLoading(true);
     setError("");
+
     try {
-      const pageIndex = resetPage ? 1 : Math.floor(state.displayed.length / 20) + 1;
-      const r = await fetch(
-        `/api/discover?type=${filter}&region=${region}&page=${pageIndex}`
-      );
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error);
+      const filterKey = `${currentFilter}:${currentRegion}`;
+      let page = resetPage ? 1 : pageMapRef.current[filterKey] || 1;
 
-      const fresh = d.results
-        .filter((x: Title) => !state.displayed.includes(keyOf(x)))
-        .slice(0, 20);
+      const excludeKeys = getExcludeKeys(currentState);
+      const fresh: Title[] = [];
+      const freshKeys = new Set<string>();
 
+      let pagesScanned = 0;
+      const maxPagesToScan = 6;
+
+      // Keep querying TMDB pages until 20 fresh, unseen titles are collected
+      while (fresh.length < 20 && pagesScanned < maxPagesToScan) {
+        const r = await fetch(
+          `/api/discover?type=${currentFilter}&region=${currentRegion}&page=${page}`
+        );
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || "Couldn't load titles");
+
+        const results: Title[] = d.results || [];
+        if (!results.length) break;
+
+        for (const item of results) {
+          const k = keyOf(item);
+          if (!excludeKeys.has(k) && !freshKeys.has(k)) {
+            freshKeys.add(k);
+            fresh.push(item);
+            if (fresh.length >= 20) break;
+          }
+        }
+
+        page++;
+        pagesScanned++;
+      }
+
+      pageMapRef.current[filterKey] = page;
       setTitles(fresh);
+
+      // Persist newly displayed titles so they are never served again
       update((s) => ({
         ...s,
         displayed: [...new Set([...s.displayed, ...fresh.map(keyOf)])],
@@ -58,9 +103,22 @@ export default function Discover() {
     }
   };
 
-  useEffect(() => setState(load()), []);
+  // 1. Initial mount: load persisted state first, then fetch batch
   useEffect(() => {
-    fetchBatch();
+    const s = load();
+    setState(s);
+    fetchBatch(s, filter, region, false);
+  }, []);
+
+  // 2. Filter/Region changes: reset page and fetch with latest storage state
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    const s = load();
+    setState(s);
+    fetchBatch(s, filter, region, true);
   }, [filter, region]);
 
   const toggle = (t: Title) =>
@@ -156,7 +214,7 @@ export default function Discover() {
                 region === "in" ? "bg-gold text-black font-semibold" : "text-white/70"
               }`}
             >
-              🇮🇳 Indian Cinema & Series
+              Indian Cinema & Series
             </button>
             <button
               onClick={() => setRegion("global")}
@@ -164,20 +222,30 @@ export default function Discover() {
                 region === "global" ? "bg-gold text-black font-semibold" : "text-white/70"
               }`}
             >
-              🌐 Hollywood & Global
+              Hollywood & Global
             </button>
           </div>
         </div>
 
         {error ? (
           <div className="mt-8 rounded-xl border border-red-400/40 p-5">
-            {error} <button onClick={() => fetchBatch()} className="underline">Retry</button>
+            {error}{" "}
+            <button
+              onClick={() => fetchBatch(load(), filter, region)}
+              className="underline"
+            >
+              Retry
+            </button>
           </div>
         ) : loading ? (
           <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">
             {Array.from({ length: 10 }, (_, i) => (
               <div className="poster aspect-[2/3] animate-pulse rounded-xl" key={i} />
             ))}
+          </div>
+        ) : titles.length === 0 ? (
+          <div className="mt-12 rounded-xl border border-white/10 p-8 text-center text-white/60">
+            No more unseen titles found for this filter. Try selecting another type or region!
           </div>
         ) : (
           <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">
@@ -200,7 +268,11 @@ export default function Discover() {
             </p>
             <div className="mt-4 grid gap-3 md:grid-cols-2">
               {series.map((t) => (
-                <SeasonControl key={keyOf(t)} title={t} onChange={(x) => changeSeasons(t, x)} />
+                <SeasonControl
+                  key={keyOf(t)}
+                  title={t}
+                  onChange={(x) => changeSeasons(t, x)}
+                />
               ))}
             </div>
           </section>
@@ -208,11 +280,11 @@ export default function Discover() {
 
         <div className="mt-10 flex flex-wrap gap-3">
           <button
-            onClick={() => fetchBatch()}
+            onClick={() => fetchBatch(load(), filter, region)}
             disabled={loading}
-            className="rounded-full border border-white/20 px-6 py-3"
+            className="rounded-full border border-white/20 px-6 py-3 disabled:opacity-50"
           >
-            Discover next batch
+            {loading ? "Loading..." : "Discover next batch"}
           </button>
           {count >= 10 ? (
             <Link

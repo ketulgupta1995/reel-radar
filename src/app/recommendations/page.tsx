@@ -15,6 +15,7 @@ export default function Recommendations() {
     displayed: [],
     shown: [],
     watchlist: [],
+    dismissed: [],
   });
   const [recs, setRecs] = useState<Rec[]>([]);
   const [summary, setSummary] = useState<string[]>([]);
@@ -41,7 +42,11 @@ export default function Recommendations() {
       const r = await fetch("/api/recommendations", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ watched: s.watched, seen: s.shown }),
+        body: JSON.stringify({
+          watched: s.watched,
+          seen: s.shown,
+          dismissed: s.dismissed || [],
+        }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error);
@@ -84,6 +89,17 @@ export default function Recommendations() {
           : [...s.watchlist, title],
       };
     });
+
+  // Permanently dismiss title and never recommend again
+  const dismiss = (title: Title) => {
+    const k = keyOf(title);
+    persist((s) => ({
+      ...s,
+      dismissed: s.dismissed ? [...new Set([...s.dismissed, k])] : [k],
+      watchlist: s.watchlist.filter((x) => keyOf(x) !== k),
+    }));
+    setRecs((r) => r.filter((x) => keyOf(x) !== k));
+  };
 
   if (!loading && state.watched.length < 10) {
     return (
@@ -203,20 +219,33 @@ export default function Recommendations() {
               return (
                 <div key={keyOf(r)} className="flex flex-col">
                   <TitleCard title={r} why={r.why} />
-                  <div className="mt-2 flex gap-2">
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => seen(r)}
+                        className="flex-1 rounded-lg bg-white/10 px-2 py-2 text-xs hover:bg-white/20"
+                      >
+                        ✓ Mark seen
+                      </button>
+                      <button
+                        onClick={() => toggleWatchlist(r)}
+                        className={`flex-1 rounded-lg px-2 py-2 text-xs ${
+                          saved
+                            ? "bg-gold text-black font-semibold"
+                            : "bg-white/10 hover:bg-white/20"
+                        }`}
+                      >
+                        {saved ? "Saved" : "+ Watchlist"}
+                      </button>
+                    </div>
+
+                    {/* Don't recommend again button */}
                     <button
-                      onClick={() => seen(r)}
-                      className="flex-1 rounded-lg bg-white/10 px-2 py-2 text-xs hover:bg-white/20"
+                      onClick={() => dismiss(r)}
+                      title="Remove and don't recommend again"
+                      className="w-full rounded-lg border border-white/10 py-1.5 text-[11px] text-white/45 transition hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-300"
                     >
-                      ✓ Mark seen
-                    </button>
-                    <button
-                      onClick={() => toggleWatchlist(r)}
-                      className={`flex-1 rounded-lg px-2 py-2 text-xs ${
-                        saved ? "bg-gold text-black font-semibold" : "bg-white/10 hover:bg-white/20"
-                      }`}
-                    >
-                      {saved ? "Saved" : "+ Watchlist"}
+                      ✕ Not interested
                     </button>
                   </div>
                 </div>

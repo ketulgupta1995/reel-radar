@@ -4,7 +4,16 @@ import { Title, keyOf } from "@/types/title";
 
 export async function POST(r: Request) {
   try {
-    const { watched, seen = [] } = (await r.json()) as { watched: Title[]; seen?: string[] };
+    const {
+      watched,
+      seen = [],
+      dismissed = [],
+    } = (await r.json()) as {
+      watched: Title[];
+      seen?: string[];
+      dismissed?: string[];
+    };
+
     if (!watched || watched.length < 10) {
       return Response.json({ error: "Select at least 10 titles." }, { status: 400 });
     }
@@ -64,7 +73,7 @@ export async function POST(r: Request) {
     });
 
     const candidates = Array.from(candidateMap.values());
-    const ranked = rank(rich, candidates, seen);
+    const ranked = rank(rich, candidates, seen, dismissed);
     const recs = ranked.map((x) => ({
       ...x,
       why: explanation(x, rich),

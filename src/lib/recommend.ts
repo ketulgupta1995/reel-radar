@@ -24,7 +24,12 @@ const frequencies = (
   return m;
 };
 
-export function rank(watched: Title[], candidates: Title[], seen: string[] = []): Title[] {
+export function rank(
+  watched: Title[],
+  candidates: Title[],
+  seen: string[] = [],
+  dismissed: string[] = []
+): Title[] {
   if (!candidates.length) return [];
 
   // Weight series progress (higher commitment = higher weight)
@@ -50,18 +55,14 @@ export function rank(watched: Title[], candidates: Title[], seen: string[] = [])
     watched.filter((x) => x.mediaType === "tv").length / Math.max(watched.length, 1);
 
   const watchedKeys = new Set(watched.map(keyOf));
+  const dismissedKeys = new Set(dismissed);
   const seenKeys = new Set(seen);
 
-  const overlap = (vs: (string | number)[], m: Map<string | number, number>) => {
-    if (!vs.length || !m.size) return 0;
-    return vs.reduce((s: number, v) => s + (m.get(v) || 0), 0) / Math.max(vs.length, 1);
-  };
-
-  // Deduplicate candidates
+  // Exclude watched AND dismissed titles
   const uniqueCandidates = new Map<string, Title>();
   candidates.forEach((c) => {
     const k = keyOf(c);
-    if (!watchedKeys.has(k) && !uniqueCandidates.has(k)) {
+    if (!watchedKeys.has(k) && !dismissedKeys.has(k) && !uniqueCandidates.has(k)) {
       uniqueCandidates.set(k, c);
     }
   });
@@ -102,6 +103,11 @@ export function rank(watched: Title[], candidates: Title[], seen: string[] = [])
 
     return { ...c, _score: rawScore };
   });
+
+  function overlap(vs: (string | number)[], m: Map<string | number, number>) {
+    if (!vs.length || !m.size) return 0;
+    return vs.reduce((s: number, v) => s + (m.get(v) || 0), 0) / Math.max(vs.length, 1);
+  }
 
   scored.sort((a, b) => b._score - a._score);
 
