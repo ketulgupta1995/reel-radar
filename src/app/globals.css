@@ -1,0 +1,4 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+*{box-sizing:border-box} body{margin:0;background:#07070c;color:#f5f3ef;font-family:Arial,sans-serif} button{font:inherit} .poster{background:linear-gradient(145deg,#24243a,#101019)}

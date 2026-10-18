@@ -1,0 +1,4 @@
+import { detail, discover } from "@/lib/tmdb";
+import { explanation, rank } from "@/lib/recommend";
+import { Title } from "@/types/title";
+export async function POST(r:Request){try{const {watched}=await r.json() as {watched:Title[]};if(watched.length<10)return Response.json({error:"Select at least 10 titles."},{status:400});const rich=await Promise.all(watched.map(w=>detail(w.mediaType,w.id).catch(()=>w)));const pools=await Promise.all([1,2,3].flatMap(p=>[discover("movie",p),discover("tv",p)]));const candidates=pools.flat();const recs=rank(rich,candidates).map(x=>({...x,why:explanation(x,rich)}));return Response.json({recommendations:recs,summary:[...new Set(rich.flatMap(x=>x.genreNames||[]))].slice(0,4)})}catch(e){return Response.json({error:e instanceof Error?e.message:"Unable to generate recommendations"},{status:500})}}

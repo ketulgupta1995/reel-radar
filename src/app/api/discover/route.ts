@@ -1,0 +1,3 @@
+import { discover, genreList } from "@/lib/tmdb";
+import { MediaType } from "@/types/title";
+export async function GET(request:Request){try{const p=new URL(request.url).searchParams;const type=p.get("type") as MediaType|"all"||"all", page=Number(p.get("page")||1),genre=Number(p.get("genre"))||undefined;const types:MediaType[]=type==="all"?["movie","tv"]:[type];const results=(await Promise.all(types.map((t,i)=>discover(t,page+i,genre)))).flat();return Response.json({results:results.sort(()=>.5-Math.random()),genres:{movie:genreList("movie"),tv:genreList("tv")}})}catch(e){return Response.json({error:e instanceof Error?e.message:"Unable to load titles"},{status:500})}}
