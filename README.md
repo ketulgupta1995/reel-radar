@@ -23,3 +23,28 @@ At 10 watched titles, the server enriches selections with TMDB credits and keywo
 - Metadata can be incomplete; the app degrades to available genre/rating/overview data.
 - This prototype uses localStorage, so progress is browser/device-specific and can be cleared by the user.
 - TMDB results, images, and data are supplied by TMDB; this product uses the required notice: **This product uses the TMDB API but is not endorsed or certified by TMDB.** Review TMDB’s terms before public deployment.
+
+
+# code to reset the shown and displayed
+
+```
+(() => {
+  const key = "reel-radar-v1";
+  const state = JSON.parse(localStorage.getItem(key) || "{}");
+  state.shown = [];
+  state.displayed = [];
+  localStorage.setItem(key, JSON.stringify(state));
+
+  fetch("/api/storage", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(state),
+  })
+    .then((res) => res.json())
+    .then(() => {
+      console.log("Shown and displayed lists cleared successfully.");
+      location.reload();
+    })
+    .catch((err) => console.error("Failed to sync reset to server:", err));
+})();
+```
