@@ -109,12 +109,22 @@ export default function Recommendations() {
           <p className="mt-3 text-white/60">
             Pick at least 10 watched titles to unlock recommendations.
           </p>
-          <Link
-            href="/discover"
-            className="mt-6 inline-block rounded-full bg-gold px-6 py-3 font-bold text-black"
-          >
-            Continue discovery
-          </Link>
+          <div className="mt-6 flex justify-center gap-3">
+            <Link
+              href="/discover"
+              className="inline-block rounded-full bg-gold px-6 py-3 font-bold text-black"
+            >
+              Continue discovery
+            </Link>
+            {state.watched.length > 0 && (
+              <Link
+                href="/watched"
+                className="inline-block rounded-full border border-white/20 px-6 py-3 font-bold text-white hover:border-white/40"
+              >
+                Viewed titles ({state.watched.length})
+              </Link>
+            )}
+          </div>
         </div>
       </main>
     );
@@ -128,13 +138,18 @@ export default function Recommendations() {
 
   return (
     <main className="min-h-screen px-4 py-8 md:px-10">
-      <header className="mx-auto flex max-w-7xl justify-between">
+      <header className="mx-auto flex max-w-7xl items-center justify-between">
         <Link href="/" className="font-bold tracking-[.2em] text-gold">
           REEL RADAR
         </Link>
-        <Link href="/discover" className="text-sm text-white/70">
-          Edit watched titles
-        </Link>
+        <div className="flex items-center gap-4 text-sm">
+          <Link href="/watched" className="text-white/70 hover:text-white">
+            Viewed titles ({state.watched.length})
+          </Link>
+          <Link href="/discover" className="text-white/70 hover:text-white">
+            Discover
+          </Link>
+        </div>
       </header>
 
       <section className="mx-auto max-w-7xl py-10">

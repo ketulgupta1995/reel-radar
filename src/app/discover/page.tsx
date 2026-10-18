@@ -147,21 +147,25 @@ export default function Discover() {
         <Link href="/" className="font-bold tracking-[.2em] text-gold">
           REEL RADAR
         </Link>
-        <div className="text-sm text-white/70">
-          You have identified <b className="text-white">{count}</b> title
-          {count === 1 ? "" : "s"} you have watched.
+        <div className="flex items-center gap-4">
+          <Link
+            href="/watched"
+            className="rounded-full bg-white/10 px-3.5 py-1.5 text-xs text-white/80 transition hover:bg-white/20 hover:text-white"
+          >
+            Viewed titles (<b className="text-gold">{count}</b>)
+          </Link>
+          <button
+            onClick={() => {
+              if (confirm("Reset all discovery history?")) {
+                reset();
+                location.reload();
+              }
+            }}
+            className="text-xs text-white/50 underline"
+          >
+            Reset history
+          </button>
         </div>
-        <button
-          onClick={() => {
-            if (confirm("Reset all discovery history?")) {
-              reset();
-              location.reload();
-            }
-          }}
-          className="text-xs text-white/50 underline"
-        >
-          Reset history
-        </button>
       </header>
 
       <section className="mx-auto max-w-7xl py-10">
@@ -176,13 +180,20 @@ export default function Discover() {
             style={{ width: `${Math.min(100, count * 10)}%` }}
           />
         </div>
-        <p className="mt-2 text-sm text-white/60">
-          {count >= 10
-            ? "Recommendations unlocked. Keep adding titles to refine."
-            : `Select ${10 - count} more to unlock recommendations.`}
-        </p>
 
-        {/* Filter Controls */}
+        <div className="mt-2 flex items-center justify-between">
+          <p className="text-sm text-white/60">
+            {count >= 10
+              ? "Recommendations unlocked. Keep adding titles to refine."
+              : `Select ${10 - count} more to unlock recommendations.`}
+          </p>
+          {count > 0 && (
+            <Link href="/watched" className="text-xs text-gold underline">
+              Manage viewed titles ({count}) →
+            </Link>
+          )}
+        </div>
+
         <div className="mt-7 flex flex-wrap items-center justify-between gap-4">
           <div className="flex gap-2">
             {(["all", "movie", "tv"] as Filter[]).map((x) => (
