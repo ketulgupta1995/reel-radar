@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Title, keyOf } from "@/types/title";
-import { load, save, State } from "@/lib/storage";
+import { load, save, syncWithServer, State } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
+import { StorageControls } from "@/components/StorageControls";
 import { isIndianTitle } from "@/lib/recommend";
 
 type Rec = Title & { why: string };
@@ -66,6 +67,9 @@ export default function Recommendations() {
 
   useEffect(() => {
     get();
+    syncWithServer().then((synced) => {
+      setState(synced);
+    });
   }, []);
 
   const seen = (title: Title) => {
@@ -86,7 +90,6 @@ export default function Recommendations() {
         ? s.watchlist
         : [...s.watchlist, title],
     }));
-    // Remove from active recommendations as it is now saved to watchlist
     setRecs((r) => r.filter((x) => keyOf(x) !== keyOf(title)));
   };
 
@@ -136,7 +139,6 @@ export default function Recommendations() {
     );
   }
 
-  // Filter out any titles that are currently in the watchlist
   const watchlistKeys = new Set(state.watchlist.map(keyOf));
   const filteredRecs = recs
     .filter((r) => !watchlistKeys.has(keyOf(r)))
@@ -148,11 +150,11 @@ export default function Recommendations() {
 
   return (
     <main className="min-h-screen px-4 py-8 md:px-10">
-      <header className="mx-auto flex max-w-7xl items-center justify-between">
+      <header className="mx-auto flex max-w-7xl items-center justify-between gap-4">
         <Link href="/" className="font-bold tracking-[.2em] text-gold">
           REEL RADAR
         </Link>
-        <div className="flex items-center gap-4 text-sm">
+        <div className="flex flex-wrap items-center gap-4 text-sm">
           <Link href="/watchlist" className="text-white/70 hover:text-white">
             Watchlist ({state.watchlist.length})
           </Link>
@@ -162,6 +164,7 @@ export default function Recommendations() {
           <Link href="/discover" className="text-white/70 hover:text-white">
             Discover
           </Link>
+          <StorageControls onStateChange={(s) => setState(s)} />
         </div>
       </header>
 
@@ -174,7 +177,6 @@ export default function Recommendations() {
               {summary.length ? `: ${summary.join(", ")}` : ""}. Synopses and rationale included.
             </p>
           </div>
-
           <div className="flex gap-2 rounded-full bg-white/5 p-1 border border-white/10">
             <button
               onClick={() => setTab("all")}

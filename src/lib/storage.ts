@@ -18,9 +18,6 @@ export const empty = (): State => ({
   dismissed: [],
 });
 
-/**
- * Combines two states without deleting titles or progress.
- */
 export function mergeStates(base: State, incoming: Partial<State>): State {
   const watchedMap = new Map<string, Title>();
   (base.watched || []).forEach((t) => watchedMap.set(keyOf(t), t));
@@ -67,12 +64,33 @@ export const save = (s: State) => {
   if (typeof window === "undefined") return;
   localStorage.setItem(K, JSON.stringify(s));
 
-  // Asynchronous background sync to file storage
+  // Asynchronous background sync with status logging
   fetch("/api/storage", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(s),
-  }).catch(() => {});
+  })
+    .then((res) => {
+      const backend = res.headers.get("x-storage-backend");
+      if (backend === "local-file") {
+        console.warn(
+          "%c[Storage Save] ⚠️ Vercel Blob is not configured. Saved to local file (data/storage.json).",
+          "color: #eab308; font-weight: bold;"
+        );
+      } else if (backend === "local-file-fallback") {
+        console.error(
+          "%c[Storage Save] ❌ Vercel Blob write failed! Saved to local file (data/storage.json) as fallback.",
+          "color: #ef4444; font-weight: bold;"
+        );
+      }
+    })
+    .catch((err) => {
+      console.error(
+        "%c[Storage Save] ❌ Could not contact /api/storage. Saved only to browser localStorage.",
+        "color: #ef4444; font-weight: bold;",
+        err
+      );
+    });
 };
 
 export const reset = () => {
@@ -85,14 +103,29 @@ export const reset = () => {
   }).catch(() => {});
 };
 
-/**
- * Syncs localStorage with the server JSON file on startup.
- * Guarantees existing browser history is never wiped.
- */
 export async function syncWithServer(): Promise<State> {
   const local = load();
   try {
     const res = await fetch("/api/storage");
+    const backend = res.headers.get("x-storage-backend");
+
+    if (backend === "vercel-blob") {
+      console.log(
+        "%c[Storage Sync] ☁️ Vercel Blob storage is ACTIVE and working.",
+        "color: #10b981; font-weight: bold;"
+      );
+    } else if (backend === "local-file-fallback") {
+      console.error(
+        "%c[Storage Sync] ❌ Vercel Blob failed. Falling back to local storage (data/storage.json).",
+        "color: #ef4444; font-weight: bold;"
+      );
+    } else {
+      console.warn(
+        "%c[Storage Sync] ⚠️ Vercel Blob is NOT working/configured (BLOB_READ_WRITE_TOKEN is missing). Using local storage (data/storage.json & browser localStorage).",
+        "color: #eab308; font-weight: bold;"
+      );
+    }
+
     if (!res.ok) return local;
 
     const serverState: State = await res.json();
@@ -104,24 +137,24 @@ export async function syncWithServer(): Promise<State> {
       (local.watched && local.watched.length > 0) ||
       (local.watchlist && local.watchlist.length > 0);
 
-    // If local has data and server is empty, push local data to the server file
     if (localHasData && !serverHasData) {
       save(local);
       return local;
     }
 
-    // Merge both states to preserve all titles across devices
     const merged = mergeStates(local, serverState);
     save(merged);
     return merged;
-  } catch {
+  } catch (err) {
+    console.error(
+      "%c[Storage Sync] ❌ Server storage unreachable. Using browser localStorage only.",
+      "color: #ef4444; font-weight: bold;",
+      err
+    );
     return local;
   }
 }
 
-/**
- * Downloads a JSON backup file to the user's computer.
- */
 export const exportData = () => {
   const state = load();
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
@@ -134,9 +167,6 @@ export const exportData = () => {
   URL.revokeObjectURL(url);
 };
 
-/**
- * Reads an uploaded JSON file and merges it safely into state.
- */
 export const importData = (
   file: File,
   onSuccess: (mergedState: State) => void,
