@@ -37,11 +37,37 @@ async function writeLocalFile(body: unknown) {
   await fs.writeFile(localFilePath, JSON.stringify(body, null, 2), "utf-8");
 }
 
+/**
+ * Automatically supports both Private and Public Vercel Blob stores.
+ */
+async function uploadToBlob(pathname: string, data: string) {
+  try {
+    // Attempt private write first (matching your store configuration)
+    return await put(pathname, data, {
+      access: "private",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      cacheControlMaxAge: 0,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("Cannot use private access on a public store")) {
+      return await put(pathname, data, {
+        access: "public",
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        cacheControlMaxAge: 0,
+      });
+    }
+    throw err;
+  }
+}
+
 export async function GET() {
   // Scenario 1: Token is missing
   if (!isBlobConfigured) {
     console.warn(
-      "\x1b[33m[Storage API] ⚠️ BLOB_READ_WRITE_TOKEN is not set. Vercel Blob is inactive — reading from local filesystem (data/storage.json).\x1b[0m"
+      "\x1b[33m[Storage API] ⚠️ BLOB_READ_WRITE_TOKEN is not set. Reading from local filesystem (data/storage.json).\x1b[0m"
     );
     try {
       const data = await readLocalFile();
@@ -68,8 +94,20 @@ export async function GET() {
       );
     }
 
-    const res = await fetch(`${target.url}?t=${Date.now()}`, { cache: "no-store" });
-    if (!res.ok) throw new Error(`Blob fetch failed (${res.status})`);
+    // Pass the Authorization header so private blob stores allow the GET fetch
+    const fetchHeaders: HeadersInit = {};
+    if (process.env.BLOB_READ_WRITE_TOKEN) {
+      fetchHeaders["Authorization"] = `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}`;
+    }
+
+    const res = await fetch(`${target.url}?t=${Date.now()}`, {
+      headers: fetchHeaders,
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      throw new Error(`Blob fetch failed (${res.status} ${res.statusText})`);
+    }
 
     const data = await res.json();
     console.info("\x1b[32m[Storage API] ☁️ Successfully read from Vercel Blob storage.\x1b[0m");
@@ -77,9 +115,9 @@ export async function GET() {
       headers: { "x-storage-backend": "vercel-blob" },
     });
   } catch (error) {
-    // Scenario 3: Token set, but Blob request failed (network, invalid token, quota)
+    // Scenario 3: Token set, but Blob request failed
     console.error(
-      "\x1b[31m[Storage API] ❌ Vercel Blob request failed! Falling back to local storage (data/storage.json).\x1b[0m",
+      "\x1b[31m[Storage API] ❌ Vercel Blob read failed! Falling back to local storage (data/storage.json).\x1b[0m",
       error
     );
     try {
@@ -112,12 +150,9 @@ export async function POST(req: Request) {
   }
 
   try {
-    await put(STORAGE_PATH, JSON.stringify(body, null, 2), {
-      access: "public",
-      addRandomSuffix: false,
-      allowOverwrite: true,
-      cacheControlMaxAge: 0,
-    });
+    const payload = JSON.stringify(body, null, 2);
+    await uploadToBlob(STORAGE_PATH, payload);
+
     console.info("\x1b[32m[Storage API] ☁️ Successfully saved state to Vercel Blob.\x1b[0m");
     return Response.json(
       { success: true },
