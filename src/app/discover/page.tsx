@@ -1,5 +1,291 @@
 "use client";
-import Link from "next/link"; import {useEffect,useState} from "react"; import {Title,keyOf,MediaType} from "@/types/title"; import {load,reset,save,State} from "@/lib/storage"; import {TitleCard} from "@/components/TitleCard";
-type Filter="all"|MediaType;
-export default function Discover(){const [state,setState]=useState<State>({watched:[],displayed:[],shown:[],watchlist:[]}),[titles,setTitles]=useState<Title[]>([]),[filter,setFilter]=useState<Filter>("all"),[loading,setLoading]=useState(true),[error,setError]=useState("");const count=state.watched.length;const update=(fn:(s:State)=>State)=>setState(s=>{const n=fn(s);save(n);return n});const fetchBatch=async()=>{setLoading(true);setError("");try{const r=await fetch(`/api/discover?type=${filter}&page=${Math.floor(state.displayed.length/20)+1}`),d=await r.json();if(!r.ok)throw new Error(d.error);const fresh=d.results.filter((x:Title)=>!state.displayed.includes(keyOf(x))).slice(0,20);setTitles(fresh);update(s=>({...s,displayed:[...new Set([...s.displayed,...fresh.map(keyOf)])]}))}catch(e){setError(e instanceof Error?e.message:"Couldn’t load titles")}finally{setLoading(false)}};useEffect(()=>setState(load()),[]);useEffect(()=>{fetchBatch()},[filter]);const toggle=(t:Title)=>update(s=>{const has=s.watched.some(x=>keyOf(x)===keyOf(t));return {...s,watched:has?s.watched.filter(x=>keyOf(x)!==keyOf(t)):[...s.watched,t]}});const changeSeasons=(t:Title,seasons:number[])=>update(s=>({...s,watched:s.watched.map(x=>keyOf(x)===keyOf(t)?{...x,watchedSeasons:seasons}:x)}));const selected=new Set(state.watched.map(keyOf));const series=state.watched.filter(t=>t.mediaType==="tv");return <main className="min-h-screen px-4 py-7 md:px-10"><header className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4"><Link href="/" className="font-bold tracking-[.2em] text-gold">REEL RADAR</Link><div className="text-sm text-white/70">You’ve identified <b className="text-white">{count}</b> title{count===1?"":"s"} you’ve watched.</div><button onClick={()=>{if(confirm("Reset all discovery history?")){reset();location.reload()}}} className="text-xs text-white/50 underline">Reset history</button></header><section className="mx-auto max-w-7xl py-10"><h1 className="text-3xl font-bold">Build your viewing history</h1><p className="mt-2 text-white/65">Select what you’ve seen. For series, record the seasons you have finished.</p><div className="mt-5 h-2 overflow-hidden rounded bg-white/10"><div className="h-full bg-gold" style={{width:`${Math.min(100,count*10)}%`}}/></div><p className="mt-2 text-sm text-white/60">{count>=10?"Recommendations unlocked. Keep refining if you like.":`Select ${10-count} more to unlock recommendations.`}</p><div className="mt-7 flex gap-2">{(["all","movie","tv"] as Filter[]).map(x=><button key={x} onClick={()=>setFilter(x)} className={`rounded-full px-4 py-2 text-sm ${filter===x?"bg-gold text-black":"bg-white/10"}`}>{x==="all"?"All titles":x==="tv"?"Series":"Movies"}</button>)}</div>{error?<div className="mt-8 rounded-xl border border-red-400/40 p-5">{error} <button onClick={fetchBatch} className="underline">Retry</button></div>:loading?<div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">{Array.from({length:10},(_,i)=><div className="poster aspect-[2/3] animate-pulse rounded-xl" key={i}/>)}</div>:<div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">{titles.map(t=><TitleCard key={keyOf(t)} title={t} selected={selected.has(keyOf(t))} onToggle={()=>toggle(t)}/>)}</div>}{series.length>0&&<section className="mt-10 rounded-xl border border-white/10 bg-panel p-5"><h2 className="font-bold">Series progress</h2><p className="mt-1 text-sm text-white/60">Choose every season you have watched. Season totals load from TMDB.</p><div className="mt-4 grid gap-3 md:grid-cols-2">{series.map(t=><SeasonControl key={keyOf(t)} title={t} onChange={x=>changeSeasons(t,x)}/>)}</div></section>}<div className="mt-10 flex flex-wrap gap-3"><button onClick={fetchBatch} disabled={loading} className="rounded-full border border-white/20 px-6 py-3">Discover next batch</button>{count>=10?<Link className="rounded-full bg-gold px-6 py-3 font-bold text-black" href="/recommendations">Get my recommendations</Link>:<button disabled className="rounded-full bg-white/10 px-6 py-3 text-white/40">Get my recommendations ({count}/10)</button>}</div></section></main>}
-function SeasonControl({title,onChange}:{title:Title;onChange:(s:number[])=>void}){const [total,setTotal]=useState(title.numberOfSeasons),[busy,setBusy]=useState(false);useEffect(()=>{if(total)return;setBusy(true);fetch(`/api/title?type=tv&id=${title.id}`).then(r=>r.json()).then(d=>setTotal(d.numberOfSeasons)).finally(()=>setBusy(false))},[title.id,total]);const watched=title.watchedSeasons||[];return <div className="rounded-lg bg-white/5 p-4"><div className="flex justify-between gap-2"><b>{title.title}</b><span className="text-sm text-white/55">{busy?"Loading…":total?`${watched.length}/${total} seasons`:"Season total unavailable"}</span></div>{total&&<div className="mt-3 flex flex-wrap gap-2">{Array.from({length:total},(_,i)=>i+1).map(n=><button key={n} onClick={()=>onChange(watched.includes(n)?watched.filter(x=>x!==n):[...watched,n].sort((a,b)=>a-b))} className={`rounded-full px-3 py-1 text-sm ${watched.includes(n)?"bg-gold text-black":"bg-white/10"}`}>S{n}</button>)}</div>}</div>}
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { Title, keyOf, MediaType } from "@/types/title";
+import { load, reset, save, State } from "@/lib/storage";
+import { TitleCard } from "@/components/TitleCard";
+
+type Filter = "all" | MediaType;
+type RegionFilter = "all" | "in" | "global";
+
+export default function Discover() {
+  const [state, setState] = useState<State>({
+    watched: [],
+    displayed: [],
+    shown: [],
+    watchlist: [],
+  });
+  const [titles, setTitles] = useState<Title[]>([]);
+  const [filter, setFilter] = useState<Filter>("all");
+  const [region, setRegion] = useState<RegionFilter>("all");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const count = state.watched.length;
+
+  const update = (fn: (s: State) => State) =>
+    setState((s) => {
+      const n = fn(s);
+      save(n);
+      return n;
+    });
+
+  const fetchBatch = async (resetPage = false) => {
+    setLoading(true);
+    setError("");
+    try {
+      const pageIndex = resetPage ? 1 : Math.floor(state.displayed.length / 20) + 1;
+      const r = await fetch(
+        `/api/discover?type=${filter}&region=${region}&page=${pageIndex}`
+      );
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+
+      const fresh = d.results
+        .filter((x: Title) => !state.displayed.includes(keyOf(x)))
+        .slice(0, 20);
+
+      setTitles(fresh);
+      update((s) => ({
+        ...s,
+        displayed: [...new Set([...s.displayed, ...fresh.map(keyOf)])],
+      }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't load titles");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => setState(load()), []);
+  useEffect(() => {
+    fetchBatch();
+  }, [filter, region]);
+
+  const toggle = (t: Title) =>
+    update((s) => {
+      const has = s.watched.some((x) => keyOf(x) === keyOf(t));
+      return {
+        ...s,
+        watched: has ? s.watched.filter((x) => keyOf(x) !== keyOf(t)) : [...s.watched, t],
+      };
+    });
+
+  const changeSeasons = (t: Title, seasons: number[]) =>
+    update((s) => ({
+      ...s,
+      watched: s.watched.map((x) =>
+        keyOf(x) === keyOf(t) ? { ...x, watchedSeasons: seasons } : x
+      ),
+    }));
+
+  const selected = new Set(state.watched.map(keyOf));
+  const series = state.watched.filter((t) => t.mediaType === "tv");
+
+  return (
+    <main className="min-h-screen px-4 py-7 md:px-10">
+      <header className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4">
+        <Link href="/" className="font-bold tracking-[.2em] text-gold">
+          REEL RADAR
+        </Link>
+        <div className="text-sm text-white/70">
+          You have identified <b className="text-white">{count}</b> title
+          {count === 1 ? "" : "s"} you have watched.
+        </div>
+        <button
+          onClick={() => {
+            if (confirm("Reset all discovery history?")) {
+              reset();
+              location.reload();
+            }
+          }}
+          className="text-xs text-white/50 underline"
+        >
+          Reset history
+        </button>
+      </header>
+
+      <section className="mx-auto max-w-7xl py-10">
+        <h1 className="text-3xl font-bold">Build your viewing history</h1>
+        <p className="mt-2 text-white/65">
+          Select what you have seen across Hollywood and Indian cinema. For series, track completed seasons.
+        </p>
+
+        <div className="mt-5 h-2 overflow-hidden rounded bg-white/10">
+          <div
+            className="h-full bg-gold transition-all duration-300"
+            style={{ width: `${Math.min(100, count * 10)}%` }}
+          />
+        </div>
+        <p className="mt-2 text-sm text-white/60">
+          {count >= 10
+            ? "Recommendations unlocked. Keep adding titles to refine."
+            : `Select ${10 - count} more to unlock recommendations.`}
+        </p>
+
+        {/* Filter Controls */}
+        <div className="mt-7 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex gap-2">
+            {(["all", "movie", "tv"] as Filter[]).map((x) => (
+              <button
+                key={x}
+                onClick={() => setFilter(x)}
+                className={`rounded-full px-4 py-2 text-sm ${
+                  filter === x ? "bg-gold text-black font-semibold" : "bg-white/10 text-white"
+                }`}
+              >
+                {x === "all" ? "All types" : x === "tv" ? "Series" : "Movies"}
+              </button>
+            ))}
+          </div>
+
+          {/* Region Tabs */}
+          <div className="flex gap-2 rounded-full bg-white/5 p-1 border border-white/10">
+            <button
+              onClick={() => setRegion("all")}
+              className={`rounded-full px-3 py-1.5 text-xs ${
+                region === "all" ? "bg-gold text-black font-semibold" : "text-white/70"
+              }`}
+            >
+              All Regions
+            </button>
+            <button
+              onClick={() => setRegion("in")}
+              className={`rounded-full px-3 py-1.5 text-xs ${
+                region === "in" ? "bg-gold text-black font-semibold" : "text-white/70"
+              }`}
+            >
+              🇮🇳 Indian Cinema & Series
+            </button>
+            <button
+              onClick={() => setRegion("global")}
+              className={`rounded-full px-3 py-1.5 text-xs ${
+                region === "global" ? "bg-gold text-black font-semibold" : "text-white/70"
+              }`}
+            >
+              🌐 Hollywood & Global
+            </button>
+          </div>
+        </div>
+
+        {error ? (
+          <div className="mt-8 rounded-xl border border-red-400/40 p-5">
+            {error} <button onClick={() => fetchBatch()} className="underline">Retry</button>
+          </div>
+        ) : loading ? (
+          <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">
+            {Array.from({ length: 10 }, (_, i) => (
+              <div className="poster aspect-[2/3] animate-pulse rounded-xl" key={i} />
+            ))}
+          </div>
+        ) : (
+          <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">
+            {titles.map((t) => (
+              <TitleCard
+                key={keyOf(t)}
+                title={t}
+                selected={selected.has(keyOf(t))}
+                onToggle={() => toggle(t)}
+              />
+            ))}
+          </div>
+        )}
+
+        {series.length > 0 && (
+          <section className="mt-10 rounded-xl border border-white/10 bg-panel p-5">
+            <h2 className="font-bold">Series progress</h2>
+            <p className="mt-1 text-sm text-white/60">
+              Select every season you have finished to improve recommendation weighting.
+            </p>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              {series.map((t) => (
+                <SeasonControl key={keyOf(t)} title={t} onChange={(x) => changeSeasons(t, x)} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        <div className="mt-10 flex flex-wrap gap-3">
+          <button
+            onClick={() => fetchBatch()}
+            disabled={loading}
+            className="rounded-full border border-white/20 px-6 py-3"
+          >
+            Discover next batch
+          </button>
+          {count >= 10 ? (
+            <Link
+              className="rounded-full bg-gold px-6 py-3 font-bold text-black"
+              href="/recommendations"
+            >
+              Get my recommendations
+            </Link>
+          ) : (
+            <button disabled className="rounded-full bg-white/10 px-6 py-3 text-white/40">
+              Get my recommendations ({count}/10)
+            </button>
+          )}
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function SeasonControl({
+  title,
+  onChange,
+}: {
+  title: Title;
+  onChange: (s: number[]) => void;
+}) {
+  const [total, setTotal] = useState(title.numberOfSeasons);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (total) return;
+    setBusy(true);
+    fetch(`/api/title?type=tv&id=${title.id}`)
+      .then((r) => r.json())
+      .then((d) => setTotal(d.numberOfSeasons))
+      .finally(() => setBusy(false));
+  }, [title.id, total]);
+
+  const watched = title.watchedSeasons || [];
+
+  return (
+    <div className="rounded-lg bg-white/5 p-4">
+      <div className="flex justify-between gap-2">
+        <b>{title.title}</b>
+        <span className="text-sm text-white/55">
+          {busy
+            ? "Loading..."
+            : total
+            ? `${watched.length}/${total} seasons`
+            : "Season total unavailable"}
+        </span>
+      </div>
+      {total && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {Array.from({ length: total }, (_, i) => i + 1).map((n) => (
+            <button
+              key={n}
+              onClick={() =>
+                onChange(
+                  watched.includes(n)
+                    ? watched.filter((x) => x !== n)
+                    : [...watched, n].sort((a, b) => a - b)
+                )
+              }
+              className={`rounded-full px-3 py-1 text-sm ${
+                watched.includes(n) ? "bg-gold text-black font-bold" : "bg-white/10 text-white"
+              }`}
+            >
+              S{n}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
