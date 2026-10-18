@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Title, keyOf, MediaType } from "@/types/title";
-import { load, reset, save, State } from "@/lib/storage";
+import { load, reset, save, syncWithServer, State } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
+import { StorageControls } from "@/components/StorageControls";
 
 type Filter = "all" | MediaType;
 type RegionFilter = "all" | "in" | "global";
@@ -22,7 +23,6 @@ export default function Discover() {
   const [region, setRegion] = useState<RegionFilter>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
   const isInitialMount = useRef(true);
   const pageMapRef = useRef<Record<string, number>>({});
 
@@ -35,11 +35,10 @@ export default function Discover() {
       return n;
     });
 
-  // Collect all media keys that should never appear on the Discover page
+  // Only exclude titles explicitly marked as watched or dismissed
   const getExcludeKeys = (s: State) => {
     return new Set([
       ...s.watched.map(keyOf),
-      ...s.displayed,
       ...(s.dismissed || []),
     ]);
   };
@@ -52,28 +51,31 @@ export default function Discover() {
   ) => {
     setLoading(true);
     setError("");
-
     try {
       const filterKey = `${currentFilter}:${currentRegion}`;
       let page = resetPage ? 1 : pageMapRef.current[filterKey] || 1;
-
       const excludeKeys = getExcludeKeys(currentState);
       const fresh: Title[] = [];
       const freshKeys = new Set<string>();
-
       let pagesScanned = 0;
-      const maxPagesToScan = 6;
+      const maxPagesToScan = 8;
 
-      // Keep querying TMDB pages until 20 fresh, unseen titles are collected
       while (fresh.length < 20 && pagesScanned < maxPagesToScan) {
         const r = await fetch(
           `/api/discover?type=${currentFilter}&region=${currentRegion}&page=${page}`
         );
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || "Couldn't load titles");
-
         const results: Title[] = d.results || [];
-        if (!results.length) break;
+
+        if (!results.length) {
+          if (page > 1 && fresh.length === 0) {
+            page = 1;
+            pagesScanned++;
+            continue;
+          }
+          break;
+        }
 
         for (const item of results) {
           const k = keyOf(item);
@@ -83,19 +85,12 @@ export default function Discover() {
             if (fresh.length >= 20) break;
           }
         }
-
         page++;
         pagesScanned++;
       }
 
       pageMapRef.current[filterKey] = page;
       setTitles(fresh);
-
-      // Persist newly displayed titles so they are never served again
-      update((s) => ({
-        ...s,
-        displayed: [...new Set([...s.displayed, ...fresh.map(keyOf)])],
-      }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't load titles");
     } finally {
@@ -103,14 +98,19 @@ export default function Discover() {
     }
   };
 
-  // 1. Initial mount: load persisted state first, then fetch batch
+  // 1. Initial mount: load local state immediately, then sync with server file
   useEffect(() => {
     const s = load();
     setState(s);
     fetchBatch(s, filter, region, false);
+
+    // Sync in background to back up to data/storage.json without wiping local
+    syncWithServer().then((synced) => {
+      setState(synced);
+    });
   }, []);
 
-  // 2. Filter/Region changes: reset page and fetch with latest storage state
+  // 2. Filter/Region changes
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false;
@@ -147,23 +147,32 @@ export default function Discover() {
         <Link href="/" className="font-bold tracking-[.2em] text-gold">
           REEL RADAR
         </Link>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href="/watchlist"
+            className="rounded-full bg-white/10 px-3.5 py-1.5 text-xs text-white/80 transition hover:bg-white/20 hover:text-white"
+          >
+            Watchlist (<b className="text-gold">{state.watchlist.length}</b>)
+          </Link>
           <Link
             href="/watched"
             className="rounded-full bg-white/10 px-3.5 py-1.5 text-xs text-white/80 transition hover:bg-white/20 hover:text-white"
           >
             Viewed titles (<b className="text-gold">{count}</b>)
           </Link>
+
+          <StorageControls onStateChange={(merged) => setState(merged)} />
+
           <button
             onClick={() => {
-              if (confirm("Reset all discovery history?")) {
+              if (confirm("Reset all discovery history and file storage?")) {
                 reset();
                 location.reload();
               }
             }}
             className="text-xs text-white/50 underline"
           >
-            Reset history
+            Reset
           </button>
         </div>
       </header>
@@ -209,7 +218,6 @@ export default function Discover() {
             ))}
           </div>
 
-          {/* Region Tabs */}
           <div className="flex gap-2 rounded-full bg-white/5 p-1 border border-white/10">
             <button
               onClick={() => setRegion("all")}

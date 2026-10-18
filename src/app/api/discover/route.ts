@@ -7,33 +7,32 @@ export async function GET(request: Request) {
     const type = (p.get("type") as MediaType | "all") || "all";
     const page = Number(p.get("page") || 1);
     const genre = Number(p.get("genre")) || undefined;
-    const region = p.get("region") || "all"; // 'all' | 'in' | 'global'
+    const region = p.get("region") || "all";
 
     const types: MediaType[] = type === "all" ? ["movie", "tv"] : [type];
     let results: Title[] = [];
 
+    const indianOptions = (t: MediaType) => ({
+      originCountry: "IN",
+      minVotes: t === "tv" ? 2 : 5, // Indian TV shows have far fewer TMDB votes
+    });
+
     if (region === "in") {
-      // Indian movies and series only
       results = (
         await Promise.all(
-          types.map((t, i) =>
-            discover(t, page + i, genre, { originCountry: "IN", minVotes: 8 })
-          )
+          types.map((t) => discover(t, page, genre, indianOptions(t)))
         )
       ).flat();
     } else if (region === "global") {
-      // Hollywood / International
       results = (
-        await Promise.all(types.map((t, i) => discover(t, page + i, genre)))
+        await Promise.all(types.map((t) => discover(t, page, genre)))
       ).flat();
     } else {
-      // Blended feed: alternate Hollywood and Indian titles
+      // Blended feed: alternate global and Indian titles
       const [globalTitles, indianTitles] = await Promise.all([
-        Promise.all(types.map((t, i) => discover(t, page + i, genre))).then((res) => res.flat()),
+        Promise.all(types.map((t) => discover(t, page, genre))).then((res) => res.flat()),
         Promise.all(
-          types.map((t, i) =>
-            discover(t, page + i, genre, { originCountry: "IN", minVotes: 8 })
-          )
+          types.map((t) => discover(t, page, genre, indianOptions(t)))
         ).then((res) => res.flat()),
       ]);
 

@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState, useMemo } from "react";
 import { Title, keyOf, MediaType } from "@/types/title";
-import { load, save, State } from "@/lib/storage";
+import { load, save, syncWithServer, State } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
+import { StorageControls } from "@/components/StorageControls";
 
 type Filter = "all" | MediaType;
 type Sort = "alphabetical" | "genre" | "rating";
@@ -31,6 +32,10 @@ export default function WatchedPage() {
   useEffect(() => {
     setState(load());
     setIsLoaded(true);
+
+    syncWithServer().then((synced) => {
+      setState(synced);
+    });
   }, []);
 
   const removeTitle = (title: Title) => {
@@ -100,9 +105,12 @@ export default function WatchedPage() {
         <Link href="/" className="font-bold tracking-[.2em] text-gold">
           REEL RADAR
         </Link>
-        <div className="flex items-center gap-5 text-sm">
+        <div className="flex flex-wrap items-center gap-3 text-sm">
           <Link href="/discover" className="text-white/70 transition hover:text-white">
             Discover
+          </Link>
+          <Link href="/watchlist" className="text-white/70 transition hover:text-white">
+            Watchlist ({state.watchlist.length})
           </Link>
           <Link
             href="/recommendations"
@@ -110,6 +118,7 @@ export default function WatchedPage() {
           >
             Recommendations
           </Link>
+          <StorageControls onStateChange={(s) => setState(s)} />
         </div>
       </header>
 
@@ -126,7 +135,6 @@ export default function WatchedPage() {
               {movieCount} movies, {tvCount} series).
             </p>
           </div>
-
           {state.watched.length > 0 && (
             <button
               onClick={removeAll}
@@ -198,8 +206,7 @@ export default function WatchedPage() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-xs text-white placeholder-white/40 focus:border-gold focus:outline-none"
-                >
-                </input>
+                />
               </div>
             </div>
           </div>
@@ -227,13 +234,11 @@ export default function WatchedPage() {
             {sortedWatched.map((t) => (
               <div key={keyOf(t)} className="flex flex-col">
                 <TitleCard title={t} />
-
                 {t.mediaType === "tv" && t.watchedSeasons && t.watchedSeasons.length > 0 && (
                   <span className="mt-1 text-[11px] text-white/50">
                     Seasons watched: {t.watchedSeasons.join(", ")}
                   </span>
                 )}
-
                 <button
                   onClick={() => removeTitle(t)}
                   title={`Remove ${t.title} from history`}
@@ -251,7 +256,13 @@ export default function WatchedPage() {
             href="/discover"
             className="rounded-full border border-white/20 px-6 py-3 text-sm hover:border-white/40"
           >
-            ← Add more titles
+            Add more titles
+          </Link>
+          <Link
+            href="/watchlist"
+            className="rounded-full border border-white/20 px-6 py-3 text-sm hover:border-white/40"
+          >
+            My Watchlist ({state.watchlist.length})
           </Link>
           {state.watched.length >= 10 ? (
             <Link

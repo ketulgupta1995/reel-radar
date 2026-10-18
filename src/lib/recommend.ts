@@ -28,7 +28,8 @@ export function rank(
   watched: Title[],
   candidates: Title[],
   seen: string[] = [],
-  dismissed: string[] = []
+  dismissed: string[] = [],
+  watchlist: (Title | string)[] = []
 ): Title[] {
   if (!candidates.length) return [];
 
@@ -50,19 +51,26 @@ export function rank(
 
   const indianWatchedCount = watched.filter(isIndianTitle).length;
   const indianAffinity = indianWatchedCount / Math.max(watched.length, 1);
-
   const typeShare =
     watched.filter((x) => x.mediaType === "tv").length / Math.max(watched.length, 1);
 
   const watchedKeys = new Set(watched.map(keyOf));
   const dismissedKeys = new Set(dismissed);
   const seenKeys = new Set(seen);
+  const watchlistKeys = new Set(
+    watchlist.map((w) => (typeof w === "string" ? w : keyOf(w)))
+  );
 
-  // Exclude watched AND dismissed titles
+  // Exclude watched, dismissed, AND watchlist titles
   const uniqueCandidates = new Map<string, Title>();
   candidates.forEach((c) => {
     const k = keyOf(c);
-    if (!watchedKeys.has(k) && !dismissedKeys.has(k) && !uniqueCandidates.has(k)) {
+    if (
+      !watchedKeys.has(k) &&
+      !dismissedKeys.has(k) &&
+      !watchlistKeys.has(k) &&
+      !uniqueCandidates.has(k)
+    ) {
       uniqueCandidates.set(k, c);
     }
   });
@@ -90,7 +98,6 @@ export function rank(
 
     // Seen penalty to ensure fresh recommendations on refresh
     const seenPenalty = seenKeys.has(keyOf(c)) ? 0.45 : 1.0;
-
     const rawScore =
       (4.2 * genreScore +
         2.2 * keywordScore +
@@ -114,12 +121,10 @@ export function rank(
   // Genre & Origin diversity re-ranking (pick top 20)
   const picked: (Title & { _score: number })[] = [];
   const genreCounts = new Map<number, number>();
-
   for (const x of scored) {
     if (picked.length >= 20) break;
     const overSaturated = x.genres.some((g) => (genreCounts.get(g) || 0) >= 5);
     if (overSaturated && scored.length - picked.length > 20) continue;
-
     picked.push(x);
     x.genres.forEach((g) => genreCounts.set(g, (genreCounts.get(g) || 0) + 1));
   }
@@ -137,6 +142,7 @@ export function explanation(candidate: Title, watched: Title[]): string {
   const sharedPeople = [...(candidate.cast || []), ...(candidate.creators || [])].filter((p) =>
     watched.some((w) => [...(w.cast || []), ...(w.creators || [])].includes(p))
   );
+
   if (sharedPeople.length > 0) {
     return `Features ${sharedPeople[0]}, matching people in your watched titles.`;
   }
@@ -151,7 +157,7 @@ export function explanation(candidate: Title, watched: Title[]): string {
     }
     return `Critically acclaimed Indian ${
       candidate.mediaType === "tv" ? "series" : "movie"
-    } (★ ${candidate.rating.toFixed(1)}) matching your genre preferences.`;
+    } (${candidate.rating.toFixed(1)}) matching your genre preferences.`;
   }
 
   // 3. Shared Genres
@@ -166,7 +172,7 @@ export function explanation(candidate: Title, watched: Title[]): string {
   }
 
   if (candidate.rating >= 7.8) {
-    return `A top-rated ${candidate.mediaType === "tv" ? "series" : "movie"} (★ ${candidate.rating.toFixed(
+    return `A top-rated ${candidate.mediaType === "tv" ? "series" : "movie"} (${candidate.rating.toFixed(
       1
     )}) curated to expand your taste profile.`;
   }

@@ -1,5 +1,5 @@
 import { detail, discover, getRecommendations } from "@/lib/tmdb";
-import { explanation, rank, isIndianTitle } from "@/lib/recommend";
+import { explanation, rank } from "@/lib/recommend";
 import { Title, keyOf } from "@/types/title";
 
 export async function POST(r: Request) {
@@ -8,10 +8,12 @@ export async function POST(r: Request) {
       watched,
       seen = [],
       dismissed = [],
+      watchlist = [],
     } = (await r.json()) as {
       watched: Title[];
       seen?: string[];
       dismissed?: string[];
+      watchlist?: Title[];
     };
 
     if (!watched || watched.length < 10) {
@@ -73,7 +75,7 @@ export async function POST(r: Request) {
     });
 
     const candidates = Array.from(candidateMap.values());
-    const ranked = rank(rich, candidates, seen, dismissed);
+    const ranked = rank(rich, candidates, seen, dismissed, watchlist);
     const recs = ranked.map((x) => ({
       ...x,
       why: explanation(x, rich),
