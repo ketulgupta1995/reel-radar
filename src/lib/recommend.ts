@@ -33,7 +33,6 @@ export function rank(
 ): Title[] {
   if (!candidates.length) return [];
 
-  // Weight series progress (higher commitment = higher weight)
   const itemWeight = (t: Title) => {
     if (t.mediaType === "tv" && t.watchedSeasons && t.watchedSeasons.length > 0) {
       return 1 + Math.min(t.watchedSeasons.length * 0.25, 1.25);
@@ -44,33 +43,24 @@ export function rank(
   const gs = frequencies(watched, (t) => t.genres, itemWeight);
   const people = frequencies(
     watched,
-    (t) => [...(t.cast || []), ...(t.creators || [])],
+    (t) => [...(t.cast || []), ...(t.creators || [])].map((p) => p.id), // Fetch IDs
     itemWeight
   );
   const words = frequencies(watched, (t) => t.keywords || [], itemWeight);
 
   const indianWatchedCount = watched.filter(isIndianTitle).length;
   const indianAffinity = indianWatchedCount / Math.max(watched.length, 1);
-  const typeShare =
-    watched.filter((x) => x.mediaType === "tv").length / Math.max(watched.length, 1);
+  const typeShare = watched.filter((x) => x.mediaType === "tv").length / Math.max(watched.length, 1);
 
   const watchedKeys = new Set(watched.map(keyOf));
   const dismissedKeys = new Set(dismissed);
   const seenKeys = new Set(seen);
-  const watchlistKeys = new Set(
-    watchlist.map((w) => (typeof w === "string" ? w : keyOf(w)))
-  );
+  const watchlistKeys = new Set(watchlist.map((w) => (typeof w === "string" ? w : keyOf(w))));
 
-  // Exclude watched, dismissed, AND watchlist titles
   const uniqueCandidates = new Map<string, Title>();
   candidates.forEach((c) => {
     const k = keyOf(c);
-    if (
-      !watchedKeys.has(k) &&
-      !dismissedKeys.has(k) &&
-      !watchlistKeys.has(k) &&
-      !uniqueCandidates.has(k)
-    ) {
+    if (!watchedKeys.has(k) && !dismissedKeys.has(k) && !watchlistKeys.has(k) && !uniqueCandidates.has(k)) {
       uniqueCandidates.set(k, c);
     }
   });
@@ -78,33 +68,22 @@ export function rank(
   const scored: (Title & { _score: number })[] = Array.from(uniqueCandidates.values()).map((c) => {
     const isIndian = isIndianTitle(c);
     const genreScore = overlap(c.genres, gs);
-    const castScore = overlap([...(c.cast || []), ...(c.creators || [])], people);
+    const castScore = overlap([...(c.cast || []), ...(c.creators || [])].map(p => p.id), people);
     const keywordScore = overlap(c.keywords || [], words);
     const typeFit = 1 - Math.abs((c.mediaType === "tv" ? 1 : 0) - typeShare);
-
-    // Rating quality score (damped)
     const quality = Math.min(Math.max((c.rating - 5) / 5, 0), 1);
     const popularityBonus = Math.min(Math.log10(Math.max(c.popularity, 1)) / 4, 0.4);
 
-    // Regional match score
     let regionScore = 0.5;
     if (indianAffinity >= 0.2) {
-      // User has shown preference for Indian cinema
       regionScore = isIndian ? 1.5 : 0.8;
     } else if (isIndian && c.rating >= 7.5) {
-      // High-rated crossover Indian pick
       regionScore = 0.9;
     }
 
-    // Seen penalty to ensure fresh recommendations on refresh
     const seenPenalty = seenKeys.has(keyOf(c)) ? 0.45 : 1.0;
     const rawScore =
-      (4.2 * genreScore +
-        2.2 * keywordScore +
-        1.8 * castScore +
-        0.9 * quality +
-        0.3 * popularityBonus +
-        0.5 * typeFit) *
+      (4.2 * genreScore + 2.2 * keywordScore + 1.8 * castScore + 0.9 * quality + 0.3 * popularityBonus + 0.5 * typeFit) *
       regionScore *
       seenPenalty;
 
@@ -118,9 +97,9 @@ export function rank(
 
   scored.sort((a, b) => b._score - a._score);
 
-  // Genre & Origin diversity re-ranking (pick top 20)
   const picked: (Title & { _score: number })[] = [];
   const genreCounts = new Map<number, number>();
+
   for (const x of scored) {
     if (picked.length >= 20) break;
     const overSaturated = x.genres.some((g) => (genreCounts.get(g) || 0) >= 5);
@@ -134,47 +113,33 @@ export function rank(
 
 export function explanation(candidate: Title, watched: Title[]): string {
   const isCandidateIndian = isIndianTitle(candidate);
-  const matchedWatched = watched.find((w) =>
-    candidate.genres.some((g) => w.genres.includes(g))
-  );
+  const matchedWatched = watched.find((w) => candidate.genres.some((g) => w.genres.includes(g)));
 
-  // 1. Shared Creator or Cast
   const sharedPeople = [...(candidate.cast || []), ...(candidate.creators || [])].filter((p) =>
-    watched.some((w) => [...(w.cast || []), ...(w.creators || [])].includes(p))
+    watched.some((w) => [...(w.cast || []), ...(w.creators || [])].map(x => x.id).includes(p.id))
   );
 
   if (sharedPeople.length > 0) {
-    return `Features ${sharedPeople[0]}, matching people in your watched titles.`;
+    return `Features ${sharedPeople[0].name}, matching people in your watched titles.`;
   }
 
-  // 2. Indian Content Specific Explanation
   if (isCandidateIndian) {
     const indianWatched = watched.find(isIndianTitle);
     if (indianWatched) {
-      return `Recommended Indian ${
-        candidate.mediaType === "tv" ? "series" : "film"
-      } pairing with your history of titles like "${indianWatched.title}".`;
+      return `Recommended Indian ${candidate.mediaType === "tv" ? "series" : "film"} pairing with your history of titles like "${indianWatched.title}".`;
     }
-    return `Critically acclaimed Indian ${
-      candidate.mediaType === "tv" ? "series" : "movie"
-    } (${candidate.rating.toFixed(1)}) matching your genre preferences.`;
+    return `Critically acclaimed Indian ${candidate.mediaType === "tv" ? "series" : "movie"} (${candidate.rating.toFixed(1)}) matching your genre preferences.`;
   }
 
-  // 3. Shared Genres
   const shared = candidate.genres.filter((g) => watched.some((w) => w.genres.includes(g)));
-  const names =
-    candidate.genreNames?.filter((_, i) => shared.includes(candidate.genres[i])) || [];
+  const names = candidate.genreNames?.filter((_, i) => shared.includes(candidate.genres[i])) || [];
 
   if (names.length && matchedWatched) {
-    return `Matches the ${names.slice(0, 2).join(" & ")} style from your viewing of "${
-      matchedWatched.title
-    }".`;
+    return `Matches the ${names.slice(0, 2).join(" & ")} style from your viewing of "${matchedWatched.title}".`;
   }
 
   if (candidate.rating >= 7.8) {
-    return `A top-rated ${candidate.mediaType === "tv" ? "series" : "movie"} (${candidate.rating.toFixed(
-      1
-    )}) curated to expand your taste profile.`;
+    return `A top-rated ${candidate.mediaType === "tv" ? "series" : "movie"} (${candidate.rating.toFixed(1)}) curated to expand your taste profile.`;
   }
 
   return "A high-affinity recommendation aligned with your viewing patterns.";

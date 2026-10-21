@@ -5,28 +5,13 @@ const image = "https://image.tmdb.org/t/p/w500";
 
 const genres: Record<MediaType, Record<number, string>> = {
   movie: {
-    28: "Action",
-    12: "Adventure",
-    16: "Animation",
-    35: "Comedy",
-    80: "Crime",
-    18: "Drama",
-    14: "Fantasy",
-    27: "Horror",
-    9648: "Mystery",
-    10749: "Romance",
-    878: "Science Fiction",
-    53: "Thriller",
+    28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy", 80: "Crime",
+    18: "Drama", 14: "Fantasy", 27: "Horror", 9648: "Mystery", 10749: "Romance",
+    878: "Science Fiction", 53: "Thriller",
   },
   tv: {
-    10759: "Action & Adventure",
-    16: "Animation",
-    35: "Comedy",
-    80: "Crime",
-    18: "Drama",
-    10765: "Sci-Fi & Fantasy",
-    9648: "Mystery",
-    10749: "Romance",
+    10759: "Action & Adventure", 16: "Animation", 35: "Comedy", 80: "Crime",
+    18: "Drama", 10765: "Sci-Fi & Fantasy", 9648: "Mystery", 10749: "Romance",
     10768: "War & Politics",
   },
 };
@@ -36,15 +21,17 @@ export const poster = (path: string | null) => (path ? `${image}${path}` : null)
 async function get(path: string, params: Record<string, string | number> = {}) {
   const key = process.env.TMDB_API_KEY;
   if (!key) throw new Error("TMDB_API_KEY is not configured");
+
   const u = new URL(base + path);
   u.searchParams.set("api_key", key);
   Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, String(v)));
+
   const r = await fetch(u, { next: { revalidate: 3600 } });
   if (!r.ok) throw new Error(`TMDB request failed (${r.status})`);
   return r.json();
 }
 
-const normalize = (x: any, type: MediaType): Title => {
+export const normalize = (x: any, type: MediaType): Title => {
   const originCountry: string[] = Array.isArray(x.origin_country)
     ? x.origin_country
     : Array.isArray(x.production_countries)
@@ -86,14 +73,11 @@ export async function discover(
   const p: any = {
     page,
     sort_by: options.sortBy || "popularity.desc",
-    "vote_count.gte":
-      options.minVotes !== undefined
-        ? options.minVotes
-        : options.originCountry === "IN"
-        ? 10
-        : 30,
+    "vote_count.gte": options.minVotes !== undefined ? options.minVotes : options.originCountry === "IN" ? 10 : 30,
   };
+
   p[type === "movie" ? "primary_release_date.gte" : "first_air_date.gte"] = "1990-01-01";
+
   if (genre) p.with_genres = genre;
   if (options.originCountry) p.with_origin_country = options.originCountry;
   if (options.originalLanguage) p.with_original_language = options.originalLanguage;
@@ -108,6 +92,31 @@ export async function discover(
   });
 }
 
+export async function search(query: string): Promise<Title[]> {
+  const d = await get(`/search/multi`, { query, page: 1, include_adult: false });
+  return (d.results || [])
+    .filter((x: any) => x.media_type === "movie" || x.media_type === "tv")
+    .map((x: any) => normalize(x, x.media_type as MediaType));
+}
+
+export async function personCredits(personId: number): Promise<{ name: string; titles: Title[] }> {
+  const person = await get(`/person/${personId}`);
+  const credits = await get(`/person/${personId}/combined_credits`);
+  const titles = (credits.cast || [])
+    .filter((x: any) => x.media_type === "movie" || x.media_type === "tv")
+    .map((x: any) => normalize(x, x.media_type as MediaType))
+    .sort((a: Title, b: Title) => b.popularity - a.popularity);
+
+  // deduplicate logic for combined credits
+  const unique = new Map<string, Title>();
+  titles.forEach((t: Title) => {
+    const key = `${t.mediaType}:${t.id}`;
+    if (!unique.has(key)) unique.set(key, t);
+  });
+
+  return { name: person.name, titles: Array.from(unique.values()).slice(0, 50) };
+}
+
 export async function getRecommendations(type: MediaType, id: number): Promise<Title[]> {
   try {
     const d = await get(`/${type}/${id}/recommendations`, { page: 1 });
@@ -118,16 +127,27 @@ export async function getRecommendations(type: MediaType, id: number): Promise<T
 }
 
 export async function detail(type: MediaType, id: number) {
-  const x = await get(`/${type}/${id}`, { append_to_response: "credits,keywords" });
+  // Extract extra append items for Videos
+  const x = await get(`/${type}/${id}`, { append_to_response: "credits,keywords,videos" });
   const t = normalize(x, type);
-  t.cast = (x.credits?.cast || []).slice(0, 8).map((p: any) => p.name);
+
+  t.cast = (x.credits?.cast || []).slice(0, 8).map((p: any) => ({ id: p.id, name: p.name }));
+  
   t.creators =
     type === "movie"
-      ? (x.credits?.crew || []).filter((p: any) => p.job === "Director").map((p: any) => p.name)
-      : (x.created_by || []).map((p: any) => p.name);
+      ? (x.credits?.crew || []).filter((p: any) => p.job === "Director").map((p: any) => ({ id: p.id, name: p.name }))
+      : (x.created_by || []).map((p: any) => ({ id: p.id, name: p.name }));
+      
   t.keywords = (type === "movie" ? x.keywords?.keywords : x.keywords?.results || [])
     .slice(0, 12)
     .map((k: any) => k.name);
+
+  // Get Trailer ID
+  const trailer = (x.videos?.results || []).find(
+    (v: any) => v.site === "YouTube" && (v.type === "Trailer" || v.type === "Teaser")
+  );
+  if (trailer) t.trailerYoutubeId = trailer.key;
+
   return t;
 }
 

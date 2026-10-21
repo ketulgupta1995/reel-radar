@@ -1,8 +1,9 @@
 "use client";
-
+import { useState } from "react";
 import { Title } from "@/types/title";
 import { poster } from "@/lib/tmdb";
 import { isIndianTitle } from "@/lib/recommend";
+import { TitleDetailsModal } from "./TitleDetailsModal";
 
 export function TitleCard({
   title,
@@ -15,21 +16,22 @@ export function TitleCard({
   onToggle?: () => void;
   why?: string;
 }) {
+  const [showDetails, setShowDetails] = useState(false);
   const isIndian = isIndianTitle(title);
 
   return (
-    <article
-      className={`flex flex-col overflow-hidden rounded-xl border bg-panel transition ${
-        selected
-          ? "border-gold ring-1 ring-gold"
-          : "border-white/10 hover:-translate-y-1 hover:border-white/20"
-      }`}
-    >
-      <button
-        onClick={onToggle}
-        disabled={!onToggle}
-        aria-pressed={selected}
-        className="flex h-full w-full flex-col text-left disabled:cursor-default"
+    <>
+      <article
+        onClick={onToggle ? (e) => {
+          // Trigger toggle UNLESS they clicked a button/link inside
+          if ((e.target as HTMLElement).closest('button, a')) return;
+          onToggle();
+        } : undefined}
+        className={`flex flex-col h-full overflow-hidden rounded-xl border bg-panel transition ${onToggle ? "cursor-pointer" : ""} ${
+          selected
+            ? "border-gold ring-1 ring-gold"
+            : "border-white/10 hover:-translate-y-1 hover:border-white/20"
+        }`}
       >
         {/* Poster */}
         <div className="poster relative aspect-[2/3] w-full shrink-0">
@@ -45,8 +47,6 @@ export function TitleCard({
               No poster
             </span>
           )}
-
-          {/* Toggle Button */}
           {onToggle && (
             <span
               className={`absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full text-sm font-bold shadow-md ${
@@ -56,11 +56,9 @@ export function TitleCard({
               {selected ? "✓" : "+"}
             </span>
           )}
-
-          {/* Indian Origin Badge */}
           {isIndian && (
             <span className="absolute left-2 top-2 rounded bg-black/80 px-2 py-0.5 text-[10px] font-bold tracking-wider text-gold shadow border border-gold/30">
-              🇮🇳 IN
+              IN
             </span>
           )}
         </div>
@@ -73,26 +71,13 @@ export function TitleCard({
             </h3>
             <span className="shrink-0 text-xs text-white/60">{title.year || " "}</span>
           </div>
-
           <p className="mt-1 text-xs text-gold">
-            {title.mediaType === "tv" ? "Series" : "Movie"} · ★ {title.rating.toFixed(1)}
+            {title.mediaType === "tv" ? "Series" : "Movie"} • {title.rating.toFixed(1)}
           </p>
-
           <p className="mt-0.5 text-xs text-white/50 line-clamp-1">
-            {title.genreNames?.slice(0, 2).join(" · ") || "Genres unavailable"}
+            {title.genreNames?.slice(0, 2).join(" • ") || "Genres unavailable"}
           </p>
 
-          {/* Movie / Series Synopsis Description */}
-          {title.overview && (
-            <p
-              className="mt-2.5 text-xs leading-relaxed text-white/70 line-clamp-3"
-              title={title.overview}
-            >
-              {title.overview}
-            </p>
-          )}
-
-          {/* Recommendation Explanation */}
           {why && (
             <div className="mt-auto pt-3">
               <div className="rounded-lg border border-gold/25 bg-gold/10 p-2.5">
@@ -103,8 +88,19 @@ export function TitleCard({
               </div>
             </div>
           )}
+
+          <div className="mt-auto pt-3 flex flex-col gap-1.5">
+             <button 
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowDetails(true); }}
+                className="w-full rounded-lg bg-white/10 py-1.5 text-[11px] font-medium text-white/80 hover:bg-white/20 transition"
+              >
+                Trailer & Details
+             </button>
+          </div>
         </div>
-      </button>
-    </article>
+      </article>
+
+      {showDetails && <TitleDetailsModal title={title} onClose={() => setShowDetails(false)} />}
+    </>
   );
 }
