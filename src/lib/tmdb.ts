@@ -5,20 +5,36 @@ const image = "https://image.tmdb.org/t/p/w500";
 
 const genres: Record<MediaType, Record<number, string>> = {
   movie: {
-    28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy", 80: "Crime",
-    18: "Drama", 14: "Fantasy", 27: "Horror", 9648: "Mystery", 10749: "Romance",
-    878: "Science Fiction", 53: "Thriller",
+    28: "Action",
+    12: "Adventure",
+    16: "Animation",
+    35: "Comedy",
+    80: "Crime",
+    18: "Drama",
+    14: "Fantasy",
+    27: "Horror",
+    9648: "Mystery",
+    10749: "Romance",
+    878: "Science Fiction",
+    53: "Thriller",
   },
   tv: {
-    10759: "Action & Adventure", 16: "Animation", 35: "Comedy", 80: "Crime",
-    18: "Drama", 10765: "Sci-Fi & Fantasy", 9648: "Mystery", 10749: "Romance",
+    10759: "Action & Adventure",
+    16: "Animation",
+    35: "Comedy",
+    80: "Crime",
+    18: "Drama",
+    10765: "Sci-Fi & Fantasy",
+    9648: "Mystery",
+    10749: "Romance",
     10768: "War & Politics",
   },
 };
 
 export const poster = (path: string | null) => (path ? `${image}${path}` : null);
 
-async function get(path: string, params: Record<string, string | number> = {}) {
+// Added boolean to allowed parameter values
+async function get(path: string, params: Record<string, string | number | boolean> = {}) {
   const key = process.env.TMDB_API_KEY;
   if (!key) throw new Error("TMDB_API_KEY is not configured");
 
@@ -73,7 +89,12 @@ export async function discover(
   const p: any = {
     page,
     sort_by: options.sortBy || "popularity.desc",
-    "vote_count.gte": options.minVotes !== undefined ? options.minVotes : options.originCountry === "IN" ? 10 : 30,
+    "vote_count.gte":
+      options.minVotes !== undefined
+        ? options.minVotes
+        : options.originCountry === "IN"
+        ? 10
+        : 30,
   };
 
   p[type === "movie" ? "primary_release_date.gte" : "first_air_date.gte"] = "1990-01-01";
@@ -107,7 +128,6 @@ export async function personCredits(personId: number): Promise<{ name: string; t
     .map((x: any) => normalize(x, x.media_type as MediaType))
     .sort((a: Title, b: Title) => b.popularity - a.popularity);
 
-  // deduplicate logic for combined credits
   const unique = new Map<string, Title>();
   titles.forEach((t: Title) => {
     const key = `${t.mediaType}:${t.id}`;
@@ -127,22 +147,21 @@ export async function getRecommendations(type: MediaType, id: number): Promise<T
 }
 
 export async function detail(type: MediaType, id: number) {
-  // Extract extra append items for Videos
   const x = await get(`/${type}/${id}`, { append_to_response: "credits,keywords,videos" });
   const t = normalize(x, type);
 
   t.cast = (x.credits?.cast || []).slice(0, 8).map((p: any) => ({ id: p.id, name: p.name }));
-  
   t.creators =
     type === "movie"
-      ? (x.credits?.crew || []).filter((p: any) => p.job === "Director").map((p: any) => ({ id: p.id, name: p.name }))
+      ? (x.credits?.crew || []).filter((p: any) => p.job === "Director").map((p: any) => ({
+          id: p.id,
+          name: p.name,
+        }))
       : (x.created_by || []).map((p: any) => ({ id: p.id, name: p.name }));
-      
   t.keywords = (type === "movie" ? x.keywords?.keywords : x.keywords?.results || [])
     .slice(0, 12)
     .map((k: any) => k.name);
 
-  // Get Trailer ID
   const trailer = (x.videos?.results || []).find(
     (v: any) => v.site === "YouTube" && (v.type === "Trailer" || v.type === "Teaser")
   );
