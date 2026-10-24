@@ -35,3 +35,11 @@ button {
 .animate-float {
   animation: floatSlow 6s ease-in-out infinite;
 }
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}

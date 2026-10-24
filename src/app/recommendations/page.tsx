@@ -6,7 +6,6 @@ import { Title, keyOf, MediaType } from "@/types/title";
 import { load, save, syncWithServer, State } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
 import { StorageControls } from "@/components/StorageControls";
-import { isIndianTitle } from "@/lib/recommend";
 
 type Rec = Title & { why: string };
 
@@ -71,7 +70,6 @@ export default function Recommendations() {
       setLoading(false);
       return;
     }
-
     setLoading(true);
     try {
       const r = await fetch("/api/recommendations", {
@@ -87,7 +85,6 @@ export default function Recommendations() {
           mood,
         }),
       });
-
       const d = await r.json();
       if (!r.ok) throw new Error(d.error);
 
@@ -124,7 +121,6 @@ export default function Recommendations() {
     syncWithServer().then(setState);
   }, []);
 
-  // Re-fetch or re-tune when discoveryStyle, eraFilter, or moodFilter changes
   const handleStyleChange = (style: "balanced" | "popular" | "deepcuts") => {
     setDiscoveryStyle(style);
     get(style, eraFilter, moodFilter);
@@ -196,19 +192,15 @@ export default function Recommendations() {
     [categories, state]
   );
 
-  // Determine which sections to render based on user filter selections
   const showIndianMovies =
     (regionFilter === "all" || regionFilter === "in") &&
     (formatFilter === "all" || formatFilter === "movie");
-
   const showGlobalMovies =
     (regionFilter === "all" || regionFilter === "global") &&
     (formatFilter === "all" || formatFilter === "movie");
-
   const showIndianSeries =
     (regionFilter === "all" || regionFilter === "in") &&
     (formatFilter === "all" || formatFilter === "tv");
-
   const showGlobalSeries =
     (regionFilter === "all" || regionFilter === "global") &&
     (formatFilter === "all" || formatFilter === "tv");
@@ -228,6 +220,7 @@ export default function Recommendations() {
             {subtitle && <p className="text-xs text-white/55 mt-0.5">{subtitle}</p>}
           </div>
         </div>
+
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">
           {items.map((r) => {
             const isWatched = watchedKeys.has(keyOf(r));
@@ -265,6 +258,14 @@ export default function Recommendations() {
                       {inWatchlist ? "✓ Watchlist" : "+ Watchlist"}
                     </button>
                   </div>
+
+                  <Link
+                    href={`/similar?type=${r.mediaType}&id=${r.id}`}
+                    className="w-full text-center rounded-lg border border-white/10 bg-white/5 py-1.5 text-[11px] font-medium text-white/80 transition hover:border-gold/40 hover:bg-gold/10 hover:text-gold"
+                  >
+                    Find Similar
+                  </Link>
+
                   <button
                     onClick={() => dismiss(r)}
                     title="Remove and don't recommend again"
@@ -318,9 +319,7 @@ export default function Recommendations() {
               </p>
             </div>
 
-            {/* Quick Format & Region Filters */}
             <div className="flex flex-wrap items-center gap-3">
-              {/* Format Filter */}
               <div className="flex rounded-full bg-white/5 p-1 border border-white/10 text-xs">
                 <button
                   onClick={() => setFormatFilter("all")}
@@ -348,7 +347,6 @@ export default function Recommendations() {
                 </button>
               </div>
 
-              {/* Region Filter */}
               <div className="flex rounded-full bg-white/5 p-1 border border-white/10 text-xs">
                 <button
                   onClick={() => setRegionFilter("all")}
@@ -378,10 +376,8 @@ export default function Recommendations() {
             </div>
           </div>
 
-          {/* Interactive Tuning Bar: Discovery Style, Era, & Mood */}
           <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 backdrop-blur-md">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* 1. Discovery Style Slider / Switcher */}
               <div>
                 <label className="text-xs font-bold uppercase tracking-wider text-gold block mb-2">
                   Discovery Depth
@@ -415,12 +411,11 @@ export default function Recommendations() {
                         : "text-white/60 hover:text-white"
                     }`}
                   >
-                    💎 Hidden Gems
+                    ★ Hidden Gems
                   </button>
                 </div>
               </div>
 
-              {/* 2. Era / Decade Cluster */}
               <div>
                 <label className="text-xs font-bold uppercase tracking-wider text-gold block mb-2">
                   Cinematic Era
@@ -449,7 +444,6 @@ export default function Recommendations() {
                 </div>
               </div>
 
-              {/* 3. Mood / Vibe Chips */}
               <div>
                 <label className="text-xs font-bold uppercase tracking-wider text-gold block mb-2">
                   Taste / Mood Focus
@@ -458,8 +452,8 @@ export default function Recommendations() {
                   {(
                     [
                       { id: "all", label: "All Moods" },
-                      { id: "mindbending", label: "🧠 Mind-Bending" },
-                      { id: "dark", label: "🌑 Dark & Gritty" },
+                      { id: "mindbending", label: "🌀 Mind-Bending" },
+                      { id: "dark", label: "🕯️ Dark & Gritty" },
                       { id: "adrenaline", label: "⚡ High Adrenaline" },
                       { id: "feelgood", label: "✨ Feel-Good" },
                     ] as const
@@ -482,6 +476,12 @@ export default function Recommendations() {
           </div>
         </div>
 
+        {error && (
+          <div className="mt-8 rounded-xl border border-red-500/30 bg-red-500/10 p-5 text-sm text-red-200">
+            {error}
+          </div>
+        )}
+
         {loading ? (
           <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">
             {Array.from({ length: 10 }).map((_, i) => (
@@ -490,12 +490,9 @@ export default function Recommendations() {
           </div>
         ) : (
           <div className="space-y-6 mt-6">
-            {/* Thematic Anchor Shelves (Hidden Gems, Mind-Bending, Vintage) */}
             {cleanThematicShelves.map((shelf) =>
               renderSection(shelf.title, shelf.badge, shelf.items, shelf.subtitle)
             )}
-
-            {/* Standard Categorized Shelves */}
             {showIndianMovies && renderSection("Indian Movies", "Cinema", cleanIndianMovies)}
             {showGlobalMovies && renderSection("Global & Hollywood Movies", "Movies", cleanGlobalMovies)}
             {showIndianSeries && renderSection("Indian Web Series & Shows", "Indian TV", cleanIndianSeries)}

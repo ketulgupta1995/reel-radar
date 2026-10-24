@@ -155,6 +155,31 @@ export async function getRecommendations(type: MediaType, id: number): Promise<T
   }
 }
 
+export async function getSimilar(type: MediaType, id: number): Promise<Title[]> {
+  try {
+    // Fetch from both "similar" and "recommendations" TMDB endpoints and merge
+    const [simRes, recRes] = await Promise.all([
+      get(`/${type}/${id}/similar`, { page: 1 }).catch(() => ({ results: [] })),
+      get(`/${type}/${id}/recommendations`, { page: 1 }).catch(() => ({ results: [] })),
+    ]);
+
+    const seen = new Map<number, Title>();
+    for (const x of [...(simRes.results || []), ...(recRes.results || [])]) {
+      if (!seen.has(x.id)) {
+        seen.set(x.id, normalize(x, type));
+      }
+    }
+
+    // Sort by rating descending
+    return Array.from(seen.values())
+      .filter((t) => t.id !== id)
+      .sort((a, b) => b.rating - a.rating)
+      .slice(0, 20);
+  } catch {
+    return [];
+  }
+}
+
 export async function detail(type: MediaType, id: number) {
   const x = await get(`/${type}/${id}`, { append_to_response: "credits,keywords,videos" });
   const t = normalize(x, type);

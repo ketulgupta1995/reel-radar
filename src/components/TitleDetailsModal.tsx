@@ -1,4 +1,5 @@
 "use client";
+
 import { useEffect, useState } from "react";
 import { Title } from "@/types/title";
 import Link from "next/link";
@@ -18,17 +19,21 @@ export function TitleDetailsModal({ title, onClose }: { title: Title; onClose: (
   }, [title]);
 
   return (
-    <div 
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm" 
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
       onClick={onClose}
     >
-      <div 
-        className="relative w-full max-w-3xl rounded-2xl border border-white/20 bg-neutral-900 p-6 shadow-2xl overflow-y-auto max-h-[90vh]" 
+      <div
+        className="relative w-full max-w-3xl rounded-2xl border border-white/20 bg-neutral-900 p-6 shadow-2xl overflow-y-auto max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}
       >
-        <button onClick={onClose} className="absolute right-4 top-4 text-2xl text-white/50 hover:text-white">
+        <button
+          onClick={onClose}
+          className="absolute right-4 top-4 text-2xl text-white/50 hover:text-white"
+        >
           &times;
         </button>
+
         <h2 className="text-2xl font-bold mr-8">{title.title}</h2>
         <div className="mt-1 flex items-center gap-2 text-xs text-gold">
           <span>{title.mediaType === "tv" ? "Series" : "Movie"}</span>
@@ -57,9 +62,19 @@ export function TitleDetailsModal({ title, onClose }: { title: Title; onClose: (
                 No official trailer available
               </div>
             )}
-            
+
             <div>
-              <h3 className="text-xs font-bold text-gold uppercase tracking-wider mb-2">Synopsis</h3>
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                <h3 className="text-xs font-bold text-gold uppercase tracking-wider">Synopsis</h3>
+                <Link
+                  href={`/similar?type=${title.mediaType}&id=${title.id}`}
+                  onClick={onClose}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-gold/40 bg-gold/15 px-3 py-1 text-xs font-semibold text-gold hover:bg-gold hover:text-black transition"
+                >
+                  Find Similar Titles →
+                </Link>
+              </div>
+
               <p className="text-sm text-white/80 leading-relaxed">{details?.overview || title.overview}</p>
 
               {details?.cast && details.cast.length > 0 && (
@@ -67,7 +82,11 @@ export function TitleDetailsModal({ title, onClose }: { title: Title; onClose: (
                   <h3 className="text-xs font-bold text-gold uppercase tracking-wider mb-2">Cast</h3>
                   <div className="flex flex-wrap gap-2">
                     {details.cast.map((c) => (
-                      <Link key={c.id} href={`/person/${c.id}`} className="rounded-full bg-white/10 px-3 py-1 text-xs text-white hover:bg-gold hover:text-black transition">
+                      <Link
+                        key={c.id}
+                        href={`/person/${c.id}`}
+                        className="rounded-full bg-white/10 px-3 py-1 text-xs text-white hover:bg-gold hover:text-black transition"
+                      >
                         {c.name}
                       </Link>
                     ))}
@@ -78,11 +97,15 @@ export function TitleDetailsModal({ title, onClose }: { title: Title; onClose: (
               {details?.creators && details.creators.length > 0 && (
                 <div className="mt-6">
                   <h3 className="text-xs font-bold text-gold uppercase tracking-wider mb-2">
-                    {title.mediaType === 'movie' ? 'Directors' : 'Creators'}
+                    {title.mediaType === "movie" ? "Directors" : "Creators"}
                   </h3>
                   <div className="flex flex-wrap gap-2">
                     {details.creators.map((c) => (
-                      <Link key={c.id} href={`/person/${c.id}`} className="rounded-full bg-white/10 px-3 py-1 text-xs text-white hover:bg-gold hover:text-black transition">
+                      <Link
+                        key={c.id}
+                        href={`/person/${c.id}`}
+                        className="rounded-full bg-white/10 px-3 py-1 text-xs text-white hover:bg-gold hover:text-black transition"
+                      >
                         {c.name}
                       </Link>
                     ))}

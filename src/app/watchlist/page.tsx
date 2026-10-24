@@ -32,7 +32,6 @@ export default function WatchlistPage() {
   useEffect(() => {
     setState(load());
     setIsLoaded(true);
-
     syncWithServer().then((synced) => {
       setState(synced);
     });
@@ -266,10 +265,16 @@ export default function WatchlistPage() {
                   <button
                     onClick={() => markAsWatched(t)}
                     title={`Mark ${t.title} as watched`}
-                    className="w-full rounded-lg bg-white/10 py-1.5 text-xs text-white transition hover:bg-white/20"
+                    className="w-full rounded-lg bg-white/10 py-1.5 text-xs font-semibold text-white transition hover:bg-white/20"
                   >
                     Mark as watched
                   </button>
+                  <Link
+                    href={`/similar?type=${t.mediaType}&id=${t.id}`}
+                    className="w-full text-center rounded-lg border border-white/10 bg-white/5 py-1.5 text-xs font-medium text-white/80 transition hover:border-gold/40 hover:bg-gold/10 hover:text-gold"
+                  >
+                    Find Similar
+                  </Link>
                   <button
                     onClick={() => removeFromWatchlist(t)}
                     title={`Remove ${t.title} from watchlist`}

@@ -38,7 +38,6 @@ export default function Discover() {
       return n;
     });
 
-  // Only exclude titles explicitly marked as watched or dismissed
   const getExcludeKeys = (s: State) => {
     return new Set([
       ...s.watched.map(keyOf),
@@ -71,7 +70,6 @@ export default function Discover() {
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || `Couldn't load ${type === "movie" ? "movies" : "series"}`);
         const results: Title[] = d.results || [];
-
         if (!results.length) {
           if (page > 1 && fresh.length === 0) {
             page = 1;
@@ -117,19 +115,15 @@ export default function Discover() {
     fetchCategoryBatch("tv", currentState, currentRegion, resetPage);
   };
 
-  // 1. Initial mount: load local state immediately, then sync with server file
   useEffect(() => {
     const s = load();
     setState(s);
     loadAllBatches(s, region, false);
-
-    // Sync in background to back up to data/storage.json without wiping local
     syncWithServer().then((synced) => {
       setState(synced);
     });
   }, []);
 
-  // 2. Region changes
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false;
@@ -146,6 +140,7 @@ export default function Discover() {
       return {
         ...s,
         watched: has ? s.watched.filter((x) => keyOf(x) !== keyOf(t)) : [...s.watched, t],
+        watchlist: has ? s.watchlist : s.watchlist.filter((x) => keyOf(x) !== keyOf(t)),
       };
     });
 
@@ -222,7 +217,7 @@ export default function Discover() {
                     title={isWatched ? "Remove from watched" : "Mark as watched"}
                     className={`flex-1 rounded-lg px-2 py-2 text-xs font-semibold transition ${
                       isWatched
-                        ? "bg-gold text-black shadow-sm"
+                        ? "bg-gold text-black shadow-sm font-bold"
                         : "bg-white/10 text-white hover:bg-white/20"
                     }`}
                   >
@@ -247,6 +242,14 @@ export default function Discover() {
                     {inWatchlist ? "✓ Watchlist" : "+ Watchlist"}
                   </button>
                 </div>
+
+                <Link
+                  href={`/similar?type=${t.mediaType}&id=${t.id}`}
+                  className="w-full text-center rounded-lg border border-white/10 bg-white/5 py-1.5 text-[11px] font-medium text-white/80 transition hover:border-gold/40 hover:bg-gold/10 hover:text-gold"
+                >
+                  Find Similar
+                </Link>
+
                 <button
                   onClick={() => dismissTitle(t)}
                   title="Remove and don't recommend again"
@@ -300,7 +303,6 @@ export default function Discover() {
             Analysis
           </Link>
           <StorageControls onStateChange={(merged) => setState(merged)} />
-
           <button
             onClick={() => {
               if (confirm("Reset all discovery history and file storage?")) {
@@ -341,7 +343,6 @@ export default function Discover() {
           )}
         </div>
 
-        {/* View and Region Selectors */}
         <div className="mt-7 flex flex-wrap items-center justify-between gap-4">
           <div className="flex gap-2">
             {(["all", "movie", "tv"] as Filter[]).map((x) => (
@@ -397,7 +398,6 @@ export default function Discover() {
           </div>
         )}
 
-        {/* Movies Section */}
         {(filter === "all" || filter === "movie") && (
           <div className="mt-10">
             <div className="flex items-center justify-between mb-4">
@@ -421,7 +421,6 @@ export default function Discover() {
           </div>
         )}
 
-        {/* Series Section */}
         {(filter === "all" || filter === "tv") && (
           <div className="mt-14">
             <div className="flex items-center justify-between mb-4">
@@ -445,7 +444,6 @@ export default function Discover() {
           </div>
         )}
 
-        {/* Series Progress Panel */}
         {series.length > 0 && (
           <section className="mt-14 rounded-xl border border-white/10 bg-panel p-5">
             <h2 className="font-bold">Series progress</h2>
@@ -464,7 +462,6 @@ export default function Discover() {
           </section>
         )}
 
-        {/* Navigation CTAs */}
         <div className="mt-12 flex flex-wrap gap-3">
           {count >= 10 ? (
             <Link
