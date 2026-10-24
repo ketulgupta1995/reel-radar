@@ -140,23 +140,31 @@ export default function Recommendations() {
     get(discoveryStyle, eraFilter, mood);
   };
 
-  const seen = (title: Title) => {
-    persist((s) => ({
-      ...s,
-      watched: s.watched.some((x) => keyOf(x) === keyOf(title))
-        ? s.watched
-        : [...s.watched, title],
-      watchlist: s.watchlist.filter((x) => keyOf(x) !== keyOf(title)),
-    }));
+  const toggleWatched = (title: Title) => {
+    persist((s) => {
+      const isAlreadyWatched = s.watched.some((x) => keyOf(x) === keyOf(title));
+      return {
+        ...s,
+        watched: isAlreadyWatched
+          ? s.watched.filter((x) => keyOf(x) !== keyOf(title))
+          : [...s.watched, title],
+        watchlist: isAlreadyWatched
+          ? s.watchlist
+          : s.watchlist.filter((x) => keyOf(x) !== keyOf(title)),
+      };
+    });
   };
 
-  const addToWatchlist = (title: Title) => {
-    persist((s) => ({
-      ...s,
-      watchlist: s.watchlist.some((x) => keyOf(x) === keyOf(title))
-        ? s.watchlist
-        : [...s.watchlist, title],
-    }));
+  const toggleWatchlist = (title: Title) => {
+    persist((s) => {
+      const inWatchlist = s.watchlist.some((x) => keyOf(x) === keyOf(title));
+      return {
+        ...s,
+        watchlist: inWatchlist
+          ? s.watchlist.filter((x) => keyOf(x) !== keyOf(title))
+          : [...s.watchlist, title],
+      };
+    });
   };
 
   const dismiss = (title: Title) => {
@@ -168,8 +176,9 @@ export default function Recommendations() {
     }));
   };
 
-  const watchlistKeys = new Set(state.watchlist.map(keyOf));
-  const dismissedKeys = new Set(state.dismissed || []);
+  const watchedKeys = useMemo(() => new Set(state.watched.map(keyOf)), [state.watched]);
+  const watchlistKeys = useMemo(() => new Set(state.watchlist.map(keyOf)), [state.watchlist]);
+  const dismissedKeys = useMemo(() => new Set(state.dismissed || []), [state.dismissed]);
 
   const cleanCategory = (items: Rec[]) =>
     items.filter((r) => !watchlistKeys.has(keyOf(r)) && !dismissedKeys.has(keyOf(r)));
@@ -220,34 +229,53 @@ export default function Recommendations() {
           </div>
         </div>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">
-          {items.map((r) => (
-            <div key={keyOf(r)} className="flex flex-col">
-              <TitleCard title={r} why={r.why} />
-              <div className="mt-2 flex flex-col gap-1.5">
-                <div className="flex gap-2">
+          {items.map((r) => {
+            const isWatched = watchedKeys.has(keyOf(r));
+            const inWatchlist = watchlistKeys.has(keyOf(r));
+            return (
+              <div key={keyOf(r)} className="flex flex-col">
+                <TitleCard
+                  title={r}
+                  why={r.why}
+                  selected={isWatched}
+                  onToggle={() => toggleWatched(r)}
+                />
+                <div className="mt-2 flex flex-col gap-1.5">
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => toggleWatched(r)}
+                      title={isWatched ? "Remove from watched" : "Mark as watched"}
+                      className={`flex-1 rounded-lg px-2 py-2 text-xs font-semibold transition ${
+                        isWatched
+                          ? "bg-gold text-black shadow-sm font-bold"
+                          : "bg-white/10 text-white hover:bg-white/20"
+                      }`}
+                    >
+                      {isWatched ? "✓ Seen" : "Mark seen"}
+                    </button>
+                    <button
+                      onClick={() => toggleWatchlist(r)}
+                      title={inWatchlist ? "Remove from watchlist" : "Add to watchlist"}
+                      className={`flex-1 rounded-lg border px-2 py-2 text-xs font-semibold transition ${
+                        inWatchlist
+                          ? "border-gold/50 bg-gold/20 text-gold"
+                          : "border-gold/30 bg-gold/10 text-gold hover:bg-gold hover:text-black"
+                      }`}
+                    >
+                      {inWatchlist ? "✓ Watchlist" : "+ Watchlist"}
+                    </button>
+                  </div>
                   <button
-                    onClick={() => seen(r)}
-                    className="flex-1 rounded-lg bg-white/10 px-2 py-2 text-xs hover:bg-white/20 transition"
+                    onClick={() => dismiss(r)}
+                    title="Remove and don't recommend again"
+                    className="w-full rounded-lg border border-white/10 py-1.5 text-[11px] text-white/45 transition hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-300"
                   >
-                    Mark seen
-                  </button>
-                  <button
-                    onClick={() => addToWatchlist(r)}
-                    className="flex-1 rounded-lg bg-gold/20 text-gold border border-gold/30 px-2 py-2 text-xs font-semibold hover:bg-gold hover:text-black transition"
-                  >
-                    + Watchlist
+                    Not interested
                   </button>
                 </div>
-                <button
-                  onClick={() => dismiss(r)}
-                  title="Remove and don't recommend again"
-                  className="w-full rounded-lg border border-white/10 py-1.5 text-[11px] text-white/45 transition hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-300"
-                >
-                  Not interested
-                </button>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
     );
