@@ -29,7 +29,8 @@ export function rank(
   candidates: Title[],
   seen: string[] = [],
   dismissed: string[] = [],
-  watchlist: (Title | string)[] = []
+  watchlist: (Title | string)[] = [],
+  limit = 20
 ): Title[] {
   if (!candidates.length) return [];
 
@@ -43,7 +44,7 @@ export function rank(
   const gs = frequencies(watched, (t) => t.genres, itemWeight);
   const people = frequencies(
     watched,
-    (t) => [...(t.cast || []), ...(t.creators || [])].map((p) => p.id), // Fetch IDs
+    (t) => [...(t.cast || []), ...(t.creators || [])].map((p) => p.id),
     itemWeight
   );
   const words = frequencies(watched, (t) => t.keywords || [], itemWeight);
@@ -68,7 +69,7 @@ export function rank(
   const scored: (Title & { _score: number })[] = Array.from(uniqueCandidates.values()).map((c) => {
     const isIndian = isIndianTitle(c);
     const genreScore = overlap(c.genres, gs);
-    const castScore = overlap([...(c.cast || []), ...(c.creators || [])].map(p => p.id), people);
+    const castScore = overlap([...(c.cast || []), ...(c.creators || [])].map((p) => p.id), people);
     const keywordScore = overlap(c.keywords || [], words);
     const typeFit = 1 - Math.abs((c.mediaType === "tv" ? 1 : 0) - typeShare);
     const quality = Math.min(Math.max((c.rating - 5) / 5, 0), 1);
@@ -82,8 +83,14 @@ export function rank(
     }
 
     const seenPenalty = seenKeys.has(keyOf(c)) ? 0.45 : 1.0;
+
     const rawScore =
-      (4.2 * genreScore + 2.2 * keywordScore + 1.8 * castScore + 0.9 * quality + 0.3 * popularityBonus + 0.5 * typeFit) *
+      (4.2 * genreScore +
+        2.2 * keywordScore +
+        1.8 * castScore +
+        0.9 * quality +
+        0.3 * popularityBonus +
+        0.5 * typeFit) *
       regionScore *
       seenPenalty;
 
@@ -101,7 +108,7 @@ export function rank(
   const genreCounts = new Map<number, number>();
 
   for (const x of scored) {
-    if (picked.length >= 20) break;
+    if (picked.length >= limit) break;
     const overSaturated = x.genres.some((g) => (genreCounts.get(g) || 0) >= 5);
     if (overSaturated && scored.length - picked.length > 20) continue;
     picked.push(x);
@@ -111,12 +118,53 @@ export function rank(
   return picked.map(({ _score, ...x }) => x);
 }
 
+export type CategorizedRecommendations = {
+  indianMovies: Title[];
+  globalMovies: Title[];
+  indianSeries: Title[];
+  globalSeries: Title[];
+};
+
+export function rankCategorized(
+  watched: Title[],
+  candidates: Title[],
+  seen: string[] = [],
+  dismissed: string[] = [],
+  watchlist: (Title | string)[] = [],
+  limitPerCategory = 12
+): CategorizedRecommendations {
+  const ranked = rank(watched, candidates, seen, dismissed, watchlist, 200);
+
+  const buckets: CategorizedRecommendations = {
+    indianMovies: [],
+    globalMovies: [],
+    indianSeries: [],
+    globalSeries: [],
+  };
+
+  for (const item of ranked) {
+    const isIndian = isIndianTitle(item);
+    const isTv = item.mediaType === "tv";
+
+    if (isTv && isIndian && buckets.indianSeries.length < limitPerCategory) {
+      buckets.indianSeries.push(item);
+    } else if (isTv && !isIndian && buckets.globalSeries.length < limitPerCategory) {
+      buckets.globalSeries.push(item);
+    } else if (!isTv && isIndian && buckets.indianMovies.length < limitPerCategory) {
+      buckets.indianMovies.push(item);
+    } else if (!isTv && !isIndian && buckets.globalMovies.length < limitPerCategory) {
+      buckets.globalMovies.push(item);
+    }
+  }
+
+  return buckets;
+}
+
 export function explanation(candidate: Title, watched: Title[]): string {
   const isCandidateIndian = isIndianTitle(candidate);
   const matchedWatched = watched.find((w) => candidate.genres.some((g) => w.genres.includes(g)));
-
   const sharedPeople = [...(candidate.cast || []), ...(candidate.creators || [])].filter((p) =>
-    watched.some((w) => [...(w.cast || []), ...(w.creators || [])].map(x => x.id).includes(p.id))
+    watched.some((w) => [...(w.cast || []), ...(w.creators || [])].map((x) => x.id).includes(p.id))
   );
 
   if (sharedPeople.length > 0) {
@@ -126,20 +174,25 @@ export function explanation(candidate: Title, watched: Title[]): string {
   if (isCandidateIndian) {
     const indianWatched = watched.find(isIndianTitle);
     if (indianWatched) {
-      return `Recommended Indian ${candidate.mediaType === "tv" ? "series" : "film"} pairing with your history of titles like "${indianWatched.title}".`;
+      return `Recommended Indian ${
+        candidate.mediaType === "tv" ? "series" : "film"
+      } pairing with your history of titles like "${indianWatched.title}".`;
     }
-    return `Critically acclaimed Indian ${candidate.mediaType === "tv" ? "series" : "movie"} (${candidate.rating.toFixed(1)}) matching your genre preferences.`;
+    return `Critically acclaimed Indian ${
+      candidate.mediaType === "tv" ? "series" : "movie"
+    } (${candidate.rating.toFixed(1)}) matching your genre preferences.`;
   }
 
   const shared = candidate.genres.filter((g) => watched.some((w) => w.genres.includes(g)));
   const names = candidate.genreNames?.filter((_, i) => shared.includes(candidate.genres[i])) || [];
-
   if (names.length && matchedWatched) {
     return `Matches the ${names.slice(0, 2).join(" & ")} style from your viewing of "${matchedWatched.title}".`;
   }
 
   if (candidate.rating >= 7.8) {
-    return `A top-rated ${candidate.mediaType === "tv" ? "series" : "movie"} (${candidate.rating.toFixed(1)}) curated to expand your taste profile.`;
+    return `A top-rated ${candidate.mediaType === "tv" ? "series" : "movie"} (${candidate.rating.toFixed(
+      1
+    )}) curated to expand your taste profile.`;
   }
 
   return "A high-affinity recommendation aligned with your viewing patterns.";

@@ -147,7 +147,13 @@ export default function Discover() {
         <Link href="/" className="font-bold tracking-[.2em] text-gold">
           REEL RADAR
         </Link>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <Link
+            href="/search"
+            className="text-white/70 transition hover:text-white"
+          >
+            Search
+          </Link>
           <Link
             href="/watchlist"
             className="rounded-full bg-white/10 px-3.5 py-1.5 text-xs text-white/80 transition hover:bg-white/20 hover:text-white"
@@ -160,7 +166,18 @@ export default function Discover() {
           >
             Viewed titles (<b className="text-gold">{count}</b>)
           </Link>
-
+          <Link
+            href="/recommendations"
+            className="text-white/70 transition hover:text-white text-xs"
+          >
+            Recommendations
+          </Link>
+          <Link
+            href="/analysis"
+            className="text-white/70 transition hover:text-white text-xs"
+          >
+            Analysis
+          </Link>
           <StorageControls onStateChange={(merged) => setState(merged)} />
 
           <button
@@ -268,14 +285,67 @@ export default function Discover() {
           </div>
         ) : (
           <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">
-            {titles.map((t) => (
-              <TitleCard
-                key={keyOf(t)}
-                title={t}
-                selected={selected.has(keyOf(t))}
-                onToggle={() => toggle(t)}
-              />
-            ))}
+            {titles.map((t) => {
+              const isWatched = selected.has(keyOf(t));
+              const inWatchlist = state.watchlist.some((x) => keyOf(x) === keyOf(t));
+              return (
+                <div key={keyOf(t)} className="flex flex-col">
+                  <TitleCard
+                    title={t}
+                    selected={isWatched}
+                    onToggle={() => toggle(t)}
+                  />
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => toggle(t)}
+                        title={isWatched ? "Remove from watched" : "Mark as watched"}
+                        className={`flex-1 rounded-lg px-2 py-2 text-xs font-semibold transition ${
+                          isWatched
+                            ? "bg-gold text-black shadow-sm"
+                            : "bg-white/10 text-white hover:bg-white/20"
+                        }`}
+                      >
+                        {isWatched ? "✓ Seen" : "Mark seen"}
+                      </button>
+                      <button
+                        onClick={() => {
+                          update((s) => ({
+                            ...s,
+                            watchlist: inWatchlist
+                              ? s.watchlist.filter((x) => keyOf(x) !== keyOf(t))
+                              : [...s.watchlist, t],
+                          }));
+                        }}
+                        title={inWatchlist ? "Remove from watchlist" : "Add to watchlist"}
+                        className={`flex-1 rounded-lg border px-2 py-2 text-xs font-semibold transition ${
+                          inWatchlist
+                            ? "border-gold/50 bg-gold/20 text-gold"
+                            : "border-gold/30 bg-gold/10 text-gold hover:bg-gold hover:text-black"
+                        }`}
+                      >
+                        {inWatchlist ? "✓ Watchlist" : "+ Watchlist"}
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const k = keyOf(t);
+                        update((s) => ({
+                          ...s,
+                          dismissed: s.dismissed ? [...new Set([...s.dismissed, k])] : [k],
+                          watchlist: s.watchlist.filter((x) => keyOf(x) !== k),
+                        }));
+                        setTitles((prev) => prev.filter((x) => keyOf(x) !== k));
+                      }}
+                      title="Remove and don't recommend again"
+                      className="w-full rounded-lg border border-white/10 py-1.5 text-[11px] text-white/45 transition hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-300"
+                    >
+                      Not interested
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 

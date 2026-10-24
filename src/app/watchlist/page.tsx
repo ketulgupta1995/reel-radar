@@ -123,6 +123,9 @@ export default function WatchlistPage() {
           <Link href="/discover" className="text-white/70 transition hover:text-white">
             Discover
           </Link>
+          <Link href="/search" className="text-white/70 transition hover:text-white">
+            Search
+          </Link>
           <Link href="/watched" className="text-white/70 transition hover:text-white">
             Viewed titles ({state.watched.length})
           </Link>
@@ -131,6 +134,9 @@ export default function WatchlistPage() {
             className="text-white/70 transition hover:text-white"
           >
             Recommendations
+          </Link>
+          <Link href="/analysis" className="text-white/70 transition hover:text-white">
+            Analysis
           </Link>
           <StorageControls onStateChange={(s) => setState(s)} />
         </div>

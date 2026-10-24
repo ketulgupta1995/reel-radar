@@ -1,4 +1,37 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-*{box-sizing:border-box} body{margin:0;background:#07070c;color:#f5f3ef;font-family:Arial,sans-serif} button{font:inherit} .poster{background:linear-gradient(145deg,#24243a,#101019)}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #07070c;
+  color: #f5f3ef;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button {
+  font: inherit;
+}
+
+.poster {
+  background: linear-gradient(145deg, #1e1e2d, #0d0d16);
+}
+
+@keyframes floatSlow {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-8px) rotate(1deg);
+  }
+}
+
+.animate-float {
+  animation: floatSlow 6s ease-in-out infinite;
+}

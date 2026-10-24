@@ -1,14 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { Title, keyOf } from "@/types/title";
+import { useEffect, useState, useMemo } from "react";
+import { Title, keyOf, MediaType } from "@/types/title";
 import { load, save, syncWithServer, State } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
 import { StorageControls } from "@/components/StorageControls";
 import { isIndianTitle } from "@/lib/recommend";
 
 type Rec = Title & { why: string };
+
+type CategorizedData = {
+  indianMovies: Rec[];
+  globalMovies: Rec[];
+  indianSeries: Rec[];
+  globalSeries: Rec[];
+};
 
 export default function Recommendations() {
   const [state, setState] = useState<State>({
@@ -18,11 +25,19 @@ export default function Recommendations() {
     watchlist: [],
     dismissed: [],
   });
-  const [recs, setRecs] = useState<Rec[]>([]);
+
+  const [categories, setCategories] = useState<CategorizedData>({
+    indianMovies: [],
+    globalMovies: [],
+    indianSeries: [],
+    globalSeries: [],
+  });
+
+  const [formatFilter, setFormatFilter] = useState<"all" | MediaType>("all");
+  const [regionFilter, setRegionFilter] = useState<"all" | "in" | "global">("all");
   const [summary, setSummary] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"all" | "in" | "global">("all");
 
   const persist = (fn: (s: State) => State) =>
     setState((s) => {
@@ -38,6 +53,7 @@ export default function Recommendations() {
       setLoading(false);
       return;
     }
+
     setLoading(true);
     try {
       const r = await fetch("/api/recommendations", {
@@ -50,13 +66,23 @@ export default function Recommendations() {
           watchlist: s.watchlist || [],
         }),
       });
+
       const d = await r.json();
       if (!r.ok) throw new Error(d.error);
-      setRecs(d.recommendations);
+
+      setCategories(d.categories);
       setSummary(d.summary);
+
+      const allFetched: Rec[] = [
+        ...d.categories.indianMovies,
+        ...d.categories.globalMovies,
+        ...d.categories.indianSeries,
+        ...d.categories.globalSeries,
+      ];
+
       save({
         ...s,
-        shown: [...new Set([...s.shown, ...d.recommendations.map(keyOf)])],
+        shown: [...new Set([...s.shown, ...allFetched.map(keyOf)])],
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to recommend");
@@ -67,9 +93,7 @@ export default function Recommendations() {
 
   useEffect(() => {
     get();
-    syncWithServer().then((synced) => {
-      setState(synced);
-    });
+    syncWithServer().then(setState);
   }, []);
 
   const seen = (title: Title) => {
@@ -80,7 +104,6 @@ export default function Recommendations() {
         : [...s.watched, title],
       watchlist: s.watchlist.filter((x) => keyOf(x) !== keyOf(title)),
     }));
-    setRecs((r) => r.filter((x) => keyOf(x) !== keyOf(title)));
   };
 
   const addToWatchlist = (title: Title) => {
@@ -89,14 +112,6 @@ export default function Recommendations() {
       watchlist: s.watchlist.some((x) => keyOf(x) === keyOf(title))
         ? s.watchlist
         : [...s.watchlist, title],
-    }));
-    setRecs((r) => r.filter((x) => keyOf(x) !== keyOf(title)));
-  };
-
-  const removeFromWatchlist = (title: Title) => {
-    persist((s) => ({
-      ...s,
-      watchlist: s.watchlist.filter((x) => keyOf(x) !== keyOf(title)),
     }));
   };
 
@@ -107,200 +122,200 @@ export default function Recommendations() {
       dismissed: s.dismissed ? [...new Set([...s.dismissed, k])] : [k],
       watchlist: s.watchlist.filter((x) => keyOf(x) !== k),
     }));
-    setRecs((r) => r.filter((x) => keyOf(x) !== k));
   };
 
-  if (!loading && state.watched.length < 10) {
-    return (
-      <main className="grid min-h-screen place-items-center p-6 text-center">
-        <div>
-          <h1 className="text-3xl font-bold">A little more history first</h1>
-          <p className="mt-3 text-white/60">
-            Pick at least 10 watched titles to unlock recommendations.
-          </p>
-          <div className="mt-6 flex justify-center gap-3">
-            <Link
-              href="/discover"
-              className="inline-block rounded-full bg-gold px-6 py-3 font-bold text-black"
-            >
-              Continue discovery
-            </Link>
-            {state.watched.length > 0 && (
-              <Link
-                href="/watched"
-                className="inline-block rounded-full border border-white/20 px-6 py-3 font-bold text-white hover:border-white/40"
-              >
-                Viewed titles ({state.watched.length})
-              </Link>
-            )}
-          </div>
-        </div>
-      </main>
-    );
-  }
-
   const watchlistKeys = new Set(state.watchlist.map(keyOf));
-  const filteredRecs = recs
-    .filter((r) => !watchlistKeys.has(keyOf(r)))
-    .filter((r) => {
-      if (tab === "in") return isIndianTitle(r);
-      if (tab === "global") return !isIndianTitle(r);
-      return true;
-    });
+  const dismissedKeys = new Set(state.dismissed || []);
+
+  const cleanCategory = (items: Rec[]) =>
+    items.filter((r) => !watchlistKeys.has(keyOf(r)) && !dismissedKeys.has(keyOf(r)));
+
+  const cleanIndianMovies = useMemo(() => cleanCategory(categories.indianMovies), [categories, state]);
+  const cleanGlobalMovies = useMemo(() => cleanCategory(categories.globalMovies), [categories, state]);
+  const cleanIndianSeries = useMemo(() => cleanCategory(categories.indianSeries), [categories, state]);
+  const cleanGlobalSeries = useMemo(() => cleanCategory(categories.globalSeries), [categories, state]);
+
+  // Determine which sections to render based on user filter selections
+  const showIndianMovies =
+    (regionFilter === "all" || regionFilter === "in") &&
+    (formatFilter === "all" || formatFilter === "movie");
+
+  const showGlobalMovies =
+    (regionFilter === "all" || regionFilter === "global") &&
+    (formatFilter === "all" || formatFilter === "movie");
+
+  const showIndianSeries =
+    (regionFilter === "all" || regionFilter === "in") &&
+    (formatFilter === "all" || formatFilter === "tv");
+
+  const showGlobalSeries =
+    (regionFilter === "all" || regionFilter === "global") &&
+    (formatFilter === "all" || formatFilter === "tv");
+
+  const renderSection = (title: string, badge: string, items: Rec[]) => {
+    if (items.length === 0) return null;
+    return (
+      <section className="mt-10">
+        <div className="flex items-center gap-3 mb-4">
+          <h2 className="text-2xl font-bold text-white">{title}</h2>
+          <span className="rounded-full bg-gold/15 px-3 py-0.5 text-xs font-semibold text-gold border border-gold/30">
+            {badge} ({items.length})
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">
+          {items.map((r) => (
+            <div key={keyOf(r)} className="flex flex-col">
+              <TitleCard title={r} why={r.why} />
+              <div className="mt-2 flex flex-col gap-1.5">
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => seen(r)}
+                    className="flex-1 rounded-lg bg-white/10 px-2 py-2 text-xs hover:bg-white/20"
+                  >
+                    Mark seen
+                  </button>
+                  <button
+                    onClick={() => addToWatchlist(r)}
+                    className="flex-1 rounded-lg bg-gold/20 text-gold border border-gold/30 px-2 py-2 text-xs font-semibold hover:bg-gold hover:text-black transition"
+                  >
+                    + Watchlist
+                  </button>
+                </div>
+                <button
+                  onClick={() => dismiss(r)}
+                  title="Remove and don't recommend again"
+                  className="w-full rounded-lg border border-white/10 py-1.5 text-[11px] text-white/45 transition hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-300"
+                >
+                  Not interested
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    );
+  };
 
   return (
-    <main className="min-h-screen px-4 py-8 md:px-10">
+    <main className="min-h-screen px-4 py-8 md:px-10 pb-16">
       <header className="mx-auto flex max-w-7xl items-center justify-between gap-4">
         <Link href="/" className="font-bold tracking-[.2em] text-gold">
           REEL RADAR
         </Link>
         <div className="flex flex-wrap items-center gap-4 text-sm">
+          <Link href="/discover" className="text-white/70 hover:text-white">
+            Discover
+          </Link>
+          <Link href="/search" className="text-white/70 hover:text-white">
+            Search
+          </Link>
           <Link href="/watchlist" className="text-white/70 hover:text-white">
             Watchlist ({state.watchlist.length})
           </Link>
           <Link href="/watched" className="text-white/70 hover:text-white">
             Viewed titles ({state.watched.length})
           </Link>
-          <Link href="/discover" className="text-white/70 hover:text-white">
-            Discover
+          <Link href="/analysis" className="text-white/70 hover:text-white">
+            Analysis
           </Link>
           <StorageControls onStateChange={(s) => setState(s)} />
         </div>
       </header>
 
-      <section className="mx-auto max-w-7xl py-10">
+      <div className="mx-auto max-w-7xl py-10">
         <div className="flex flex-wrap items-baseline justify-between gap-4">
           <div>
             <h1 className="text-4xl font-bold">Recommended for You</h1>
-            <p className="mt-3 text-white/65">
-              Personalized from your history
-              {summary.length ? `: ${summary.join(", ")}` : ""}. Synopses and rationale included.
+            <p className="mt-2 text-sm text-white/65">
+              Personalized from your taste history
+              {summary.length ? `: ${summary.join(", ")}` : ""}.
             </p>
           </div>
-          <div className="flex gap-2 rounded-full bg-white/5 p-1 border border-white/10">
-            <button
-              onClick={() => setTab("all")}
-              className={`rounded-full px-3 py-1.5 text-xs ${
-                tab === "all" ? "bg-gold text-black font-semibold" : "text-white/70"
-              }`}
-            >
-              All ({recs.filter((r) => !watchlistKeys.has(keyOf(r))).length})
-            </button>
-            <button
-              onClick={() => setTab("in")}
-              className={`rounded-full px-3 py-1.5 text-xs ${
-                tab === "in" ? "bg-gold text-black font-semibold" : "text-white/70"
-              }`}
-            >
-              Indian ({recs.filter((r) => !watchlistKeys.has(keyOf(r)) && isIndianTitle(r)).length})
-            </button>
-            <button
-              onClick={() => setTab("global")}
-              className={`rounded-full px-3 py-1.5 text-xs ${
-                tab === "global" ? "bg-gold text-black font-semibold" : "text-white/70"
-              }`}
-            >
-              Hollywood & Global ({recs.filter((r) => !watchlistKeys.has(keyOf(r)) && !isIndianTitle(r)).length})
-            </button>
+
+          {/* Interactive Filters: Format & Region */}
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Format Filter */}
+            <div className="flex rounded-full bg-white/5 p-1 border border-white/10 text-xs">
+              <button
+                onClick={() => setFormatFilter("all")}
+                className={`rounded-full px-3 py-1.5 ${
+                  formatFilter === "all" ? "bg-gold text-black font-semibold" : "text-white/70"
+                }`}
+              >
+                All Formats
+              </button>
+              <button
+                onClick={() => setFormatFilter("movie")}
+                className={`rounded-full px-3 py-1.5 ${
+                  formatFilter === "movie" ? "bg-gold text-black font-semibold" : "text-white/70"
+                }`}
+              >
+                Movies
+              </button>
+              <button
+                onClick={() => setFormatFilter("tv")}
+                className={`rounded-full px-3 py-1.5 ${
+                  formatFilter === "tv" ? "bg-gold text-black font-semibold" : "text-white/70"
+                }`}
+              >
+                Series
+              </button>
+            </div>
+
+            {/* Region Filter */}
+            <div className="flex rounded-full bg-white/5 p-1 border border-white/10 text-xs">
+              <button
+                onClick={() => setRegionFilter("all")}
+                className={`rounded-full px-3 py-1.5 ${
+                  regionFilter === "all" ? "bg-gold text-black font-semibold" : "text-white/70"
+                }`}
+              >
+                All Regions
+              </button>
+              <button
+                onClick={() => setRegionFilter("in")}
+                className={`rounded-full px-3 py-1.5 ${
+                  regionFilter === "in" ? "bg-gold text-black font-semibold" : "text-white/70"
+                }`}
+              >
+                Indian
+              </button>
+              <button
+                onClick={() => setRegionFilter("global")}
+                className={`rounded-full px-3 py-1.5 ${
+                  regionFilter === "global" ? "bg-gold text-black font-semibold" : "text-white/70"
+                }`}
+              >
+                Global
+              </button>
+            </div>
           </div>
         </div>
 
-        {state.watchlist.length > 0 && (
-          <div className="mt-6 rounded-xl border border-gold/40 bg-gold/10 p-4 text-sm">
-            <div className="flex items-center justify-between">
-              <b>My watchlist ({state.watchlist.length})</b>
-              <Link href="/watchlist" className="text-xs text-gold underline hover:text-white">
-                View full watchlist →
-              </Link>
-            </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {state.watchlist.map((t) => (
-                <span
-                  key={keyOf(t)}
-                  className="rounded-full bg-black/40 px-3 py-1 text-white flex items-center gap-1"
-                >
-                  {t.title}
-                  <button
-                    onClick={() => removeFromWatchlist(t)}
-                    aria-label={`Remove ${t.title}`}
-                    className="ml-1 text-gold hover:text-white"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {error ? (
-          <div className="mt-8 rounded-xl border border-red-400/40 p-5">
-            {error}{" "}
-            <button className="underline" onClick={get}>
-              Retry
-            </button>
-          </div>
-        ) : loading ? (
+        {loading ? (
           <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">
-            {Array.from({ length: 10 }, (_, i) => (
-              <div className="poster aspect-[2/3] animate-pulse rounded-xl" key={i} />
+            {Array.from({ length: 10 }).map((_, i) => (
+              <div key={i} className="poster aspect-[2/3] animate-pulse rounded-xl" />
             ))}
-          </div>
-        ) : filteredRecs.length === 0 ? (
-          <div className="mt-12 rounded-xl border border-white/10 p-8 text-center text-white/60 text-sm">
-            No recommendations to display right now. Try refreshing or discovering more titles.
           </div>
         ) : (
-          <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">
-            {filteredRecs.map((r) => (
-              <div key={keyOf(r)} className="flex flex-col">
-                <TitleCard title={r} why={r.why} />
-                <div className="mt-2 flex flex-col gap-1.5">
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => seen(r)}
-                      className="flex-1 rounded-lg bg-white/10 px-2 py-2 text-xs hover:bg-white/20"
-                    >
-                      Mark seen
-                    </button>
-                    <button
-                      onClick={() => addToWatchlist(r)}
-                      className="flex-1 rounded-lg bg-gold/20 text-gold border border-gold/30 px-2 py-2 text-xs font-semibold hover:bg-gold hover:text-black transition"
-                    >
-                      + Watchlist
-                    </button>
-                  </div>
-                  <button
-                    onClick={() => dismiss(r)}
-                    title="Remove and don't recommend again"
-                    className="w-full rounded-lg border border-white/10 py-1.5 text-[11px] text-white/45 transition hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-300"
-                  >
-                    Not interested
-                  </button>
-                </div>
-              </div>
-            ))}
+          <div className="space-y-6">
+            {showIndianMovies && renderSection("Indian Movies", "Cinema", cleanIndianMovies)}
+            {showGlobalMovies && renderSection("Global & Hollywood Movies", "Movies", cleanGlobalMovies)}
+            {showIndianSeries && renderSection("Indian Web Series & Shows", "Indian TV", cleanIndianSeries)}
+            {showGlobalSeries && renderSection("Global & International Series", "TV Shows", cleanGlobalSeries)}
           </div>
         )}
 
-        <div className="mt-10 flex flex-wrap gap-3">
-          <button onClick={get} className="rounded-full border border-white/20 px-6 py-3">
+        <div className="mt-12 flex flex-wrap gap-3">
+          <button onClick={get} className="rounded-full border border-white/20 px-6 py-3 text-sm">
             Refresh recommendations
           </button>
-          <Link
-            href="/watchlist"
-            className="rounded-full border border-white/20 px-6 py-3"
-          >
-            Go to Watchlist ({state.watchlist.length})
-          </Link>
-          <Link
-            href="/discover"
-            className="rounded-full bg-gold px-6 py-3 font-bold text-black"
-          >
+          <Link href="/discover" className="rounded-full bg-gold px-6 py-3 font-bold text-black text-sm">
             Discover more titles
           </Link>
         </div>
-      </section>
+      </div>
     </main>
   );
 }

@@ -66,6 +66,8 @@ export default function SearchPage() {
           <Link href="/discover" className="text-white/70 hover:text-white">Discover</Link>
           <Link href="/watchlist" className="text-white/70 hover:text-white">Watchlist</Link>
           <Link href="/watched" className="text-white/70 hover:text-white">Viewed ({state.watched.length})</Link>
+          <Link href="/recommendations" className="text-white/70 hover:text-white">Recommendations</Link>
+          <Link href="/analysis" className="text-white/70 hover:text-white">Analysis</Link>
           <StorageControls onStateChange={setState} />
         </div>
       </header>
