@@ -15,6 +15,20 @@ export default function SearchPage() {
   useEffect(() => {
     setState(load());
     syncWithServer().then(setState);
+
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search);
+      const q = p.get("q") || p.get("query");
+      if (q) {
+        setQuery(q);
+        setLoading(true);
+        fetch(`/api/search?query=${encodeURIComponent(q)}`)
+          .then((r) => r.json())
+          .then((d) => setResults(d.results || []))
+          .catch(console.error)
+          .finally(() => setLoading(false));
+      }
+    }
   }, []);
 
   const handleSearch = async (e: React.FormEvent) => {
