@@ -10,11 +10,20 @@ import { isIndianTitle } from "@/lib/recommend";
 
 type Rec = Title & { why: string };
 
+type ThematicShelf = {
+  id: string;
+  title: string;
+  subtitle: string;
+  badge: string;
+  items: Rec[];
+};
+
 type CategorizedData = {
   indianMovies: Rec[];
   globalMovies: Rec[];
   indianSeries: Rec[];
   globalSeries: Rec[];
+  thematicShelves: ThematicShelf[];
 };
 
 export default function Recommendations() {
@@ -31,10 +40,15 @@ export default function Recommendations() {
     globalMovies: [],
     indianSeries: [],
     globalSeries: [],
+    thematicShelves: [],
   });
 
   const [formatFilter, setFormatFilter] = useState<"all" | MediaType>("all");
   const [regionFilter, setRegionFilter] = useState<"all" | "in" | "global">("all");
+  const [discoveryStyle, setDiscoveryStyle] = useState<"balanced" | "popular" | "deepcuts">("balanced");
+  const [eraFilter, setEraFilter] = useState<"all" | "classic" | "modern" | "recent">("all");
+  const [moodFilter, setMoodFilter] = useState<"all" | "dark" | "adrenaline" | "feelgood" | "mindbending">("all");
+
   const [summary, setSummary] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -46,7 +60,11 @@ export default function Recommendations() {
       return n;
     });
 
-  const get = async () => {
+  const get = async (
+    style = discoveryStyle,
+    era = eraFilter,
+    mood = moodFilter
+  ) => {
     const s = load();
     setState(s);
     if (s.watched.length < 10) {
@@ -64,20 +82,30 @@ export default function Recommendations() {
           seen: s.shown,
           dismissed: s.dismissed || [],
           watchlist: s.watchlist || [],
+          discoveryStyle: style,
+          era,
+          mood,
         }),
       });
 
       const d = await r.json();
       if (!r.ok) throw new Error(d.error);
 
-      setCategories(d.categories);
-      setSummary(d.summary);
+      setCategories({
+        indianMovies: d.categories.indianMovies || [],
+        globalMovies: d.categories.globalMovies || [],
+        indianSeries: d.categories.indianSeries || [],
+        globalSeries: d.categories.globalSeries || [],
+        thematicShelves: d.categories.thematicShelves || [],
+      });
+      setSummary(d.summary || []);
 
       const allFetched: Rec[] = [
-        ...d.categories.indianMovies,
-        ...d.categories.globalMovies,
-        ...d.categories.indianSeries,
-        ...d.categories.globalSeries,
+        ...(d.categories.indianMovies || []),
+        ...(d.categories.globalMovies || []),
+        ...(d.categories.indianSeries || []),
+        ...(d.categories.globalSeries || []),
+        ...(d.categories.thematicShelves || []).flatMap((sh: ThematicShelf) => sh.items || []),
       ];
 
       save({
@@ -95,6 +123,22 @@ export default function Recommendations() {
     get();
     syncWithServer().then(setState);
   }, []);
+
+  // Re-fetch or re-tune when discoveryStyle, eraFilter, or moodFilter changes
+  const handleStyleChange = (style: "balanced" | "popular" | "deepcuts") => {
+    setDiscoveryStyle(style);
+    get(style, eraFilter, moodFilter);
+  };
+
+  const handleEraChange = (era: "all" | "classic" | "modern" | "recent") => {
+    setEraFilter(era);
+    get(discoveryStyle, era, moodFilter);
+  };
+
+  const handleMoodChange = (mood: "all" | "dark" | "adrenaline" | "feelgood" | "mindbending") => {
+    setMoodFilter(mood);
+    get(discoveryStyle, eraFilter, mood);
+  };
 
   const seen = (title: Title) => {
     persist((s) => ({
@@ -134,6 +178,14 @@ export default function Recommendations() {
   const cleanGlobalMovies = useMemo(() => cleanCategory(categories.globalMovies), [categories, state]);
   const cleanIndianSeries = useMemo(() => cleanCategory(categories.indianSeries), [categories, state]);
   const cleanGlobalSeries = useMemo(() => cleanCategory(categories.globalSeries), [categories, state]);
+  const cleanThematicShelves = useMemo(
+    () =>
+      categories.thematicShelves.map((shelf) => ({
+        ...shelf,
+        items: cleanCategory(shelf.items),
+      })).filter((shelf) => shelf.items.length > 0),
+    [categories, state]
+  );
 
   // Determine which sections to render based on user filter selections
   const showIndianMovies =
@@ -152,15 +204,20 @@ export default function Recommendations() {
     (regionFilter === "all" || regionFilter === "global") &&
     (formatFilter === "all" || formatFilter === "tv");
 
-  const renderSection = (title: string, badge: string, items: Rec[]) => {
+  const renderSection = (title: string, badge: string, items: Rec[], subtitle?: string) => {
     if (items.length === 0) return null;
     return (
       <section className="mt-10">
-        <div className="flex items-center gap-3 mb-4">
-          <h2 className="text-2xl font-bold text-white">{title}</h2>
-          <span className="rounded-full bg-gold/15 px-3 py-0.5 text-xs font-semibold text-gold border border-gold/30">
-            {badge} ({items.length})
-          </span>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+          <div>
+            <div className="flex items-center gap-3">
+              <h2 className="text-2xl font-bold text-white">{title}</h2>
+              <span className="rounded-full bg-gold/15 px-3 py-0.5 text-xs font-semibold text-gold border border-gold/30">
+                {badge} ({items.length})
+              </span>
+            </div>
+            {subtitle && <p className="text-xs text-white/55 mt-0.5">{subtitle}</p>}
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">
           {items.map((r) => (
@@ -170,7 +227,7 @@ export default function Recommendations() {
                 <div className="flex gap-2">
                   <button
                     onClick={() => seen(r)}
-                    className="flex-1 rounded-lg bg-white/10 px-2 py-2 text-xs hover:bg-white/20"
+                    className="flex-1 rounded-lg bg-white/10 px-2 py-2 text-xs hover:bg-white/20 transition"
                   >
                     Mark seen
                   </button>
@@ -223,71 +280,176 @@ export default function Recommendations() {
       </header>
 
       <div className="mx-auto max-w-7xl py-10">
-        <div className="flex flex-wrap items-baseline justify-between gap-4">
-          <div>
-            <h1 className="text-4xl font-bold">Recommended for You</h1>
-            <p className="mt-2 text-sm text-white/65">
-              Personalized from your taste history
-              {summary.length ? `: ${summary.join(", ")}` : ""}.
-            </p>
-          </div>
-
-          {/* Interactive Filters: Format & Region */}
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Format Filter */}
-            <div className="flex rounded-full bg-white/5 p-1 border border-white/10 text-xs">
-              <button
-                onClick={() => setFormatFilter("all")}
-                className={`rounded-full px-3 py-1.5 ${
-                  formatFilter === "all" ? "bg-gold text-black font-semibold" : "text-white/70"
-                }`}
-              >
-                All Formats
-              </button>
-              <button
-                onClick={() => setFormatFilter("movie")}
-                className={`rounded-full px-3 py-1.5 ${
-                  formatFilter === "movie" ? "bg-gold text-black font-semibold" : "text-white/70"
-                }`}
-              >
-                Movies
-              </button>
-              <button
-                onClick={() => setFormatFilter("tv")}
-                className={`rounded-full px-3 py-1.5 ${
-                  formatFilter === "tv" ? "bg-gold text-black font-semibold" : "text-white/70"
-                }`}
-              >
-                Series
-              </button>
+        <div className="flex flex-col gap-6">
+          <div className="flex flex-wrap items-baseline justify-between gap-4">
+            <div>
+              <h1 className="text-4xl font-bold">Recommended for You</h1>
+              <p className="mt-2 text-sm text-white/65">
+                Calibrated against {state.watched.length} viewed titles with recency & genre TF-IDF tuning
+                {summary.length ? ` (Core: ${summary.join(", ")})` : ""}.
+              </p>
             </div>
 
-            {/* Region Filter */}
-            <div className="flex rounded-full bg-white/5 p-1 border border-white/10 text-xs">
-              <button
-                onClick={() => setRegionFilter("all")}
-                className={`rounded-full px-3 py-1.5 ${
-                  regionFilter === "all" ? "bg-gold text-black font-semibold" : "text-white/70"
-                }`}
-              >
-                All Regions
-              </button>
-              <button
-                onClick={() => setRegionFilter("in")}
-                className={`rounded-full px-3 py-1.5 ${
-                  regionFilter === "in" ? "bg-gold text-black font-semibold" : "text-white/70"
-                }`}
-              >
-                Indian
-              </button>
-              <button
-                onClick={() => setRegionFilter("global")}
-                className={`rounded-full px-3 py-1.5 ${
-                  regionFilter === "global" ? "bg-gold text-black font-semibold" : "text-white/70"
-                }`}
-              >
-                Global
-              </button>
+            {/* Quick Format & Region Filters */}
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Format Filter */}
+              <div className="flex rounded-full bg-white/5 p-1 border border-white/10 text-xs">
+                <button
+                  onClick={() => setFormatFilter("all")}
+                  className={`rounded-full px-3 py-1.5 transition ${
+                    formatFilter === "all" ? "bg-gold text-black font-semibold" : "text-white/70 hover:text-white"
+                  }`}
+                >
+                  All Formats
+                </button>
+                <button
+                  onClick={() => setFormatFilter("movie")}
+                  className={`rounded-full px-3 py-1.5 transition ${
+                    formatFilter === "movie" ? "bg-gold text-black font-semibold" : "text-white/70 hover:text-white"
+                  }`}
+                >
+                  Movies
+                </button>
+                <button
+                  onClick={() => setFormatFilter("tv")}
+                  className={`rounded-full px-3 py-1.5 transition ${
+                    formatFilter === "tv" ? "bg-gold text-black font-semibold" : "text-white/70 hover:text-white"
+                  }`}
+                >
+                  Series
+                </button>
+              </div>
+
+              {/* Region Filter */}
+              <div className="flex rounded-full bg-white/5 p-1 border border-white/10 text-xs">
+                <button
+                  onClick={() => setRegionFilter("all")}
+                  className={`rounded-full px-3 py-1.5 transition ${
+                    regionFilter === "all" ? "bg-gold text-black font-semibold" : "text-white/70 hover:text-white"
+                  }`}
+                >
+                  All Regions
+                </button>
+                <button
+                  onClick={() => setRegionFilter("in")}
+                  className={`rounded-full px-3 py-1.5 transition ${
+                    regionFilter === "in" ? "bg-gold text-black font-semibold" : "text-white/70 hover:text-white"
+                  }`}
+                >
+                  Indian
+                </button>
+                <button
+                  onClick={() => setRegionFilter("global")}
+                  className={`rounded-full px-3 py-1.5 transition ${
+                    regionFilter === "global" ? "bg-gold text-black font-semibold" : "text-white/70 hover:text-white"
+                  }`}
+                >
+                  Global
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Interactive Tuning Bar: Discovery Style, Era, & Mood */}
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 backdrop-blur-md">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* 1. Discovery Style Slider / Switcher */}
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-gold block mb-2">
+                  Discovery Depth
+                </label>
+                <div className="flex rounded-xl bg-black/40 p-1 border border-white/10 text-xs">
+                  <button
+                    onClick={() => handleStyleChange("popular")}
+                    className={`flex-1 py-1.5 rounded-lg transition ${
+                      discoveryStyle === "popular"
+                        ? "bg-gold text-black font-bold shadow"
+                        : "text-white/60 hover:text-white"
+                    }`}
+                  >
+                    Mainstream Hits
+                  </button>
+                  <button
+                    onClick={() => handleStyleChange("balanced")}
+                    className={`flex-1 py-1.5 rounded-lg transition ${
+                      discoveryStyle === "balanced"
+                        ? "bg-gold text-black font-bold shadow"
+                        : "text-white/60 hover:text-white"
+                    }`}
+                  >
+                    Balanced
+                  </button>
+                  <button
+                    onClick={() => handleStyleChange("deepcuts")}
+                    className={`flex-1 py-1.5 rounded-lg transition ${
+                      discoveryStyle === "deepcuts"
+                        ? "bg-gold text-black font-bold shadow"
+                        : "text-white/60 hover:text-white"
+                    }`}
+                  >
+                    💎 Hidden Gems
+                  </button>
+                </div>
+              </div>
+
+              {/* 2. Era / Decade Cluster */}
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-gold block mb-2">
+                  Cinematic Era
+                </label>
+                <div className="flex rounded-xl bg-black/40 p-1 border border-white/10 text-xs">
+                  {(
+                    [
+                      { id: "all", label: "All Eras" },
+                      { id: "classic", label: "Pre-2005" },
+                      { id: "modern", label: "2005-2019" },
+                      { id: "recent", label: "2020s" },
+                    ] as const
+                  ).map((era) => (
+                    <button
+                      key={era.id}
+                      onClick={() => handleEraChange(era.id)}
+                      className={`flex-1 py-1.5 rounded-lg transition ${
+                        eraFilter === era.id
+                          ? "bg-gold text-black font-bold shadow"
+                          : "text-white/60 hover:text-white"
+                      }`}
+                    >
+                      {era.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 3. Mood / Vibe Chips */}
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-gold block mb-2">
+                  Taste / Mood Focus
+                </label>
+                <div className="flex flex-wrap gap-1.5 text-xs">
+                  {(
+                    [
+                      { id: "all", label: "All Moods" },
+                      { id: "mindbending", label: "🧠 Mind-Bending" },
+                      { id: "dark", label: "🌑 Dark & Gritty" },
+                      { id: "adrenaline", label: "⚡ High Adrenaline" },
+                      { id: "feelgood", label: "✨ Feel-Good" },
+                    ] as const
+                  ).map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => handleMoodChange(m.id)}
+                      className={`px-2.5 py-1 rounded-lg border transition ${
+                        moodFilter === m.id
+                          ? "bg-gold text-black border-gold font-bold shadow"
+                          : "bg-black/30 border-white/10 text-white/70 hover:border-white/30 hover:text-white"
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -299,7 +461,13 @@ export default function Recommendations() {
             ))}
           </div>
         ) : (
-          <div className="space-y-6">
+          <div className="space-y-6 mt-6">
+            {/* Thematic Anchor Shelves (Hidden Gems, Mind-Bending, Vintage) */}
+            {cleanThematicShelves.map((shelf) =>
+              renderSection(shelf.title, shelf.badge, shelf.items, shelf.subtitle)
+            )}
+
+            {/* Standard Categorized Shelves */}
             {showIndianMovies && renderSection("Indian Movies", "Cinema", cleanIndianMovies)}
             {showGlobalMovies && renderSection("Global & Hollywood Movies", "Movies", cleanGlobalMovies)}
             {showIndianSeries && renderSection("Indian Web Series & Shows", "Indian TV", cleanIndianSeries)}
@@ -308,10 +476,13 @@ export default function Recommendations() {
         )}
 
         <div className="mt-12 flex flex-wrap gap-3">
-          <button onClick={get} className="rounded-full border border-white/20 px-6 py-3 text-sm">
+          <button
+            onClick={() => get(discoveryStyle, eraFilter, moodFilter)}
+            className="rounded-full border border-white/20 px-6 py-3 text-sm hover:bg-white/10 transition"
+          >
             Refresh recommendations
           </button>
-          <Link href="/discover" className="rounded-full bg-gold px-6 py-3 font-bold text-black text-sm">
+          <Link href="/discover" className="rounded-full bg-gold px-6 py-3 font-bold text-black text-sm shadow hover:brightness-110 transition">
             Discover more titles
           </Link>
         </div>

@@ -78,6 +78,8 @@ export type DiscoverOptions = {
   originalLanguage?: string;
   sortBy?: string;
   minVotes?: number;
+  maxVotes?: number;
+  minRating?: number;
 };
 
 export async function discover(
@@ -96,6 +98,13 @@ export async function discover(
         ? 10
         : 30,
   };
+
+  if (options.maxVotes !== undefined) {
+    p["vote_count.lte"] = options.maxVotes;
+  }
+  if (options.minRating !== undefined) {
+    p["vote_average.gte"] = options.minRating;
+  }
 
   p[type === "movie" ? "primary_release_date.gte" : "first_air_date.gte"] = "1990-01-01";
 

@@ -18,13 +18,16 @@ export default function Discover() {
     watchlist: [],
     dismissed: [],
   });
-  const [titles, setTitles] = useState<Title[]>([]);
+  const [movieTitles, setMovieTitles] = useState<Title[]>([]);
+  const [tvTitles, setTvTitles] = useState<Title[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
   const [region, setRegion] = useState<RegionFilter>("all");
-  const [loading, setLoading] = useState(true);
+  const [loadingMovies, setLoadingMovies] = useState(true);
+  const [loadingTv, setLoadingTv] = useState(true);
   const [error, setError] = useState("");
   const isInitialMount = useRef(true);
-  const pageMapRef = useRef<Record<string, number>>({});
+  const moviePageRef = useRef<number>(1);
+  const tvPageRef = useRef<number>(1);
 
   const count = state.watched.length;
 
@@ -43,29 +46,30 @@ export default function Discover() {
     ]);
   };
 
-  const fetchBatch = async (
+  const fetchCategoryBatch = async (
+    type: MediaType,
     currentState: State,
-    currentFilter = filter,
     currentRegion = region,
     resetPage = false
   ) => {
-    setLoading(true);
+    if (type === "movie") setLoadingMovies(true);
+    else setLoadingTv(true);
     setError("");
+
     try {
-      const filterKey = `${currentFilter}:${currentRegion}`;
-      let page = resetPage ? 1 : pageMapRef.current[filterKey] || 1;
+      let page = resetPage ? 1 : (type === "movie" ? moviePageRef.current : tvPageRef.current);
       const excludeKeys = getExcludeKeys(currentState);
       const fresh: Title[] = [];
       const freshKeys = new Set<string>();
       let pagesScanned = 0;
       const maxPagesToScan = 8;
 
-      while (fresh.length < 20 && pagesScanned < maxPagesToScan) {
+      while (fresh.length < 15 && pagesScanned < maxPagesToScan) {
         const r = await fetch(
-          `/api/discover?type=${currentFilter}&region=${currentRegion}&page=${page}`
+          `/api/discover?type=${type}&region=${currentRegion}&page=${page}`
         );
         const d = await r.json();
-        if (!r.ok) throw new Error(d.error || "Couldn't load titles");
+        if (!r.ok) throw new Error(d.error || `Couldn't load ${type === "movie" ? "movies" : "series"}`);
         const results: Title[] = d.results || [];
 
         if (!results.length) {
@@ -82,27 +86,42 @@ export default function Discover() {
           if (!excludeKeys.has(k) && !freshKeys.has(k)) {
             freshKeys.add(k);
             fresh.push(item);
-            if (fresh.length >= 20) break;
+            if (fresh.length >= 15) break;
           }
         }
         page++;
         pagesScanned++;
       }
 
-      pageMapRef.current[filterKey] = page;
-      setTitles(fresh);
+      if (type === "movie") {
+        moviePageRef.current = page;
+        setMovieTitles(fresh);
+      } else {
+        tvPageRef.current = page;
+        setTvTitles(fresh);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't load titles");
     } finally {
-      setLoading(false);
+      if (type === "movie") setLoadingMovies(false);
+      else setLoadingTv(false);
     }
+  };
+
+  const loadAllBatches = (currentState: State, currentRegion = region, resetPage = false) => {
+    if (resetPage) {
+      moviePageRef.current = 1;
+      tvPageRef.current = 1;
+    }
+    fetchCategoryBatch("movie", currentState, currentRegion, resetPage);
+    fetchCategoryBatch("tv", currentState, currentRegion, resetPage);
   };
 
   // 1. Initial mount: load local state immediately, then sync with server file
   useEffect(() => {
     const s = load();
     setState(s);
-    fetchBatch(s, filter, region, false);
+    loadAllBatches(s, region, false);
 
     // Sync in background to back up to data/storage.json without wiping local
     syncWithServer().then((synced) => {
@@ -110,7 +129,7 @@ export default function Discover() {
     });
   }, []);
 
-  // 2. Filter/Region changes
+  // 2. Region changes
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false;
@@ -118,8 +137,8 @@ export default function Discover() {
     }
     const s = load();
     setState(s);
-    fetchBatch(s, filter, region, true);
-  }, [filter, region]);
+    loadAllBatches(s, region, true);
+  }, [region]);
 
   const toggle = (t: Title) =>
     update((s) => {
@@ -138,11 +157,113 @@ export default function Discover() {
       ),
     }));
 
+  const dismissTitle = (t: Title) => {
+    const k = keyOf(t);
+    update((s) => ({
+      ...s,
+      dismissed: s.dismissed ? [...new Set([...s.dismissed, k])] : [k],
+      watchlist: s.watchlist.filter((x) => keyOf(x) !== k),
+    }));
+    setMovieTitles((prev) => prev.filter((x) => keyOf(x) !== k));
+    setTvTitles((prev) => prev.filter((x) => keyOf(x) !== k));
+  };
+
   const selected = new Set(state.watched.map(keyOf));
   const series = state.watched.filter((t) => t.mediaType === "tv");
 
+  const renderCardGrid = (
+    items: Title[],
+    loading: boolean,
+    onLoadMore: () => void,
+    categoryName: string
+  ) => {
+    if (loading) {
+      return (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+          {Array.from({ length: 5 }, (_, i) => (
+            <div className="poster aspect-[2/3] animate-pulse rounded-xl" key={i} />
+          ))}
+        </div>
+      );
+    }
+
+    if (items.length === 0) {
+      return (
+        <div className="rounded-xl border border-white/10 p-8 text-center text-white/60">
+          No unseen {categoryName.toLowerCase()} found for this region. Click below to scan deeper!
+          <div className="mt-3">
+            <button
+              onClick={onLoadMore}
+              className="rounded-full border border-white/20 px-4 py-1.5 text-xs text-white hover:bg-white/10"
+            >
+              Scan next batch
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+        {items.map((t) => {
+          const isWatched = selected.has(keyOf(t));
+          const inWatchlist = state.watchlist.some((x) => keyOf(x) === keyOf(t));
+          return (
+            <div key={keyOf(t)} className="flex flex-col">
+              <TitleCard
+                title={t}
+                selected={isWatched}
+                onToggle={() => toggle(t)}
+              />
+              <div className="mt-2 flex flex-col gap-1.5">
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => toggle(t)}
+                    title={isWatched ? "Remove from watched" : "Mark as watched"}
+                    className={`flex-1 rounded-lg px-2 py-2 text-xs font-semibold transition ${
+                      isWatched
+                        ? "bg-gold text-black shadow-sm"
+                        : "bg-white/10 text-white hover:bg-white/20"
+                    }`}
+                  >
+                    {isWatched ? "✓ Seen" : "Mark seen"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      update((s) => ({
+                        ...s,
+                        watchlist: inWatchlist
+                          ? s.watchlist.filter((x) => keyOf(x) !== keyOf(t))
+                          : [...s.watchlist, t],
+                      }));
+                    }}
+                    title={inWatchlist ? "Remove from watchlist" : "Add to watchlist"}
+                    className={`flex-1 rounded-lg border px-2 py-2 text-xs font-semibold transition ${
+                      inWatchlist
+                        ? "border-gold/50 bg-gold/20 text-gold"
+                        : "border-gold/30 bg-gold/10 text-gold hover:bg-gold hover:text-black"
+                    }`}
+                  >
+                    {inWatchlist ? "✓ Watchlist" : "+ Watchlist"}
+                  </button>
+                </div>
+                <button
+                  onClick={() => dismissTitle(t)}
+                  title="Remove and don't recommend again"
+                  className="w-full rounded-lg border border-white/10 py-1.5 text-[11px] text-white/45 transition hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-300"
+                >
+                  Not interested
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
-    <main className="min-h-screen px-4 py-7 md:px-10">
+    <main className="min-h-screen px-4 py-7 md:px-10 pb-16">
       <header className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4">
         <Link href="/" className="font-bold tracking-[.2em] text-gold">
           REEL RADAR
@@ -197,7 +318,7 @@ export default function Discover() {
       <section className="mx-auto max-w-7xl py-10">
         <h1 className="text-3xl font-bold">Build your viewing history</h1>
         <p className="mt-2 text-white/65">
-          Select what you have seen across Hollywood and Indian cinema. For series, track completed seasons.
+          Select what you have seen across Hollywood and Indian cinema. Series and Movies are segregated for effortless tracking.
         </p>
 
         <div className="mt-5 h-2 overflow-hidden rounded bg-white/10">
@@ -210,7 +331,7 @@ export default function Discover() {
         <div className="mt-2 flex items-center justify-between">
           <p className="text-sm text-white/60">
             {count >= 10
-              ? "Recommendations unlocked. Keep adding titles to refine."
+              ? `Great progress! With ${count} viewed titles, your recommendations are calibrated with deep affinity.`
               : `Select ${10 - count} more to unlock recommendations.`}
           </p>
           {count > 0 && (
@@ -220,17 +341,18 @@ export default function Discover() {
           )}
         </div>
 
+        {/* View and Region Selectors */}
         <div className="mt-7 flex flex-wrap items-center justify-between gap-4">
           <div className="flex gap-2">
             {(["all", "movie", "tv"] as Filter[]).map((x) => (
               <button
                 key={x}
                 onClick={() => setFilter(x)}
-                className={`rounded-full px-4 py-2 text-sm ${
-                  filter === x ? "bg-gold text-black font-semibold" : "bg-white/10 text-white"
+                className={`rounded-full px-4 py-2 text-sm transition ${
+                  filter === x ? "bg-gold text-black font-semibold shadow-md" : "bg-white/10 text-white hover:bg-white/20"
                 }`}
               >
-                {x === "all" ? "All types" : x === "tv" ? "Series" : "Movies"}
+                {x === "all" ? "Both (Movies & Series)" : x === "tv" ? "Series only" : "Movies only"}
               </button>
             ))}
           </div>
@@ -238,24 +360,24 @@ export default function Discover() {
           <div className="flex gap-2 rounded-full bg-white/5 p-1 border border-white/10">
             <button
               onClick={() => setRegion("all")}
-              className={`rounded-full px-3 py-1.5 text-xs ${
-                region === "all" ? "bg-gold text-black font-semibold" : "text-white/70"
+              className={`rounded-full px-3 py-1.5 text-xs transition ${
+                region === "all" ? "bg-gold text-black font-semibold" : "text-white/70 hover:text-white"
               }`}
             >
               All Regions
             </button>
             <button
               onClick={() => setRegion("in")}
-              className={`rounded-full px-3 py-1.5 text-xs ${
-                region === "in" ? "bg-gold text-black font-semibold" : "text-white/70"
+              className={`rounded-full px-3 py-1.5 text-xs transition ${
+                region === "in" ? "bg-gold text-black font-semibold" : "text-white/70 hover:text-white"
               }`}
             >
               Indian Cinema & Series
             </button>
             <button
               onClick={() => setRegion("global")}
-              className={`rounded-full px-3 py-1.5 text-xs ${
-                region === "global" ? "bg-gold text-black font-semibold" : "text-white/70"
+              className={`rounded-full px-3 py-1.5 text-xs transition ${
+                region === "global" ? "bg-gold text-black font-semibold" : "text-white/70 hover:text-white"
               }`}
             >
               Hollywood & Global
@@ -263,94 +385,69 @@ export default function Discover() {
           </div>
         </div>
 
-        {error ? (
+        {error && (
           <div className="mt-8 rounded-xl border border-red-400/40 p-5">
             {error}{" "}
             <button
-              onClick={() => fetchBatch(load(), filter, region)}
+              onClick={() => loadAllBatches(load(), region, true)}
               className="underline"
             >
               Retry
             </button>
           </div>
-        ) : loading ? (
-          <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">
-            {Array.from({ length: 10 }, (_, i) => (
-              <div className="poster aspect-[2/3] animate-pulse rounded-xl" key={i} />
-            ))}
-          </div>
-        ) : titles.length === 0 ? (
-          <div className="mt-12 rounded-xl border border-white/10 p-8 text-center text-white/60">
-            No more unseen titles found for this filter. Try selecting another type or region!
-          </div>
-        ) : (
-          <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">
-            {titles.map((t) => {
-              const isWatched = selected.has(keyOf(t));
-              const inWatchlist = state.watchlist.some((x) => keyOf(x) === keyOf(t));
-              return (
-                <div key={keyOf(t)} className="flex flex-col">
-                  <TitleCard
-                    title={t}
-                    selected={isWatched}
-                    onToggle={() => toggle(t)}
-                  />
-                  <div className="mt-2 flex flex-col gap-1.5">
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => toggle(t)}
-                        title={isWatched ? "Remove from watched" : "Mark as watched"}
-                        className={`flex-1 rounded-lg px-2 py-2 text-xs font-semibold transition ${
-                          isWatched
-                            ? "bg-gold text-black shadow-sm"
-                            : "bg-white/10 text-white hover:bg-white/20"
-                        }`}
-                      >
-                        {isWatched ? "✓ Seen" : "Mark seen"}
-                      </button>
-                      <button
-                        onClick={() => {
-                          update((s) => ({
-                            ...s,
-                            watchlist: inWatchlist
-                              ? s.watchlist.filter((x) => keyOf(x) !== keyOf(t))
-                              : [...s.watchlist, t],
-                          }));
-                        }}
-                        title={inWatchlist ? "Remove from watchlist" : "Add to watchlist"}
-                        className={`flex-1 rounded-lg border px-2 py-2 text-xs font-semibold transition ${
-                          inWatchlist
-                            ? "border-gold/50 bg-gold/20 text-gold"
-                            : "border-gold/30 bg-gold/10 text-gold hover:bg-gold hover:text-black"
-                        }`}
-                      >
-                        {inWatchlist ? "✓ Watchlist" : "+ Watchlist"}
-                      </button>
-                    </div>
-                    <button
-                      onClick={() => {
-                        const k = keyOf(t);
-                        update((s) => ({
-                          ...s,
-                          dismissed: s.dismissed ? [...new Set([...s.dismissed, k])] : [k],
-                          watchlist: s.watchlist.filter((x) => keyOf(x) !== k),
-                        }));
-                        setTitles((prev) => prev.filter((x) => keyOf(x) !== k));
-                      }}
-                      title="Remove and don't recommend again"
-                      className="w-full rounded-lg border border-white/10 py-1.5 text-[11px] text-white/45 transition hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-300"
-                    >
-                      Not interested
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+        )}
+
+        {/* Movies Section */}
+        {(filter === "all" || filter === "movie") && (
+          <div className="mt-10">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <span>🎬</span> Feature Films & Movies
+                </h2>
+                <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/70">
+                  {movieTitles.length} items
+                </span>
+              </div>
+              <button
+                onClick={() => fetchCategoryBatch("movie", load(), region, false)}
+                disabled={loadingMovies}
+                className="text-xs text-gold border border-gold/30 rounded-full px-3 py-1 hover:bg-gold hover:text-black transition disabled:opacity-50"
+              >
+                {loadingMovies ? "Loading..." : "Next batch of Movies →"}
+              </button>
+            </div>
+            {renderCardGrid(movieTitles, loadingMovies, () => fetchCategoryBatch("movie", load(), region, false), "Movies")}
           </div>
         )}
 
+        {/* Series Section */}
+        {(filter === "all" || filter === "tv") && (
+          <div className="mt-14">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <span>📺</span> TV & Web Series
+                </h2>
+                <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/70">
+                  {tvTitles.length} items
+                </span>
+              </div>
+              <button
+                onClick={() => fetchCategoryBatch("tv", load(), region, false)}
+                disabled={loadingTv}
+                className="text-xs text-gold border border-gold/30 rounded-full px-3 py-1 hover:bg-gold hover:text-black transition disabled:opacity-50"
+              >
+                {loadingTv ? "Loading..." : "Next batch of Series →"}
+              </button>
+            </div>
+            {renderCardGrid(tvTitles, loadingTv, () => fetchCategoryBatch("tv", load(), region, false), "Series")}
+          </div>
+        )}
+
+        {/* Series Progress Panel */}
         {series.length > 0 && (
-          <section className="mt-10 rounded-xl border border-white/10 bg-panel p-5">
+          <section className="mt-14 rounded-xl border border-white/10 bg-panel p-5">
             <h2 className="font-bold">Series progress</h2>
             <p className="mt-1 text-sm text-white/60">
               Select every season you have finished to improve recommendation weighting.
@@ -367,26 +464,26 @@ export default function Discover() {
           </section>
         )}
 
-        <div className="mt-10 flex flex-wrap gap-3">
-          <button
-            onClick={() => fetchBatch(load(), filter, region)}
-            disabled={loading}
-            className="rounded-full border border-white/20 px-6 py-3 disabled:opacity-50"
-          >
-            {loading ? "Loading..." : "Discover next batch"}
-          </button>
+        {/* Navigation CTAs */}
+        <div className="mt-12 flex flex-wrap gap-3">
           {count >= 10 ? (
             <Link
-              className="rounded-full bg-gold px-6 py-3 font-bold text-black"
+              className="rounded-full bg-gold px-7 py-3 font-bold text-black shadow-lg hover:brightness-110 transition"
               href="/recommendations"
             >
-              Get my recommendations
+              Get my recommendations ({count} titles analyzed)
             </Link>
           ) : (
             <button disabled className="rounded-full bg-white/10 px-6 py-3 text-white/40">
               Get my recommendations ({count}/10)
             </button>
           )}
+          <Link
+            className="rounded-full border border-white/20 px-6 py-3 text-white/80 hover:bg-white/10 transition"
+            href="/watched"
+          >
+            Review all viewed titles ({count})
+          </Link>
         </div>
       </section>
     </main>
