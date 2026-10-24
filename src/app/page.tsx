@@ -6,33 +6,39 @@ export default function Home() {
       <nav className="mx-auto flex max-w-6xl items-center justify-between">
         <span className="font-bold tracking-[.2em] text-gold">REEL RADAR</span>
         <div className="flex items-center gap-6">
-          <Link
-            className="flex items-center gap-1.5 text-sm text-white/70 transition hover:text-white"
-            href="/search"
-          >
-            <svg
-              className="h-4 w-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 1116.65 6.65a7.5 7.5 0 010 10.6z"
-              />
-            </svg>
-            Search
-          </Link>
-          <Link
-            className="text-sm text-white/70 transition hover:text-white"
-            href="/discover"
-          >
-            Continue discovery →
-          </Link>
-        </div>
+  <Link
+    className="flex items-center gap-1.5 text-sm text-white/70 transition hover:text-white"
+    href="/search"
+  >
+    <svg
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 1116.65 6.65a7.5 7.5 0 010 10.6z"
+      />
+    </svg>
+    Search
+  </Link>
+  <Link
+    className="text-sm text-white/70 transition hover:text-white"
+    href="/analysis"
+  >
+    Analysis
+  </Link>
+  <Link
+    className="text-sm text-white/70 transition hover:text-white"
+    href="/discover"
+  >
+    Continue discovery
+  </Link>
+</div>
       </nav>
 
       <section className="mx-auto grid max-w-6xl items-center gap-12 py-24 md:grid-cols-[1.2fr_.8fr]">
