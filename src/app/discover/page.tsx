@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Title, keyOf, MediaType } from "@/types/title";
-import { load, reset, save, syncWithServer, State } from "@/lib/storage";
+import { load, reset, save, syncWithServer, State, clearDiscoveryHistory } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
 import { StorageControls } from "@/components/StorageControls";
 
@@ -18,6 +18,7 @@ export default function Discover() {
     watchlist: [],
     dismissed: [],
   });
+
   const [movieTitles, setMovieTitles] = useState<Title[]>([]);
   const [tvTitles, setTvTitles] = useState<Title[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
@@ -25,10 +26,10 @@ export default function Discover() {
   const [loadingMovies, setLoadingMovies] = useState(true);
   const [loadingTv, setLoadingTv] = useState(true);
   const [error, setError] = useState("");
+
   const isInitialMount = useRef(true);
   const moviePageRef = useRef<number>(1);
   const tvPageRef = useRef<number>(1);
-
   const count = state.watched.length;
 
   const update = (fn: (s: State) => State) =>
@@ -42,6 +43,8 @@ export default function Discover() {
     return new Set([
       ...s.watched.map(keyOf),
       ...(s.dismissed || []),
+      ...(s.displayed || []),
+      ...(s.shown || []),
     ]);
   };
 
@@ -60,6 +63,7 @@ export default function Discover() {
       const excludeKeys = getExcludeKeys(currentState);
       const fresh: Title[] = [];
       const freshKeys = new Set<string>();
+
       let pagesScanned = 0;
       const maxPagesToScan = 8;
 
@@ -68,7 +72,9 @@ export default function Discover() {
           `/api/discover?type=${type}&region=${currentRegion}&page=${page}`
         );
         const d = await r.json();
+
         if (!r.ok) throw new Error(d.error || `Couldn't load ${type === "movie" ? "movies" : "series"}`);
+
         const results: Title[] = d.results || [];
         if (!results.length) {
           if (page > 1 && fresh.length === 0) {
@@ -97,6 +103,13 @@ export default function Discover() {
       } else {
         tvPageRef.current = page;
         setTvTitles(fresh);
+      }
+
+      if (fresh.length > 0) {
+        update((s) => ({
+          ...s,
+          displayed: [...new Set([...s.displayed, ...fresh.map(keyOf)])],
+        }));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't load titles");
@@ -181,7 +194,6 @@ export default function Discover() {
         </div>
       );
     }
-
     if (items.length === 0) {
       return (
         <div className="rounded-xl border border-white/10 p-8 text-center text-white/60">
@@ -197,7 +209,6 @@ export default function Discover() {
         </div>
       );
     }
-
     return (
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
         {items.map((t) => {
@@ -242,14 +253,12 @@ export default function Discover() {
                     {inWatchlist ? "✓ Watchlist" : "+ Watchlist"}
                   </button>
                 </div>
-
                 <Link
                   href={`/similar?type=${t.mediaType}&id=${t.id}`}
                   className="w-full text-center rounded-lg border border-white/10 bg-white/5 py-1.5 text-[11px] font-medium text-white/80 transition hover:border-gold/40 hover:bg-gold/10 hover:text-gold"
                 >
                   Find Similar
                 </Link>
-
                 <button
                   onClick={() => dismissTitle(t)}
                   title="Remove and don't recommend again"
@@ -302,17 +311,39 @@ export default function Discover() {
           >
             Analysis
           </Link>
+          <Link
+            href="/todos"
+            className="text-white/70 transition hover:text-white text-xs"
+          >
+            Daily Todos
+          </Link>
           <StorageControls onStateChange={(merged) => setState(merged)} />
           <button
             onClick={() => {
-              if (confirm("Reset all discovery history and file storage?")) {
+              if (
+                confirm(
+                  "Clear displayed and shown titles history? (Your watched list, watchlist, and dismissed titles will be kept)"
+                )
+              ) {
+                const refreshedState = clearDiscoveryHistory();
+                setState(refreshedState);
+                loadAllBatches(refreshedState, region, true);
+              }
+            }}
+            className="text-xs text-blue-300 hover:text-blue-200 bg-blue-500/10 border border-blue-500/30 px-2.5 py-1 rounded transition"
+          >
+            Clear Displayed &amp; Shown
+          </button>
+          <button
+            onClick={() => {
+              if (confirm("Reset ALL data including watched history and watchlist?")) {
                 reset();
                 location.reload();
               }
             }}
-            className="text-xs text-white/50 underline"
+            className="text-xs text-white/50 underline hover:text-red-400"
           >
-            Reset
+            Reset All
           </button>
         </div>
       </header>
@@ -338,7 +369,7 @@ export default function Discover() {
           </p>
           {count > 0 && (
             <Link href="/watched" className="text-xs text-gold underline">
-              Manage viewed titles ({count}) →
+              Manage viewed titles ({count})
             </Link>
           )}
         </div>
@@ -403,7 +434,7 @@ export default function Discover() {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                  <span>🎬</span> Feature Films & Movies
+                  <span>🎥</span> Feature Films & Movies
                 </h2>
                 <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/70">
                   {movieTitles.length} items
@@ -414,7 +445,7 @@ export default function Discover() {
                 disabled={loadingMovies}
                 className="text-xs text-gold border border-gold/30 rounded-full px-3 py-1 hover:bg-gold hover:text-black transition disabled:opacity-50"
               >
-                {loadingMovies ? "Loading..." : "Next batch of Movies →"}
+                {loadingMovies ? "Loading..." : "Next batch of Movies ➜"}
               </button>
             </div>
             {renderCardGrid(movieTitles, loadingMovies, () => fetchCategoryBatch("movie", load(), region, false), "Movies")}
@@ -437,7 +468,7 @@ export default function Discover() {
                 disabled={loadingTv}
                 className="text-xs text-gold border border-gold/30 rounded-full px-3 py-1 hover:bg-gold hover:text-black transition disabled:opacity-50"
               >
-                {loadingTv ? "Loading..." : "Next batch of Series →"}
+                {loadingTv ? "Loading..." : "Next batch of Series ➜"}
               </button>
             </div>
             {renderCardGrid(tvTitles, loadingTv, () => fetchCategoryBatch("tv", load(), region, false), "Series")}
@@ -507,7 +538,6 @@ function SeasonControl({
   }, [title.id, total]);
 
   const watched = title.watchedSeasons || [];
-
   return (
     <div className="rounded-lg bg-white/5 p-4">
       <div className="flex justify-between gap-2">

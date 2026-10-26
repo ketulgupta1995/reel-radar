@@ -9,6 +9,8 @@ import { TitleCard } from "@/components/TitleCard";
 import { StorageControls } from "@/components/StorageControls";
 import { poster } from "@/lib/tmdb";
 
+type EraChoice = "1990" | "2000" | "2010" | "all";
+
 function SimilarContent() {
   const searchParams = useSearchParams();
   const type = (searchParams.get("type") as MediaType) || "movie";
@@ -22,8 +24,10 @@ function SimilarContent() {
     watchlist: [],
     dismissed: [],
   });
+
   const [sourceTitle, setSourceTitle] = useState<Title | null>(null);
   const [similarTitles, setSimilarTitles] = useState<Title[]>([]);
+  const [eraFilter, setEraFilter] = useState<EraChoice>("1990");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -51,7 +55,7 @@ function SimilarContent() {
 
     Promise.all([
       fetch(`/api/title?type=${type}&id=${id}`).then((r) => (r.ok ? r.json() : null)),
-      fetch(`/api/similar?type=${type}&id=${id}`).then((r) => {
+      fetch(`/api/similar?type=${type}&id=${id}&minYear=${eraFilter}`).then((r) => {
         if (!r.ok) throw new Error("Failed to fetch similar titles");
         return r.json();
       }),
@@ -64,7 +68,7 @@ function SimilarContent() {
         setError(err instanceof Error ? err.message : "Unable to load similar titles");
       })
       .finally(() => setLoading(false));
-  }, [type, id]);
+  }, [type, id, eraFilter]);
 
   const toggleWatched = (t: Title) => {
     persist((s) => {
@@ -104,6 +108,7 @@ function SimilarContent() {
 
   return (
     <main className="min-h-screen px-4 py-8 md:px-10 pb-16">
+      {/* Top Navbar */}
       <header className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 mb-8">
         <Link href="/" className="font-bold tracking-[.2em] text-gold">
           REEL RADAR
@@ -126,6 +131,12 @@ function SimilarContent() {
           </Link>
           <Link href="/analysis" className="text-white/70 hover:text-white">
             Analysis
+          </Link>
+          <Link
+            href="/todos"
+            className="text-white/70 hover:text-white"
+          >
+            Daily Todos
           </Link>
           <StorageControls onStateChange={setState} />
         </div>
@@ -198,19 +209,43 @@ function SimilarContent() {
           </div>
         )}
 
-        {/* Similar Titles Results Grid */}
-        <div className="flex items-center justify-between gap-4 mb-6">
+        {/* Section Heading & Filter Bar */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div>
             <h2 className="text-xl font-bold text-white flex items-center gap-2">
-              <span>✦</span> Curated Similar Discoveries
+              <span>🍿</span> Curated Similar Discoveries
             </h2>
             <p className="text-xs text-white/50 mt-0.5">
-              Matched via narrative keywords, thematic DNA, and viewer consensus.
+              Ranked via narrative tropes, director style, genre Jaccard overlap, and collaborative co-watching patterns.
             </p>
           </div>
-          <span className="rounded-full bg-white/10 px-3 py-1 text-xs text-white/70">
-            {similarTitles.length} titles
-          </span>
+
+          {/* Era Filter Controls */}
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <span className="text-xs text-white/50">Release Era:</span>
+            <div className="flex rounded-full bg-white/5 p-1 border border-white/10 text-xs">
+              {(
+                [
+                  { id: "1990", label: "Post-1990" },
+                  { id: "2000", label: "2000s+" },
+                  { id: "2010", label: "2010s+" },
+                  { id: "all", label: "All Eras" },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  onClick={() => setEraFilter(opt.id)}
+                  className={`rounded-full px-3 py-1 font-medium transition ${
+                    eraFilter === opt.id
+                      ? "bg-gold text-black font-bold shadow"
+                      : "text-white/70 hover:text-white"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         {error && (
@@ -229,12 +264,18 @@ function SimilarContent() {
           <div className="rounded-2xl border border-white/10 bg-panel p-12 text-center max-w-xl mx-auto">
             <h3 className="text-lg font-bold text-white">No Similar Titles Found</h3>
             <p className="mt-2 text-xs text-white/60">
-              TMDB does not have high-confidence matches for this entry yet.
+              No matching titles found for this era filter. Try switching to &ldquo;All Eras&rdquo;.
             </p>
             <div className="mt-6 flex justify-center gap-3">
+              <button
+                onClick={() => setEraFilter("all")}
+                className="rounded-full bg-gold px-5 py-2 text-xs font-bold text-black"
+              >
+                Show All Eras
+              </button>
               <Link
                 href="/discover"
-                className="rounded-full bg-gold px-5 py-2 text-xs font-bold text-black"
+                className="rounded-full border border-white/20 px-5 py-2 text-xs font-semibold text-white hover:bg-white/10"
               >
                 Back to Discovery
               </Link>
@@ -247,11 +288,23 @@ function SimilarContent() {
               const inWatchlist = watchlistKeys.has(keyOf(t));
               return (
                 <div key={keyOf(t)} className="flex flex-col">
+                  {/* Top Match Score Pill */}
+                  {t.similarityScore && (
+                    <div className="mb-1.5 flex items-center justify-between text-[11px] px-1">
+                      <span className="font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                        {t.similarityScore}% Match
+                      </span>
+                      <span className="text-white/50">{t.year}</span>
+                    </div>
+                  )}
+
                   <TitleCard
                     title={t}
+                    why={t.why}
                     selected={isWatched}
                     onToggle={() => toggleWatched(t)}
                   />
+
                   <div className="mt-2 flex flex-col gap-1.5">
                     <div className="flex gap-2">
                       <button
@@ -277,14 +330,12 @@ function SimilarContent() {
                         {inWatchlist ? "✓ Watchlist" : "+ Watchlist"}
                       </button>
                     </div>
-
                     <Link
                       href={`/similar?type=${t.mediaType}&id=${t.id}`}
                       className="w-full text-center rounded-lg border border-white/10 bg-white/5 py-1.5 text-[11px] font-medium text-white/80 transition hover:border-gold/40 hover:bg-gold/10 hover:text-gold"
                     >
                       Find Similar
                     </Link>
-
                     <button
                       onClick={() => dismissTitle(t)}
                       title="Remove and don't recommend again"

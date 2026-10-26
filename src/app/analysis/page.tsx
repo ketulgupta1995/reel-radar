@@ -71,6 +71,12 @@ export default function AnalysisPage() {
           <Link href="/recommendations" className="text-white/70 transition hover:text-white">
             Recommendations
           </Link>
+          <Link
+            href="/todos"
+            className="text-white/70 transition hover:text-white"
+          >
+            Daily Todos
+          </Link>
           <span className="rounded-full bg-gold/15 px-3 py-1 font-semibold text-gold border border-gold/30">
             Analysis
           </span>

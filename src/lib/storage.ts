@@ -21,7 +21,6 @@ export const empty = (): State => ({
 export function mergeStates(base: State, incoming: Partial<State>): State {
   const watchedMap = new Map<string, Title>();
   (base.watched || []).forEach((t) => watchedMap.set(keyOf(t), t));
-
   (incoming.watched || []).forEach((t) => {
     const k = keyOf(t);
     const existing = watchedMap.get(k);
@@ -64,7 +63,6 @@ export const save = (s: State) => {
   if (typeof window === "undefined") return;
   localStorage.setItem(K, JSON.stringify(s));
 
-  // Asynchronous background sync with status logging
   fetch("/api/storage", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -74,19 +72,19 @@ export const save = (s: State) => {
       const backend = res.headers.get("x-storage-backend");
       if (backend === "local-file") {
         console.warn(
-          "%c[Storage Save] ⚠️ Vercel Blob is not configured. Saved to local file (data/storage.json).",
+          "%c[Storage Save]   Vercel Blob is not configured. Saved to local file (data/storage.json).",
           "color: #eab308; font-weight: bold;"
         );
       } else if (backend === "local-file-fallback") {
         console.error(
-          "%c[Storage Save] ❌ Vercel Blob write failed! Saved to local file (data/storage.json) as fallback.",
+          "%c[Storage Save]   Vercel Blob write failed! Saved to local file (data/storage.json) as fallback.",
           "color: #ef4444; font-weight: bold;"
         );
       }
     })
     .catch((err) => {
       console.error(
-        "%c[Storage Save] ❌ Could not contact /api/storage. Saved only to browser localStorage.",
+        "%c[Storage Save]   Could not contact /api/storage. Saved only to browser localStorage.",
         "color: #ef4444; font-weight: bold;",
         err
       );
@@ -103,6 +101,18 @@ export const reset = () => {
   }).catch(() => {});
 };
 
+export const clearDiscoveryHistory = (): State => {
+  const current = load();
+  const newState: State = {
+    ...current,
+    displayed: [],
+    shown: [],
+    // dismissed is intentionally kept intact
+  };
+  save(newState);
+  return newState;
+};
+
 export async function syncWithServer(): Promise<State> {
   const local = load();
   try {
@@ -111,24 +121,24 @@ export async function syncWithServer(): Promise<State> {
 
     if (backend === "vercel-blob") {
       console.log(
-        "%c[Storage Sync] ☁️ Vercel Blob storage is ACTIVE and working.",
+        "%c[Storage Sync]   Vercel Blob storage is ACTIVE and working.",
         "color: #10b981; font-weight: bold;"
       );
     } else if (backend === "local-file-fallback") {
       console.error(
-        "%c[Storage Sync] ❌ Vercel Blob failed. Falling back to local storage (data/storage.json).",
+        "%c[Storage Sync]   Vercel Blob failed. Falling back to local storage (data/storage.json).",
         "color: #ef4444; font-weight: bold;"
       );
     } else {
       console.warn(
-        "%c[Storage Sync] ⚠️ Vercel Blob is NOT working/configured (BLOB_READ_WRITE_TOKEN is missing). Using local storage (data/storage.json & browser localStorage).",
+        "%c[Storage Sync]   Vercel Blob is NOT working/configured (BLOB_READ_WRITE_TOKEN is missing). Using local storage (data/storage.json & browser localStorage).",
         "color: #eab308; font-weight: bold;"
       );
     }
 
     if (!res.ok) return local;
-
     const serverState: State = await res.json();
+
     const serverHasData =
       (serverState.watched && serverState.watched.length > 0) ||
       (serverState.watchlist && serverState.watchlist.length > 0);
@@ -147,7 +157,7 @@ export async function syncWithServer(): Promise<State> {
     return merged;
   } catch (err) {
     console.error(
-      "%c[Storage Sync] ❌ Server storage unreachable. Using browser localStorage only.",
+      "%c[Storage Sync]   Server storage unreachable. Using browser localStorage only.",
       "color: #ef4444; font-weight: bold;",
       err
     );
@@ -177,11 +187,9 @@ export const importData = (
     try {
       const content = e.target?.result as string;
       const parsed = JSON.parse(content);
-
       if (!parsed || typeof parsed !== "object") {
         throw new Error("Invalid backup format");
       }
-
       const current = load();
       const merged = mergeStates(current, parsed);
       save(merged);

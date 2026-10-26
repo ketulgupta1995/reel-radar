@@ -75,6 +75,12 @@ export default async function Home() {
               Taste Analysis
             </Link>
             <Link
+              href="/todos"
+              className="hidden md:inline-flex items-center gap-1.5 rounded-full bg-white/5 border border-white/10 px-3.5 py-1 text-xs text-white/85 hover:border-gold/40 hover:text-white transition"
+            >
+              Daily Todos
+            </Link>
+            <Link
               href="/discover"
               className="rounded-full bg-gold px-4 py-1.5 text-xs font-bold text-black transition hover:bg-gold/90"
             >

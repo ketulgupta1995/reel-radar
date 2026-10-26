@@ -304,6 +304,12 @@ export default function Recommendations() {
           <Link href="/analysis" className="text-white/70 hover:text-white">
             Analysis
           </Link>
+          <Link
+            href="/todos"
+            className="text-white/70 hover:text-white"
+          >
+            Daily Todos
+          </Link>
           <StorageControls onStateChange={(s) => setState(s)} />
         </div>
       </header>

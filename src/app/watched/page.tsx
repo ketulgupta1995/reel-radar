@@ -234,6 +234,12 @@ export default function WatchedPage() {
           <Link href="/analysis" className="text-white/70 transition hover:text-white">
             Analysis
           </Link>
+          <Link
+            href="/todos"
+            className="text-white/70 transition hover:text-white"
+          >
+            Daily Todos
+          </Link>
           <StorageControls onStateChange={(s) => setState(s)} />
         </div>
       </header>

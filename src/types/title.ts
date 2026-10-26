@@ -16,6 +16,7 @@ export type Title = {
   genreNames?: string[];
   rating: number;
   popularity: number;
+  voteCount?: number;
   cast?: PersonInfo[];
   creators?: PersonInfo[];
   keywords?: string[];
@@ -23,7 +24,9 @@ export type Title = {
   watchedSeasons?: number[];
   originalLanguage?: string;
   originCountry?: string[];
-  trailerYoutubeId?: string; // Appended property for instant trailer
+  trailerYoutubeId?: string;
+  why?: string;
+  similarityScore?: number;
 };
 
 export const keyOf = (t: Pick<Title, "id" | "mediaType">) => `${t.mediaType}:${t.id}`;
