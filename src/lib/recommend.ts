@@ -32,7 +32,12 @@ export type RankOptions = {
   discoveryStyle?: DiscoveryStyle;
   mood?: MoodFilter;
   era?: EraFilter;
+  // Full metadata for titles the user marked "not interested"; used as a negative taste signal.
+  dismissedTitles?: Title[];
 };
+
+// A dismissal is a weaker signal than actually watching something.
+const DISMISS_STRENGTH = 0.5;
 
 // Genre mapping for mood filtering
 const MOOD_GENRES: Record<Exclude<MoodFilter, "all">, number[]> = {
@@ -69,7 +74,7 @@ export function rank(
   if (!candidates.length) return [];
 
   const totalWatched = Math.max(watched.length, 1);
-  const { discoveryStyle = "balanced", mood = "all", era = "all" } = options;
+  const { discoveryStyle = "balanced", mood = "all", era = "all", dismissedTitles = [] } = options;
 
   // Compute doc frequency for genres across watched titles for TF-IDF style weighting
   const genreDocCount = new Map<number, number>();
@@ -122,6 +127,21 @@ export function rank(
   );
 
   const words = frequencies(watched, (t) => t.keywords || [], itemWeight);
+
+  // Negative profile from "not interested" titles, rescaled to the watched profile's magnitude
+  // so a few dismissals can't outweigh a large history.
+  const negScale = dismissedTitles.length ? totalWatched / dismissedTitles.length : 0;
+  const negative = (pick: (t: Title) => (string | number)[]) => {
+    const m = frequencies(dismissedTitles, pick);
+    m.forEach((v, k) => m.set(k, v * negScale));
+    return m;
+  };
+  const negGenres = negative((t) => t.genres);
+  const negPeople = negative((t) => [
+    ...(t.creators || []).map((p) => p.id),
+    ...(t.cast || []).map((p) => p.id),
+  ]);
+  const negWords = negative((t) => t.keywords || []);
 
   const indianWatchedCount = watched.filter(isIndianTitle).length;
   const indianAffinity = indianWatchedCount / totalWatched;
@@ -176,6 +196,14 @@ export function rank(
       regionScore = 0.95;
     }
 
+    const dislike =
+      dismissedTitles.length === 0
+        ? 0
+        : DISMISS_STRENGTH *
+          (3.0 * overlap(c.genres, negGenres) +
+            1.5 * overlap([...(c.creators || []), ...(c.cast || [])].map((p) => p.id), negPeople) +
+            1.5 * overlap(c.keywords || [], negWords));
+
     const seenPenalty = seenKeys.has(keyOf(c)) ? 0.45 : 1.0;
 
     const rawScore =
@@ -185,7 +213,8 @@ export function rank(
         2.0 * keywordScore +
         qualityMultiplier * quality +
         popularityBonus +
-        0.4 * typeFit) *
+        0.4 * typeFit -
+        dislike) *
       regionScore *
       seenPenalty;
 

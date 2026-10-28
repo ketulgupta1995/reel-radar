@@ -31,4 +31,14 @@ describe("rank", () => {
     expect(out.map((x) => x.id)).not.toContain(2);
     expect(out[0].id).toBe(3);
   });
+
+  it("ranks candidates resembling dismissed titles lower", () => {
+    const watched = [t(1, [878, 35]), t(2, [878, 35])];
+    const candidates = [t(3, [878]), t(4, [35])];
+    const baseline = rank(watched, candidates);
+    const out = rank(watched, candidates, [], [], [], 20, { dismissedTitles: [t(9, [35]), t(10, [35])] });
+    expect(baseline.length).toBe(2);
+    expect(out[0].id).toBe(3);
+    expect(out[1].id).toBe(4);
+  });
 });

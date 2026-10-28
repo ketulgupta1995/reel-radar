@@ -39,7 +39,13 @@ async function get(path: string, params: Record<string, string | number | boolea
   const u = new URL(base + path);
   u.searchParams.set("api_key", key);
   Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, String(v)));
-  const r = await fetch(u, { next: { revalidate: 3600 } });
+  // Fail fast and retry once: connect timeouts are common on flaky networks (e.g. WSL).
+  let r: Response;
+  try {
+    r = await fetch(u, { next: { revalidate: 3600 }, signal: AbortSignal.timeout(8000) });
+  } catch {
+    r = await fetch(u, { next: { revalidate: 3600 }, signal: AbortSignal.timeout(8000) });
+  }
   if (!r.ok) throw new Error(`TMDB request failed (${r.status})`);
   return r.json();
 }

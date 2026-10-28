@@ -30,6 +30,18 @@ export async function POST(r: Request) {
       watched.map((w) => detail(w.mediaType, w.id).catch(() => w))
     );
 
+    // Dismissals are stored as bare keys; load metadata for the most recent ones so the
+    // ranker can learn what to avoid.
+    const dismissedTitles = (
+      await Promise.all(
+        dismissed.slice(-25).map((k) => {
+          const [type, id] = k.split(":");
+          if ((type !== "movie" && type !== "tv") || !Number(id)) return null;
+          return detail(type, Number(id)).catch(() => null);
+        })
+      )
+    ).filter((t): t is Title => Boolean(t));
+
     // 1. Identify distinct taste anchors: top genres (both high-volume and niche), top directors, and top rated titles
     const genreCount = new Map<number, number>();
     rich.forEach((t) => t.genres.forEach((g) => genreCount.set(g, (genreCount.get(g) || 0) + 1)));
@@ -95,7 +107,11 @@ export async function POST(r: Request) {
       poolPromises.push(getRecommendations(w.mediaType, w.id));
     }
 
-    const settled = await Promise.all(poolPromises);
+    // One failed pool shouldn't sink the whole request; only give up if every pool failed.
+    const settled = await Promise.all(poolPromises.map((p) => p.catch(() => [] as Title[])));
+    if (!settled.some((pool) => pool.length)) {
+      throw new Error("Could not reach TMDB. Check your network connection and TMDB_API_KEY.");
+    }
     const candidateMap = new Map<string, Title>();
     settled.flat().forEach((c) => {
       const k = keyOf(c);
@@ -107,6 +123,7 @@ export async function POST(r: Request) {
       discoveryStyle,
       mood,
       era,
+      dismissedTitles,
     });
 
     const attachWhy = (items: Title[]) =>

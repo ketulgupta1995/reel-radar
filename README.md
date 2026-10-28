@@ -1,6 +1,6 @@
 # Reel Radar 🎬
 
-A modern, cinematic web application built with **Next.js 14 (App Router)**, **TypeScript**, and **Tailwind CSS**. Reel Radar provides personalized movie and TV series discovery powered by live TMDB metadata, intelligent taste analysis, and hybrid local/cloud state persistence—without requiring accounts or authentication.
+A modern, cinematic web application built with **Next.js 14 (App Router)**, **TypeScript**, and **Tailwind CSS**. Reel Radar provides personalized movie and TV series discovery powered by live TMDB metadata, intelligent taste analysis, and hybrid local/cloud state persistence—protected by a simple single-user login.
 
 ---
 
@@ -124,6 +124,11 @@ TMDB_API_KEY=your_tmdb_api_key_here
 
 # (Optional) For cloud sync on Vercel:
 # BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...
+
+# Single-user login (required — set the same three vars in Vercel for deployment)
+APP_USERNAME=your_username
+APP_PASSWORD=your_password
+AUTH_SECRET=long_random_string   # openssl rand -hex 32
 ```
 
 ### 3. Install and Run
