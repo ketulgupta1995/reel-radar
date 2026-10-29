@@ -7,6 +7,9 @@ export const dynamic = "force-dynamic";
 const TODO_STORAGE_PREFIX = "reel-radar-todos-";
 const localDataDir = path.join(process.cwd(), "data");
 
+// A YYYY-MM-DD day, or "daily" for the repeating-task list.
+const DATE_KEY = /^(\d{4}-\d{2}-\d{2}|daily)$/;
+
 const isBlobConfigured = Boolean(process.env.BLOB_READ_WRITE_TOKEN);
 
 async function ensureLocalFile(date: string) {
@@ -61,7 +64,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const date = searchParams.get("date");
   
-  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+  if (!date || !DATE_KEY.test(date)) {
     return Response.json({ error: "Invalid date parameter" }, { status: 400 });
   }
 
@@ -133,7 +136,7 @@ export async function POST(req: Request) {
   const body = await req.json();
   const { date, todos } = body;
   
-  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+  if (!date || !DATE_KEY.test(date)) {
     return Response.json({ error: "Invalid date parameter" }, { status: 400 });
   }
   

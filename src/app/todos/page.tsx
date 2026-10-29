@@ -13,8 +13,12 @@ import {
   updateTodoText,
   clearCompletedTodos,
   getAllStoredDates,
-  getPendingBefore,
-  carryOverPending,
+  getUnfinishedFromYesterday,
+  carryOverFromYesterday,
+  loadTodosWithDaily,
+  makeTodoDaily,
+  stopTodoDaily,
+  syncDailyTasksWithServer,
   getTodayDate,
   shiftDate,
   exportTodos,
@@ -26,6 +30,7 @@ import {
 } from "@/lib/todos";
 
 type Filter = "all" | "active" | "done";
+type MobileView = "tasks" | "schedule";
 
 const HOUR_PX = 64;
 const SNAP = 15; // minutes
@@ -118,12 +123,15 @@ export default function TodosPage() {
   const [newPriority, setNewPriority] = useState<Priority | "">("");
   const [newTime, setNewTime] = useState("");
   const [newDuration, setNewDuration] = useState(DEFAULT_DURATION);
+  const [newDaily, setNewDaily] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [availableDates, setAvailableDates] = useState<string[]>([]);
-  const [pendingCount, setPendingCount] = useState(0);
+  const [yesterdayTodos, setYesterdayTodos] = useState<Todo[]>([]);
+  const [showYesterday, setShowYesterday] = useState(false);
+  const [mobileView, setMobileView] = useState<MobileView>("tasks");
   const [deleted, setDeleted] = useState<Todo | null>(null);
   const [message, setMessage] = useState("");
   const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "synced" | "error">("idle");
@@ -140,24 +148,37 @@ export default function TodosPage() {
 
   const refreshMeta = (date = selectedDate) => {
     setAvailableDates(getAllStoredDates());
-    setPendingCount(getPendingBefore(date).reduce((n, d) => n + d.todos.length, 0));
+    setYesterdayTodos(getUnfinishedFromYesterday(date));
   };
 
   useEffect(() => {
-    const local = loadTodos(selectedDate);
-    setTodos(local);
-    refreshMeta(selectedDate);
+    let cancelled = false;
     setDeleted(null);
     setSelectedBlock(null);
     setQuickAdd(null);
-    if (local.length === 0) {
-      syncTodosWithServer(selectedDate).then((remote) => {
-        setTodos(remote);
-        refreshMeta(selectedDate);
-      });
-    }
+    setShowYesterday(false);
+    const local = loadTodos(selectedDate);
+    // Check the server before adding daily copies, or an empty day would never be pulled.
+    (local.length === 0 ? syncTodosWithServer(selectedDate) : Promise.resolve(local)).then(() => {
+      if (cancelled) return;
+      setTodos(loadTodosWithDaily(selectedDate));
+      refreshMeta(selectedDate);
+    });
+    setTodos(local);
+    refreshMeta(selectedDate);
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate]);
+
+  // A new device has no daily tasks locally; pull them once.
+  useEffect(() => {
+    syncDailyTasksWithServer().then((tasks) => {
+      if (tasks.length > 0) setTodos(loadTodosWithDaily(selectedDate));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -185,7 +206,8 @@ export default function TodosPage() {
         ? d.getHours() * 60
         : 8 * 60;
     if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, (target / 60 - 1) * HOUR_PX);
-  }, [selectedDate]);
+    // Re-run on mobile view switch: a hidden planner can't be scrolled.
+  }, [selectedDate, mobileView]);
 
   const flash = (text: string) => {
     setMessage(text);
@@ -206,10 +228,12 @@ export default function TodosPage() {
         newTodoText.trim(),
         selectedDate,
         newPriority || undefined,
-        start !== null ? { start, duration: newDuration } : undefined
+        start !== null ? { start, duration: newDuration } : undefined,
+        newDaily
       )
     );
     setNewTodoText("");
+    setNewDaily(false);
     setNewTime("");
     inputRef.current?.focus();
   };
@@ -238,10 +262,20 @@ export default function TodosPage() {
     setEditText("");
   };
 
-  const handleCarryOver = () => {
-    const before = pendingCount;
-    apply(carryOverPending(selectedDate));
-    flash(`Moved ${before} unfinished ${before === 1 ? "task" : "tasks"} to ${getRelativeDateLabel(selectedDate)}`);
+  const handleCarryOver = (ids?: string[]) => {
+    const count = ids ? ids.length : yesterdayTodos.length;
+    apply(carryOverFromYesterday(selectedDate, ids));
+    flash(`Added ${count} ${count === 1 ? "task" : "tasks"} from ${getRelativeDateLabel(shiftDate(selectedDate, -1))}`);
+  };
+
+  const handleToggleDaily = (t: Todo) => {
+    if (t.dailyId) {
+      apply(stopTodoDaily(t.id, selectedDate));
+      flash("No longer repeats daily");
+    } else {
+      apply(makeTodoDaily(t.id, selectedDate));
+      flash("Repeats every day from now on");
+    }
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -283,6 +317,7 @@ export default function TodosPage() {
     const d = new Date();
     const base = selectedDate === getTodayDate() ? Math.ceil((d.getHours() * 60 + d.getMinutes()) / 30) * 30 : 9 * 60;
     placeTodo(t.id, base);
+    flash(`Scheduled at ${fmtTime(clampStart(base, t.duration ?? DEFAULT_DURATION))}`);
   };
 
   const minutesFromEvent = (e: React.MouseEvent | React.DragEvent) => {
@@ -333,16 +368,17 @@ export default function TodosPage() {
   }, [todos, filter, query]);
 
   const isToday = selectedDate === getTodayDate();
+  const prevLabel = getRelativeDateLabel(shiftDate(selectedDate, -1));
 
   return (
     <main className="min-h-screen bg-[#090910] text-white">
       {/* Header */}
       <header className="border-b border-white/5 bg-black/20 backdrop-blur-md sticky top-0 z-40">
-        <nav className="mx-auto flex max-w-[1600px] items-center justify-between px-6 py-4">
-          <Link href="/" className="font-bold tracking-[.2em] text-gold">
+        <nav className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-4 py-3 sm:px-6 sm:py-4">
+          <Link href="/" className="shrink-0 font-bold tracking-[.2em] text-gold">
             REEL RADAR
           </Link>
-          <div className="flex items-center gap-4">
+          <div className="flex min-w-0 items-center gap-4 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <Link
               href="/discover"
               className="text-white/70 transition hover:text-gold text-sm"
@@ -389,11 +425,11 @@ export default function TodosPage() {
         </nav>
       </header>
 
-      <div className="mx-auto max-w-[1600px] px-6 py-8">
+      <div className="mx-auto max-w-[1600px] px-4 pb-24 pt-5 sm:px-6 sm:py-8">
         {/* Title & Day Navigation */}
         <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Daily Planner</h1>
+            <h1 className="text-2xl font-bold sm:text-3xl">Daily Planner</h1>
             <p className="mt-1 text-white/60">
               {getRelativeDateLabel(selectedDate)} · {formatDate(selectedDate)}
             </p>
@@ -410,7 +446,7 @@ export default function TodosPage() {
               type="date"
               value={selectedDate}
               onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
-              className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-sm text-white [color-scheme:dark] focus:border-gold/50 focus:outline-none"
+              className="min-w-0 flex-1 rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-sm text-white [color-scheme:dark] focus:border-gold/50 focus:outline-none sm:flex-none"
               aria-label="Pick a date"
             />
             <button
@@ -432,17 +468,17 @@ export default function TodosPage() {
         </div>
 
         {/* Day summary */}
-        <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="mb-5 grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4">
           {[
             { label: "Done", value: `${completedCount}/${todos.length}`, sub: `${percent}% complete` },
             { label: "Still to do", value: String(activeCount), sub: `${unscheduledActive} not scheduled` },
             { label: "Planned time", value: plannedMinutes ? fmtDuration(plannedMinutes) : "–", sub: `${scheduled.length} time ${scheduled.length === 1 ? "block" : "blocks"}` },
             { label: "Unplanned in 24h", value: fmtDuration(Math.max(24 * 60 - plannedMinutes, 0)), sub: "drag tasks into the planner" },
           ].map((c) => (
-            <div key={c.label} className="rounded-xl border border-white/10 bg-panel/60 px-4 py-3">
-              <div className="text-xs uppercase tracking-wider text-white/45">{c.label}</div>
-              <div className="mt-1 text-2xl font-semibold">{c.value}</div>
-              <div className="text-xs text-white/45">{c.sub}</div>
+            <div key={c.label} className="rounded-xl border border-white/10 bg-panel/60 px-3 py-2.5 sm:px-4 sm:py-3">
+              <div className="truncate text-[11px] uppercase tracking-wider text-white/45 sm:text-xs">{c.label}</div>
+              <div className="mt-1 text-xl font-semibold sm:text-2xl">{c.value}</div>
+              <div className="truncate text-[11px] text-white/45 sm:text-xs">{c.sub}</div>
             </div>
           ))}
         </div>
@@ -452,38 +488,87 @@ export default function TodosPage() {
           </div>
         )}
 
-        {/* Carry-over banner */}
-        {pendingCount > 0 && (
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gold/30 bg-gold/5 px-4 py-3 text-sm">
-            <span className="text-white/80">
-              {pendingCount} unfinished {pendingCount === 1 ? "task" : "tasks"} from earlier days
-            </span>
-            <button
-              onClick={handleCarryOver}
-              className="rounded-full bg-gold px-3 py-1 text-xs font-semibold text-black hover:brightness-110"
-            >
-              Bring to {getRelativeDateLabel(selectedDate)}
-            </button>
+        {/* Carry-over from the previous day */}
+        {yesterdayTodos.length > 0 && (
+          <div className="mb-5 rounded-xl border border-gold/30 bg-gold/5 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <button
+                onClick={() => setShowYesterday((v) => !v)}
+                className="flex items-center gap-2 text-left text-white/80 hover:text-white"
+                aria-expanded={showYesterday}
+              >
+                <span className={`text-gold transition ${showYesterday ? "rotate-90" : ""}`}>›</span>
+                {yesterdayTodos.length} unfinished {yesterdayTodos.length === 1 ? "task" : "tasks"} from {prevLabel}
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowYesterday((v) => !v)}
+                  className="rounded-full border border-gold/40 px-3 py-1 text-xs text-gold hover:bg-gold/10"
+                >
+                  {showYesterday ? "Hide" : "Choose"}
+                </button>
+                <button
+                  onClick={() => handleCarryOver()}
+                  className="rounded-full bg-gold px-3 py-1 text-xs font-semibold text-black hover:brightness-110"
+                >
+                  Add all
+                </button>
+              </div>
+            </div>
+            {showYesterday && (
+              <ul className="divide-y divide-white/5 border-t border-gold/20">
+                {sortTodos(yesterdayTodos).map((t) => (
+                  <li key={t.id} className="flex items-center gap-3 px-4 py-2">
+                    <span
+                      className={`h-2 w-2 shrink-0 rounded-full ${t.priority ? PRIORITY_STYLE[t.priority].dot : "border border-white/30"}`}
+                    />
+                    <span className="min-w-0 flex-1 break-words text-white/80">{t.text}</span>
+                    <button
+                      onClick={() => handleCarryOver([t.id])}
+                      className="shrink-0 rounded-full border border-white/20 px-3 py-1 text-xs text-white/80 hover:border-gold/50 hover:text-gold"
+                    >
+                      + Add
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
 
+        {/* Mobile: one column at a time */}
+        <div className="mb-4 flex rounded-full border border-white/15 bg-white/5 p-0.5 text-sm lg:hidden">
+          {(["tasks", "schedule"] as MobileView[]).map((v) => (
+            <button
+              key={v}
+              onClick={() => setMobileView(v)}
+              className={`flex-1 rounded-full px-3 py-1.5 capitalize transition ${
+                mobileView === v ? "bg-gold font-semibold text-black" : "text-white/70"
+              }`}
+            >
+              {v}
+              {v === "tasks" ? ` (${activeCount})` : scheduled.length ? ` (${scheduled.length})` : ""}
+            </button>
+          ))}
+        </div>
+
         <div className="grid items-start gap-6 lg:grid-cols-2 xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
           {/* ---------------- Tasks column ---------------- */}
-          <section>
-            <form onSubmit={handleAddTodo} className="mb-4 flex flex-wrap gap-3">
+          <section className={mobileView === "tasks" ? "" : "hidden lg:block"}>
+            <form onSubmit={handleAddTodo} className="mb-4 flex flex-wrap gap-2 sm:gap-3">
               <input
                 ref={inputRef}
                 type="text"
                 value={newTodoText}
                 onChange={(e) => setNewTodoText(e.target.value)}
                 placeholder={isToday ? "What needs to be done today?" : `Add a task for ${getRelativeDateLabel(selectedDate)}`}
-                className="min-w-[12rem] flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white placeholder-white/40 transition focus:border-gold/50 focus:outline-none focus:ring-1 focus:ring-gold/50"
+                className="min-w-0 basis-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white sm:min-w-[12rem] sm:flex-1 sm:basis-auto placeholder-white/40 transition focus:border-gold/50 focus:outline-none focus:ring-1 focus:ring-gold/50"
                 autoComplete="off"
               />
               <select
                 value={newPriority}
                 onChange={(e) => setNewPriority(e.target.value as Priority | "")}
-                className="rounded-xl border border-white/10 bg-panel px-3 py-3 text-sm text-white focus:border-gold/50 focus:outline-none"
+                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-panel px-3 py-3 text-sm text-white focus:border-gold/50 focus:outline-none sm:flex-none"
                 aria-label="Priority"
               >
                 <option value="">No priority</option>
@@ -495,7 +580,7 @@ export default function TodosPage() {
                 type="time"
                 value={newTime}
                 onChange={(e) => setNewTime(e.target.value)}
-                className="rounded-xl border border-white/10 bg-panel px-3 py-3 text-sm text-white [color-scheme:dark] focus:border-gold/50 focus:outline-none"
+                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-panel px-3 py-3 text-sm text-white [color-scheme:dark] focus:border-gold/50 focus:outline-none sm:flex-none"
                 aria-label="Start time (optional)"
                 title="Start time (optional) - places it in the planner"
               />
@@ -514,9 +599,22 @@ export default function TodosPage() {
                 </select>
               )}
               <button
+                type="button"
+                onClick={() => setNewDaily((v) => !v)}
+                aria-pressed={newDaily}
+                title="Repeat this task every day"
+                className={`rounded-xl border px-3 py-3 text-sm transition ${
+                  newDaily
+                    ? "border-gold/60 bg-gold/15 text-gold"
+                    : "border-white/10 bg-panel text-white/60 hover:text-white"
+                }`}
+              >
+                ↻ Daily
+              </button>
+              <button
                 type="submit"
                 disabled={!newTodoText.trim()}
-                className="rounded-xl bg-gold px-6 py-3 font-semibold text-black transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex-1 rounded-xl bg-gold px-6 py-3 sm:flex-none font-semibold text-black transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Add
               </button>
@@ -581,10 +679,15 @@ export default function TodosPage() {
                       apply(setTodoPriority(t.id, NEXT_PRIORITY[t.priority ?? "none"], selectedDate))
                     }
                     onSchedule={quickSchedule}
+                    onToggleDaily={handleToggleDaily}
                     onShowBlock={(t) => {
                       setSelectedBlock(t.id);
-                      if (scrollRef.current && t.start !== undefined)
-                        scrollRef.current.scrollTo({ top: Math.max(0, (t.start / 60 - 1) * HOUR_PX), behavior: "smooth" });
+                      setMobileView("schedule");
+                      // After the planner is shown (mobile) and its default scroll has run.
+                      setTimeout(() => {
+                        if (scrollRef.current && t.start !== undefined)
+                          scrollRef.current.scrollTo({ top: Math.max(0, (t.start / 60 - 1) * HOUR_PX), behavior: "smooth" });
+                      }, 0);
                     }}
                   />
                 ))}
@@ -667,15 +770,20 @@ export default function TodosPage() {
           </section>
 
           {/* ---------------- Planner column ---------------- */}
-          <section className="rounded-2xl border border-white/10 bg-panel/60 lg:sticky lg:top-20">
+          <section
+            className={`rounded-2xl border border-white/10 bg-panel/60 lg:sticky lg:top-20 ${
+              mobileView === "schedule" ? "" : "hidden lg:block"
+            }`}
+          >
             <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
               <h2 className="font-semibold">Schedule</h2>
-              <p className="text-xs text-white/45">Click a slot to add · drag tasks here to time-block</p>
+              <p className="hidden text-xs text-white/45 sm:block">Click a slot to add · drag tasks here to time-block</p>
+              <p className="text-xs text-white/45 sm:hidden">Tap a slot to add · tap a block to edit</p>
             </div>
 
             {selected && (
               <div className="flex flex-wrap items-center gap-3 border-b border-white/10 bg-white/[.03] px-4 py-3 text-sm">
-                <span className="max-w-[16rem] truncate font-medium">{selected.text}</span>
+                <span className="w-full truncate font-medium sm:w-auto sm:max-w-[16rem]">{selected.text}</span>
                 <input
                   type="time"
                   step={SNAP * 60}
@@ -723,10 +831,10 @@ export default function TodosPage() {
               </div>
             )}
 
-            <div ref={scrollRef} className="relative max-h-[calc(100vh-17rem)] min-h-[24rem] overflow-y-auto">
+            <div ref={scrollRef} className="relative h-[65vh] overflow-y-auto lg:h-auto lg:max-h-[calc(100vh-17rem)] lg:min-h-[24rem]">
               <div
                 ref={gridRef}
-                className="relative ml-14 mr-3"
+                className="relative ml-12 mr-2 sm:ml-14 sm:mr-3"
                 style={{ height: 24 * HOUR_PX }}
                 onClick={handleGridClick}
                 onDragOver={(e) => {
@@ -852,7 +960,7 @@ export default function TodosPage() {
       </div>
 
       {/* Toasts */}
-      <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
+      <div className="fixed bottom-[calc(1.5rem+env(safe-area-inset-bottom))] left-1/2 z-50 flex w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col items-center gap-2">
         {deleted && (
           <div className="flex items-center gap-4 rounded-full border border-white/15 bg-panel px-4 py-2 text-sm shadow-2xl">
             <span className="text-white/80">Task deleted</span>
@@ -882,6 +990,7 @@ function TodoItem({
   onCyclePriority,
   onSchedule,
   onShowBlock,
+  onToggleDaily,
 }: {
   todo: Todo;
   isEditing: boolean;
@@ -895,6 +1004,7 @@ function TodoItem({
   onCyclePriority: (todo: Todo) => void;
   onSchedule: (todo: Todo) => void;
   onShowBlock: (todo: Todo) => void;
+  onToggleDaily: (todo: Todo) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -935,7 +1045,7 @@ function TodoItem({
         e.dataTransfer.setData("text/todo-id", todo.id);
         e.dataTransfer.effectAllowed = "move";
       }}
-      className="rounded-xl border border-white/10 bg-panel/60 p-3 transition hover:border-white/20"
+      className="rounded-xl border border-white/10 bg-panel/60 p-3 pr-2 transition hover:border-white/20 sm:pr-3"
     >
       <div className="flex items-start gap-3">
         <button
@@ -981,25 +1091,37 @@ function TodoItem({
                 + Schedule
               </button>
             )}
+            {todo.dailyId && <span className="rounded-full bg-gold/10 px-2 py-0.5 text-gold/80">↻ Daily</span>}
             {todo.carriedFrom && (
               <span className="rounded-full bg-white/10 px-2 py-0.5 text-white/60">from {getRelativeDateLabel(todo.carriedFrom)}</span>
             )}
           </p>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="-mr-1 flex shrink-0 items-center sm:mr-0 sm:gap-1">
           <button
             onClick={() => onCyclePriority(todo)}
-            className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] text-white/50 transition hover:bg-white/10 hover:text-white"
+            className="flex items-center gap-1.5 rounded-lg p-2 text-[11px] text-white/50 transition hover:bg-white/10 hover:text-white sm:px-2 sm:py-1.5"
             aria-label="Change priority"
             title="Click to change priority"
           >
             <span className={`h-2.5 w-2.5 rounded-full ${pri ? pri.dot : "border border-white/30"}`} />
-            {pri ? pri.label : "Priority"}
+            <span className="hidden sm:inline">{pri ? pri.label : "Priority"}</span>
+          </button>
+          <button
+            onClick={() => onToggleDaily(todo)}
+            className={`rounded-lg p-2 text-sm leading-4 transition hover:bg-white/10 sm:p-1.5 ${
+              todo.dailyId ? "text-gold" : "text-white/50 hover:text-white"
+            }`}
+            aria-label={todo.dailyId ? "Stop repeating daily" : "Repeat daily"}
+            aria-pressed={Boolean(todo.dailyId)}
+            title={todo.dailyId ? "Repeats daily - click to stop" : "Repeat every day"}
+          >
+            <span className="inline-block h-4 w-4 text-center">↻</span>
           </button>
           <button
             onClick={() => onEditStart(todo)}
-            className="rounded-lg p-1.5 text-white/50 transition hover:bg-white/10 hover:text-white"
+            className="rounded-lg p-2 sm:p-1.5 text-white/50 transition hover:bg-white/10 hover:text-white"
             aria-label="Edit todo"
           >
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1008,7 +1130,7 @@ function TodoItem({
           </button>
           <button
             onClick={() => onDelete(todo.id)}
-            className="rounded-lg p-1.5 text-white/50 transition hover:bg-red-500/10 hover:text-red-400"
+            className="rounded-lg p-2 sm:p-1.5 text-white/50 transition hover:bg-red-500/10 hover:text-red-400"
             aria-label="Delete todo"
           >
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
