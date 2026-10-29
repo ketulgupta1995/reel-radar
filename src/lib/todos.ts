@@ -1,5 +1,9 @@
 "use client";
 
+import { useEffect } from "react";
+import { merge3 } from "@/lib/syncDocs";
+import { SYNC_EVENT, markDirty, registerDocs, syncKeys, watchKeys } from "@/lib/sync";
+
 export type Priority = "high" | "medium" | "low";
 
 export type Subtask = { id: string; text: string; done: boolean };
@@ -69,12 +73,68 @@ export type DayTodos = {
   todos: Todo[];
 };
 
-const TODO_STORAGE_PREFIX = "reel-radar-todos-";
-const DAILY_STORAGE_KEY = "reel-radar-daily-tasks";
-const DAILY_SERVER_KEY = "daily"; // stored by /api/todos alongside the per-date files
+// ---------------- Storage ----------------
+// Each month's todos are one synced doc ("planner-2026-10") and the daily tasks another
+// ("planner-daily"). localStorage keeps the same docs under "reel-radar-<doc key>", and
+// lib/sync.ts keeps them in step across devices. Items carry `updatedAt` so that when two
+// devices changed the same todo, the later edit wins.
 
-function getStorageKey(date: string): string {
-  return `${TODO_STORAGE_PREFIX}${date}`;
+type MonthItem = { date: string; pos: number; todo: Todo; updatedAt: number };
+type MonthDoc = { items: MonthItem[] };
+type DailyItem = { task: DailyTask; updatedAt: number };
+type DailyDoc = { items: DailyItem[] };
+
+const DAILY_DOC = "planner-daily";
+const MONTH_DOC = /^planner-(\d{4}-\d{2})$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const STORAGE_PREFIX = "reel-radar-";
+// The first month of the synced planner; the stats page pulls every month from here on.
+export const PLANNER_EPOCH = "2026-10";
+
+const monthOf = (date: string) => date.slice(0, 7);
+const monthDocKey = (month: string) => `planner-${month}`;
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+// The same items, in any order: a save that changes nothing shouldn't trigger a push.
+const sorted = (items: unknown[]) => items.map((x) => JSON.stringify(x)).sort();
+const sameItems = (a: unknown[], b: unknown[]) => a.length === b.length && sameJson(sorted(a), sorted(b));
+
+function readDoc<T extends { items: unknown[] }>(docKey: string): T {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_PREFIX + docKey) || "null");
+    return parsed && Array.isArray(parsed.items) ? parsed : ({ items: [] } as unknown as T);
+  } catch {
+    return { items: [] } as unknown as T;
+  }
+}
+
+const writeDoc = (docKey: string, doc: { items: unknown[] }) =>
+  localStorage.setItem(STORAGE_PREFIX + docKey, JSON.stringify(doc));
+
+const readMonth = (month: string) => readDoc<MonthDoc>(monthDocKey(month));
+const readDaily = () => readDoc<DailyDoc>(DAILY_DOC);
+
+const newer = <T extends { updatedAt: number }>(local: T, server: T) => (server.updatedAt > local.updatedAt ? server : local);
+
+registerDocs((key) => {
+  if (key !== DAILY_DOC && !MONTH_DOC.test(key)) return undefined;
+  const id = key === DAILY_DOC ? (i: DailyItem) => i.task.id : (i: MonthItem) => i.todo.id;
+  return {
+    read: () => readDoc(key),
+    write: (doc: { items: never[] }) => writeDoc(key, doc),
+    merge: (local: { items: never[] }, server: { items: never[] }, base?: { items: never[] }) => ({
+      items: merge3(local.items, server.items, base?.items, id as (i: never) => string, newer),
+    }),
+    empty: () => ({ items: [] }),
+    flushDelay: 3000,
+  };
+});
+
+// The planner before synced docs kept one key per day; it started over empty.
+if (typeof window !== "undefined") {
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const k = localStorage.key(i);
+    if (k && (k.startsWith("reel-radar-todos-") || k === "reel-radar-daily-tasks")) localStorage.removeItem(k);
+  }
 }
 
 const toDateString = (d: Date): string =>
@@ -94,29 +154,33 @@ export function shiftDate(date: string, days: number): string {
 export function loadTodos(date?: string): Todo[] {
   if (typeof window === "undefined") return [];
   const targetDate = date || getTodayDate();
-  try {
-    const raw = localStorage.getItem(getStorageKey(targetDate));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+  return readMonth(monthOf(targetDate))
+    .items.filter((i) => i.date === targetDate)
+    .sort((a, b) => a.pos - b.pos)
+    .map((i) => i.todo);
 }
 
+// Replace a day's list. Only todos that actually changed get a new `updatedAt`, and the month's
+// doc is pushed to the server a few seconds after the last change.
 export function saveTodos(todos: Todo[], date?: string): void {
   if (typeof window === "undefined") return;
   const targetDate = date || getTodayDate();
-  localStorage.setItem(getStorageKey(targetDate), JSON.stringify(todos, null, 2));
-  
-  // Also sync with server
-  fetch("/api/todos", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ date: targetDate, todos }),
-  }).catch((err) => {
-    console.error("[Todos Save] Could not contact /api/todos. Saved only to browser localStorage.", err);
+  const month = monthOf(targetDate);
+  const doc = readMonth(month);
+  const now = Date.now();
+  const before = new Map(doc.items.map((i) => [i.todo.id, i]));
+  const ids = new Set(todos.map((t) => t.id));
+  const items = todos.map((todo, pos) => {
+    const old = before.get(todo.id);
+    return old && old.date === targetDate && old.pos === pos && sameJson(old.todo, todo)
+      ? old
+      : { date: targetDate, pos, todo, updatedAt: now };
   });
+  // Other days of the month stay; a todo moved here from one of them is taken off it.
+  const next: MonthDoc = { items: [...doc.items.filter((i) => i.date !== targetDate && !ids.has(i.todo.id)), ...items] };
+  if (sameItems(next.items, doc.items)) return;
+  writeDoc(monthDocKey(month), next);
+  markDirty(monthDocKey(month));
 }
 
 export function addTodo(
@@ -238,24 +302,23 @@ export function carryOverFromYesterday(date: string, ids?: string[]): Todo[] {
 
 export function loadDailyTasks(): DailyTask[] {
   if (typeof window === "undefined") return [];
-  try {
-    const parsed = JSON.parse(localStorage.getItem(DAILY_STORAGE_KEY) || "[]");
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+  return readDaily().items.map((i) => i.task);
 }
 
 function saveDailyTasks(tasks: DailyTask[]): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(DAILY_STORAGE_KEY, JSON.stringify(tasks, null, 2));
-  fetch("/api/todos", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ date: DAILY_SERVER_KEY, todos: tasks }),
-  }).catch((err) => {
-    console.error("[Daily Tasks Save] Could not contact /api/todos. Saved only to browser localStorage.", err);
-  });
+  const doc = readDaily();
+  const now = Date.now();
+  const before = new Map(doc.items.map((i) => [i.task.id, i]));
+  const next: DailyDoc = {
+    items: tasks.map((task) => {
+      const old = before.get(task.id);
+      return old && sameJson(old.task, task) ? old : { task, updatedAt: now };
+    }),
+  };
+  if (sameItems(next.items, doc.items)) return;
+  writeDoc(DAILY_DOC, next);
+  markDirty(DAILY_DOC);
 }
 
 function updateDailyTask(id: string, change: (task: DailyTask) => DailyTask): void {
@@ -307,7 +370,8 @@ export function loadTodosWithDaily(date: string): Todo[] {
   const updated = [
     ...todos,
     ...missing.map((d) => ({
-      id: crypto.randomUUID(),
+      // Fixed per task and day, so two devices adding the same day's copy agree on one todo.
+      id: `${d.id}:${date}`,
       text: d.text,
       completed: false,
       createdAt: new Date(date + "T00:00:00").toISOString(),
@@ -517,24 +581,6 @@ export function dueReminders(todos: Todo[], now: number, lead: number): Todo[] {
   return todos.filter((t) => !t.completed && t.start !== undefined && now >= t.start - lead && now <= t.start);
 }
 
-// Fetch daily tasks from the server when this browser has none (e.g. a new device).
-export async function syncDailyTasksWithServer(): Promise<DailyTask[]> {
-  const local = loadDailyTasks();
-  if (local.length > 0 || typeof window === "undefined") return local;
-  try {
-    const res = await fetch(`/api/todos?date=${DAILY_SERVER_KEY}`);
-    if (!res.ok) return local;
-    const data = await res.json();
-    if (Array.isArray(data.todos) && data.todos.length > 0) {
-      localStorage.setItem(DAILY_STORAGE_KEY, JSON.stringify(data.todos, null, 2));
-      return data.todos;
-    }
-  } catch (err) {
-    console.error("[Daily Tasks Sync] Server storage unreachable.", err);
-  }
-  return local;
-}
-
 export function deleteTodo(id: string, date?: string): Todo[] {
   const todos = loadTodos(date);
   const updated = todos.filter((t) => t.id !== id);
@@ -583,89 +629,136 @@ export function clearCompletedTodos(date?: string): Todo[] {
   return updated;
 }
 
+// Days that have todos, most recent first.
 export function getAllStoredDates(): string[] {
   if (typeof window === "undefined") return [];
-  const dates: string[] = [];
+  const dates = new Set<string>();
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
-    if (key && key.startsWith(TODO_STORAGE_PREFIX)) {
-      const date = key.replace(TODO_STORAGE_PREFIX, "");
-      if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-        dates.push(date);
-      }
-    }
+    const m = key?.startsWith(STORAGE_PREFIX) ? MONTH_DOC.exec(key.slice(STORAGE_PREFIX.length)) : null;
+    if (m) readMonth(m[1]).items.forEach((item) => dates.add(item.date));
   }
-  return dates.sort().reverse(); // Most recent first
+  return Array.from(dates).sort().reverse();
 }
 
 export function loadAllTodos(): Record<string, Todo[]> {
-  if (typeof window === "undefined") return {};
-  const dates = getAllStoredDates();
-  const result: Record<string, Todo[]> = {};
-  for (const date of dates) {
-    result[date] = loadTodos(date);
-  }
-  return result;
+  return Object.fromEntries(getAllStoredDates().map((date) => [date, loadTodos(date)]));
 }
 
-export function exportTodos(date?: string): void {
-  const targetDate = date || getTodayDate();
-  const todos = loadTodos(targetDate);
-  const blob = new Blob([JSON.stringify({ date: targetDate, todos }, null, 2)], {
-    type: "application/json",
-  });
+// ---------------- Sync ----------------
+
+const plannerKeys = (months: string[]) => [DAILY_DOC, ...Array.from(new Set(months)).map(monthDocKey)];
+
+// Months from PLANNER_EPOCH through a few months ahead, for views that need every day.
+function allMonths(): string[] {
+  const months: string[] = [];
+  const end = new Date();
+  end.setMonth(end.getMonth() + 3);
+  const last = monthOf(toDateString(end));
+  for (let d = new Date(PLANNER_EPOCH + "-01T00:00:00"); monthOf(toDateString(d)) <= last; d.setMonth(d.getMonth() + 1)) {
+    months.push(monthOf(toDateString(d)));
+  }
+  return months;
+}
+
+// Pull the months holding `dates`, and the daily tasks, from the server. Recently synced docs are
+// skipped unless `force`. Resolves to whether anything changed here, or null when offline.
+export async function syncPlanner(dates: string[], force = false): Promise<boolean | null> {
+  const changed = await syncKeys(plannerKeys(dates.map(monthOf)), { force });
+  return changed && changed.length > 0;
+}
+
+export async function syncAllPlanner(force = false): Promise<boolean | null> {
+  const changed = await syncKeys(plannerKeys(allMonths()), { force });
+  return changed && changed.length > 0;
+}
+
+// While a view shows `dates`, re-sync them when the tab comes back into view, and call
+// `onChange` when another device's edits arrive.
+export function usePlannerSync(dates: string[], onChange: () => void): void {
+  const keys = plannerKeys(dates.map(monthOf)).join(",");
+  useEffect(() => {
+    const list = keys.split(",");
+    const stop = watchKeys(list);
+    const onSync = (e: Event) => {
+      if ((e as CustomEvent<{ keys: string[] }>).detail.keys.some((k) => list.includes(k))) onChange();
+    };
+    window.addEventListener(SYNC_EVENT, onSync);
+    return () => {
+      stop();
+      window.removeEventListener(SYNC_EVENT, onSync);
+    };
+    // onChange reloads from localStorage; re-subscribe only when the months change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keys]);
+}
+
+// ---------------- Backup ----------------
+
+export type PlannerBackup = { app: "planner"; version: 2; days: Record<string, Todo[]>; daily: DailyTask[] };
+export type PlannerImport = { todos: number; days: number; daily: number };
+
+export function exportPlanner(): void {
+  const backup: PlannerBackup = { app: "planner", version: 2, days: loadAllTodos(), daily: loadDailyTasks() };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `reel-radar-todos-${targetDate}.json`;
+  a.download = `planner-backup-${getTodayDate()}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }
 
-export function importTodos(
-  file: File,
-  onSuccess: (todos: Todo[], date: string) => void,
-  onError?: (msg: string) => void
-): void {
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    try {
-      const content = e.target?.result as string;
-      const parsed = JSON.parse(content);
-      if (!parsed || typeof parsed !== "object") {
-        throw new Error("Invalid backup format");
-      }
-      const { date, todos } = parsed;
-      if (!date || !Array.isArray(todos)) {
-        throw new Error("Invalid backup format: missing date or todos");
-      }
-      saveTodos(todos, date);
-      onSuccess(todos, date);
-    } catch {
-      if (onError) {
-        onError("Invalid JSON backup file.");
-      } else {
-        alert("Could not import file: Invalid JSON format.");
-      }
-    }
-  };
-  reader.readAsText(file);
+const isTodo = (t: unknown): t is Todo =>
+  !!t && typeof (t as Todo).id === "string" && typeof (t as Todo).text === "string";
+const isDailyTask = (t: unknown): t is DailyTask =>
+  !!t && typeof (t as DailyTask).id === "string" && typeof (t as DailyTask).startDate === "string";
+
+// Add imported items to what's here: a todo or task with the same id takes the imported version,
+// and nothing is deleted.
+function mergeById<T extends { id: string }>(current: T[], incoming: T[]): T[] {
+  const byId = new Map(incoming.map((t) => [t.id, t]));
+  const have = new Set(current.map((t) => t.id));
+  return [...current.map((t) => byId.get(t.id) ?? t), ...incoming.filter((t) => !have.has(t.id))];
 }
 
-export async function syncTodosWithServer(date?: string): Promise<Todo[]> {
-  const targetDate = date || getTodayDate();
+function readFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
+}
+
+// Import a planner backup from exportPlanner(), or an older single-day { date, todos } file.
+// Pulls every month first, so the import merges into the latest copy.
+export async function importPlanner(file: File): Promise<PlannerImport> {
+  let parsed: unknown;
   try {
-    const res = await fetch(`/api/todos?date=${targetDate}`);
-    if (!res.ok) return loadTodos(targetDate);
-    
-    const data = await res.json();
-    if (data.todos) {
-      saveTodos(data.todos, targetDate);
-      return data.todos;
-    }
-    return loadTodos(targetDate);
-  } catch (err) {
-    console.error("[Todos Sync] Server storage unreachable. Using browser localStorage only.", err);
-    return loadTodos(targetDate);
+    parsed = JSON.parse(await readFile(file));
+  } catch {
+    throw new Error("Invalid JSON backup file.");
   }
+  const p = parsed as Partial<PlannerBackup> & { date?: unknown; todos?: unknown };
+  const days: Record<string, Todo[]> = {};
+  if (p && p.app === "planner" && p.days && typeof p.days === "object") {
+    for (const [date, todos] of Object.entries(p.days)) {
+      if (DATE_RE.test(date) && Array.isArray(todos)) days[date] = todos.filter(isTodo);
+    }
+  } else if (p && typeof p.date === "string" && DATE_RE.test(p.date) && Array.isArray(p.todos)) {
+    days[p.date] = p.todos.filter(isTodo);
+  } else {
+    throw new Error("Not a planner backup file.");
+  }
+  const daily = Array.isArray(p.daily) ? p.daily.filter(isDailyTask) : [];
+
+  await syncAllPlanner();
+  for (const [date, todos] of Object.entries(days)) saveTodos(mergeById(loadTodos(date), todos), date);
+  if (daily.length) saveDailyTasks(mergeById(loadDailyTasks(), daily));
+  return {
+    todos: Object.values(days).reduce((n, t) => n + t.length, 0),
+    days: Object.values(days).filter((t) => t.length > 0).length,
+    daily: daily.length,
+  };
 }

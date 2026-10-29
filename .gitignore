@@ -2,3 +2,8 @@ node_modules
 .next
 .env.local
 .DS_Store
+
+# Local dev docs created at runtime; storage.json is the tracked backup of the watch history
+data/*.json
+!data/storage.json
+coverage

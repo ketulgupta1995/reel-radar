@@ -1,5 +1,8 @@
 import { discover, genreList } from "@/lib/tmdb";
 import { MediaType, Title } from "@/types/title";
+import { HOUR, cachedJson } from "@/lib/http";
+
+export const maxDuration = 10;
 
 export async function GET(request: Request) {
   try {
@@ -43,10 +46,10 @@ export async function GET(request: Request) {
       }
     }
 
-    return Response.json({
-      results,
-      genres: { movie: genreList("movie"), tv: genreList("tv") },
-    });
+    return cachedJson(
+      { results, genres: { movie: genreList("movie"), tv: genreList("tv") } },
+      HOUR
+    );
   } catch (e) {
     return Response.json(
       { error: e instanceof Error ? e.message : "Unable to load titles" },

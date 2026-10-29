@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { AppSwitcher } from "@/components/AppSwitcher";
 import { Title, keyOf } from "@/types/title";
-import { load, save, syncWithServer, State } from "@/lib/storage";
+import { load, save, useStorageSync, State } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
 
 export default function PersonPage() {
@@ -15,9 +16,10 @@ export default function PersonPage() {
   const [titles, setTitles] = useState<Title[]>([]);
   const [loading, setLoading] = useState(true);
 
+  useStorageSync(setState);
+
   useEffect(() => {
     setState(load());
-    syncWithServer().then(setState);
     fetch(`/api/person/${personId}`)
       .then((r) => r.json())
       .then((d) => {
@@ -60,7 +62,7 @@ export default function PersonPage() {
   return (
     <main className="min-h-screen px-4 py-8 md:px-10">
       <header className="mx-auto flex max-w-7xl items-center justify-between gap-4 mb-8">
-        <Link href="/" className="font-bold tracking-[.2em] text-gold">REEL RADAR</Link>
+        <AppSwitcher current="reel-radar" />
         <Link href="/search" className="text-white/70 hover:text-white text-sm">Back to Search</Link>
       </header>
 

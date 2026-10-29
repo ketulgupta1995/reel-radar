@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { AppSwitcher } from "@/components/AppSwitcher";
 import { useEffect, useRef, useState } from "react";
 import { Title, keyOf, MediaType } from "@/types/title";
-import { load, reset, save, syncWithServer, State, clearDiscoveryHistory } from "@/lib/storage";
+import { load, reset, save, useStorageSync, State, clearDiscoveryHistory } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
 import { StorageControls } from "@/components/StorageControls";
 
@@ -132,10 +133,9 @@ export default function Discover() {
     const s = load();
     setState(s);
     loadAllBatches(s, region, false);
-    syncWithServer().then((synced) => {
-      setState(synced);
-    });
   }, []);
+
+  useStorageSync(setState);
 
   useEffect(() => {
     if (isInitialMount.current) {
@@ -277,9 +277,7 @@ export default function Discover() {
   return (
     <main className="min-h-screen px-4 py-7 md:px-10 pb-16">
       <header className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4">
-        <Link href="/" className="font-bold tracking-[.2em] text-gold">
-          REEL RADAR
-        </Link>
+        <AppSwitcher current="reel-radar" />
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <Link
             href="/search"
@@ -311,12 +309,6 @@ export default function Discover() {
           >
             Analysis
           </Link>
-          <Link
-            href="/todos"
-            className="text-white/70 transition hover:text-white text-xs"
-          >
-            Daily Todos
-          </Link>
           <StorageControls onStateChange={(merged) => setState(merged)} />
           <button
             onClick={() => {
@@ -337,8 +329,7 @@ export default function Discover() {
           <button
             onClick={() => {
               if (confirm("Reset ALL data including watched history and watchlist?")) {
-                reset();
-                location.reload();
+                reset().then(() => location.reload());
               }
             }}
             className="text-xs text-white/50 underline hover:text-red-400"

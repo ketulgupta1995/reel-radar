@@ -11,6 +11,8 @@ import { TitleCard } from "./TitleCard";
 import { TitleDetailsModal } from "./TitleDetailsModal";
 import { StorageControls } from "./StorageControls";
 import { LogoutButton } from "./LogoutButton";
+import { AppSwitcher } from "./AppSwitcher";
+import { APPS } from "@/lib/apps";
 import * as storage from "@/lib/storage";
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -167,5 +169,33 @@ describe("LogoutButton", () => {
     fireEvent.click(screen.getByText("Log out"));
     expect(fetchMock).toHaveBeenCalledWith("/api/auth/logout", { method: "POST" });
     await waitFor(() => expect(loc.href).toBe("/login"));
+  });
+});
+
+describe("AppSwitcher", () => {
+  const hrefOf = (name: string) => screen.getByRole("link", { name }).getAttribute("href");
+
+  it("links home and to the current app, with the menu closed", () => {
+    render(<AppSwitcher current="planner" />);
+    expect(hrefOf("Home")).toBe("/");
+    expect(hrefOf("Daily Planner")).toBe("/todos");
+    expect(screen.queryByText("Reel Radar")).toBeNull();
+  });
+
+  it("lists only the other apps when opened, and closes on Escape", () => {
+    render(<AppSwitcher current="reel-radar" />);
+    fireEvent.click(screen.getByLabelText("Switch app"));
+    expect(hrefOf("🗓️ Daily Planner")).toBe("/todos");
+    expect(screen.getAllByText("Reel Radar")).toHaveLength(1);
+    expect(hrefOf("All apps →")).toBe("/");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByText("Switch to")).toBeNull();
+  });
+});
+
+describe("APPS", () => {
+  it("has unique ids and hrefs", () => {
+    expect(new Set(APPS.map((a) => a.id)).size).toBe(APPS.length);
+    expect(new Set(APPS.map((a) => a.href)).size).toBe(APPS.length);
   });
 });

@@ -2,6 +2,10 @@ import { detail, discover, getRecommendations } from "@/lib/tmdb";
 import { explanation, rankCategorized } from "@/lib/recommend";
 import { Title, keyOf } from "@/types/title";
 
+// One detail() per watched title plus ~45 pools: hundreds of TMDB calls when the data cache is
+// cold. Enough time for that, but capped so a hung call can't run up compute.
+export const maxDuration = 60;
+
 export async function POST(r: Request) {
   try {
     const {

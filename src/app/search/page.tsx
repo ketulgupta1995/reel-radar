@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { AppSwitcher } from "@/components/AppSwitcher";
 import { Title, keyOf } from "@/types/title";
-import { load, save, syncWithServer, State } from "@/lib/storage";
+import { load, save, useStorageSync, State } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
 import { StorageControls } from "@/components/StorageControls";
 
@@ -13,9 +14,10 @@ export default function SearchPage() {
   const [results, setResults] = useState<Title[]>([]);
   const [loading, setLoading] = useState(false);
 
+  useStorageSync(setState);
+
   useEffect(() => {
     setState(load());
-    syncWithServer().then(setState);
     if (typeof window !== "undefined") {
       const p = new URLSearchParams(window.location.search);
       const q = p.get("q") || p.get("query");
@@ -79,19 +81,13 @@ export default function SearchPage() {
   return (
     <main className="min-h-screen px-4 py-8 md:px-10">
       <header className="mx-auto flex max-w-7xl items-center justify-between gap-4 mb-8">
-        <Link href="/" className="font-bold tracking-[.2em] text-gold">REEL RADAR</Link>
+        <AppSwitcher current="reel-radar" />
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <Link href="/discover" className="text-white/70 hover:text-white">Discover</Link>
           <Link href="/watchlist" className="text-white/70 hover:text-white">Watchlist</Link>
           <Link href="/watched" className="text-white/70 hover:text-white">Viewed ({state.watched.length})</Link>
           <Link href="/recommendations" className="text-white/70 hover:text-white">Recommendations</Link>
           <Link href="/analysis" className="text-white/70 hover:text-white">Analysis</Link>
-          <Link
-            href="/todos"
-            className="text-white/70 hover:text-white"
-          >
-            Daily Todos
-          </Link>
           <StorageControls onStateChange={setState} />
         </div>
       </header>

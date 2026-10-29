@@ -34,6 +34,7 @@ If any of the three login variables is missing, nobody can sign in.
 |---|---|
 | `npm run dev` | Start the dev server |
 | `npm test` | Run the test suite (Vitest + Testing Library) |
+| `npm run coverage` | Tests plus a coverage report (terminal, and HTML in `coverage/`); fails below the thresholds |
 | `npx vitest` | Run tests in watch mode |
 | `npm run build` | Production build (also does a full typecheck) |
 | `npm start` | Serve the production build |
@@ -45,7 +46,8 @@ If any of the three login variables is missing, nobody can sign in.
 
 | Page | What you can do |
 |---|---|
-| `/` | Landing page with a live spotlight of trending Indian and global titles |
+| `/` | **Home**: one card per app (Reel Radar, Daily Planner). Inside an app, the header shows a ⌂ Home button and a ▾ menu to switch to another app; it doesn't link to the other apps' pages directly. |
+| `/reel-radar` | Reel Radar landing page with a live spotlight of trending Indian and global titles |
 | `/discover` | Endless feed you can filter by region (All / Indian / Global). Each card has **Mark seen**, **+ Watchlist**, **Not interested**, and **Trailer & details** buttons. |
 | `/recommendations` | Unlocks after **10 logged titles**. Results come in four groups: Indian Movies, Global Movies, Indian Series, Global Series. You can tune them by discovery style (balanced / popular / deep cuts) and mood (dark, adrenaline, feel-good, mind-bending), and each pick says why it was recommended. |
 | `/similar` | Titles similar to one you choose, with an optional year range |
@@ -55,12 +57,12 @@ If any of the three login variables is missing, nobody can sign in.
 | `/search` | Search across movies, series, and people |
 | `/person/[id]` | An actor's or director's filmography, with quick watch and watchlist buttons |
 | `/todos` | **Daily Planner**: tasks with a title, an optional note, a checklist, a priority and a colour tag (Work, Home, Health…), on a drag-to-schedule timeline where you resize blocks by dragging their bottom edge. A **week view** shows seven days side by side; drag tasks between days to move them, or hold Ctrl/Alt while dropping to copy. Each task also has a ⇄ button to move or copy it to any date. A **focus timer** on any task counts down its planned time and records the time actually spent. Tasks can repeat every day or on chosen weekdays (with a 🔥 streak count), the planner can send browser reminders before each block while the page is open, and you can bring over unfinished tasks from yesterday. |
-| `/todos/stats` | Planner stats: completion rate by weekday, planned vs. done hours, tasks by tag, focus time, and the most postponed tasks, over 7/30/90 days or all time. Uses the days saved in this browser. |
+| `/todos/stats` | Planner stats: completion rate by weekday, planned vs. done hours, tasks by tag, focus time, and the most postponed tasks, over 7/30/90 days or all time. Pulls every month from the server first, so it covers all your devices. |
 | `/login` | Single-user sign-in. Every other page and API route requires it. |
 
 **Season tracking.** Series are tracked per season (S1, S2, …). The more seasons you finish, the more weight a series carries in your taste profile.
 
-**Backup.** Export your history and watchlist to a `.json` file, or import one to restore or merge data across devices.
+**Backup.** Export your history and watchlist to a `.json` file, or import one to restore or merge data. The planner has its own Export and Import: one file with every day and daily task. Importing adds to what's there and never deletes; an older single-day planner file still imports. Both apps also sync automatically across devices.
 
 ---
 
@@ -69,14 +71,33 @@ If any of the three login variables is missing, nobody can sign in.
 ### Data & sync
 
 ```
-Browser localStorage  ──sync──▶  /api/storage, /api/todos  ──▶  Vercel Blob   (if BLOB_READ_WRITE_TOKEN is set)
-   (instant, offline)                                       └─▶  data/*.json   (local fallback)
+Browser localStorage  ──sync──▶  /api/sync  ──▶  Vercel Blob, v2/<doc>.json.gz   (if BLOB_READ_WRITE_TOKEN is set)
+   (instant, offline)                        └─▶  data/<doc>.json                (local fallback)
 ```
 
-- Watch data lives in `localStorage` under `reel-radar-v1`. Its shape is `{ watched, watchlist, displayed, shown, dismissed }`.
-- Todos are stored one file per day (`reel-radar-todos-YYYY-MM-DD.json`), plus a `daily` file for repeating tasks.
+Data is synced as separate docs, so a change only moves the doc it touches:
+
+| Doc | Contents |
+|---|---|
+| `library` | `watched`, `watchlist`, `dismissed`: what you chose |
+| `history` | `displayed` (titles Discover has shown) and `shown` (titles Recommendations has shown) |
+| `planner-YYYY-MM` | One month of todos |
+| `planner-daily` | Repeating daily tasks |
+
+- **Writes are batched.** A change saves to `localStorage` at once and is pushed a few seconds later (5 s for the library, 3 s for the planner), or when the tab is hidden. History changes ride along with the next push.
+- **Reads are cheap.** A page syncs on open, at most every 2 minutes, and again when the tab comes back into view after that. The client sends the etags it holds, so an unchanged doc returns a 304 with no body. Reads use Blob `get()`, never `list()`.
+- **Merges are three-way.** Each device keeps the last copy it agreed on with the server, so a removal or a cleared history on one device carries to the others instead of coming back. Writes are conditional on the etag: if another device wrote first, the server answers 409 with its copy, and the client merges and retries. Planner items carry `updatedAt`, so when both devices edited the same todo, the later edit wins.
+- Watch data lives in `localStorage` under `reel-radar-v1` as `{ watched, watchlist, displayed, shown, dismissed }`. Saved titles drop `keywords`, `trailerYoutubeId` and `why`, which are always fetched fresh.
 - Each title is identified by `"<mediaType>:<tmdbId>"`, e.g. `movie:550` or `tv:1396`.
-- Blob storage works with both private and public stores. If a private write fails because the store is public, it retries as public.
+- Blob storage works with both private and public stores.
+- The first sync migrates an old single-file `storage.json` into `library` and `history`. `scripts/upload-storage.ts` uploads `data/storage.json` by hand (see below).
+
+### Keeping Vercel usage low
+
+- TMDB-backed GET routes send `Cache-Control: private` (1 day for titles and people, 1 hour for lists), so the browser answers repeat requests itself. TMDB responses stay in Next's data cache for 6 hours (lists) or 7 days (details).
+- The middleware skips static files, and every route sets `maxDuration`.
+- `vercel.json` skips the build when a push only changes docs, tests or `data/`.
+- Trailers are YouTube embeds and posters load straight from TMDB, so neither touches Vercel.
 
 ### Indian vs Global
 
@@ -108,7 +129,8 @@ src/
 ├── middleware.ts                 # Auth gate: pages redirect to /login, APIs return 401
 ├── app/
 │   ├── layout.tsx, globals.css   # Root layout + Tailwind base
-│   ├── page.tsx                  # Landing page
+│   ├── page.tsx                  # Home: app launcher (cards from lib/apps.ts)
+│   ├── reel-radar/               # Reel Radar landing page
 │   ├── discover/  recommendations/  similar/  analysis/
 │   ├── watched/   watchlist/        search/   person/[id]/
 │   ├── todos/                    # Daily planner (page, WeekView, shared planner.tsx), stats/
@@ -120,27 +142,33 @@ src/
 │       ├── search/          GET   ?query=
 │       ├── title/           GET   Title details, credits, trailer
 │       ├── person/[id]/     GET   Person credits
-│       ├── storage/         GET/POST  Watch-data sync (Blob or data/storage.json)
-│       ├── todos/           GET/POST  ?date=YYYY-MM-DD|daily
+│       ├── sync/            GET ?keys=doc:etag,…  /  POST { key, data, baseEtag }
 │       └── auth/login, auth/logout   POST
 ├── components/
 │   ├── TitleCard.tsx             # Poster card with badges & quick actions
 │   ├── TitleDetailsModal.tsx     # Trailer, synopsis, cast & crew
 │   ├── StorageControls.tsx       # Export / import
+│   ├── AppSwitcher.tsx           # Header brand: Home link + switch-app menu
 │   └── LogoutButton.tsx
 ├── lib/
-│   ├── tmdb.ts                   # TMDB client: normalisation, 8s timeout + one retry, 1h cache
+│   ├── apps.ts                   # App registry used by the home page and AppSwitcher
+│   ├── tmdb.ts                   # TMDB client: normalisation, 8s timeout + one retry, 6h/7d cache
 │   ├── recommend.ts              # Taste profile, scoring, categorisation, "why" text
 │   ├── analysis.ts               # Analytics aggregation
 │   ├── region.ts                 # Indian vs Global rule (single source of truth)
-│   ├── storage.ts                # Client state: load/save, merge, sync, export/import
-│   ├── todos.ts                  # Planner model: daily tasks, carry-over, tags, focus timer, sync
+│   ├── storage.ts                # Reel Radar state: load/save, merge, sync hook, export/import
+│   ├── todos.ts                  # Planner model: daily tasks, carry-over, tags, focus timer, sync, backup
+│   ├── sync.ts                   # Client sync engine: etags, batching, three-way merge, refocus
+│   ├── syncDocs.ts               # Doc shapes and merges shared by client, server and script
+│   ├── blobStore.ts              # Server: gzipped docs in Blob (get/put), or data/ locally
+│   ├── http.ts                   # cachedJson(): browser-cacheable API responses
 │   ├── plannerStats.ts           # Planner stats aggregation
 │   ├── auth.ts                   # HMAC session cookie (Web Crypto, edge-safe)
 │   └── *.test.ts                 # Vitest unit tests
 ├── test/                         # Shared test fixtures and setup
 └── types/title.ts                # Title, MediaType, keyOf()
-data/                             # Local storage fallback (storage.json, todo files)
+data/                             # storage.json backup (tracked); local fallback docs (<doc>.json, gitignored)
+scripts/upload-storage.ts         # Upload data/storage.json to Blob as the library/history docs
 ```
 
 Imports use the `@/` alias for `src/`. Tailwind theme tokens: `ink` `#07070c` (background), `panel` `#11111a`, and `gold` `#f6c453` (accent).
@@ -149,18 +177,18 @@ Imports use the `@/` alias for `src/`. Tailwind theme tokens: `ink` `#07070c` (b
 
 ## Testing
 
-`npm test` runs about 175 tests, entirely offline. TMDB, Vercel Blob, and `fetch` are mocked, and the storage tests write to a temporary directory, never to `data/`.
+`npm test` runs about 340 tests, entirely offline, and covers about 99% of the code (`npm run coverage`; it fails below 97% of lines, 95% of functions or 90% of branches). TMDB, Vercel Blob, and `fetch` are mocked, and the storage tests write to a temporary directory, never to `data/`.
 
 | Area | What's covered |
 |---|---|
 | `lib/recommend`, `lib/analysis`, `lib/region` | Scoring, filters, categories, explanations, every analytics metric, personas |
 | `lib/tmdb` | Normalisation, request retry and errors, discover/search/credits/detail, similar-title scoring |
+| `lib/sync`, `lib/syncDocs` | Three-way merge, batching, refocus sync, conflict retry, mid-push edits |
 | `lib/storage`, `lib/todos`, `lib/plannerStats` | Merge, sync, import/export, daily tasks, repeat days, streaks, subtasks, tags, moving between days, focus timer, reminders, carry-over, skip/undo, planner stats |
 | `lib/auth`, `middleware` | Session signing and expiry, redirects, 401s |
-| API routes | Validation, responses, Blob ↔ local-file fallback, private → public retry |
+| API routes | Validation, responses, cache headers, conditional reads and writes, migration, private → public |
 | Components, `/login` | Title card, details modal, backup controls, logout, sign-in flow and safe redirects |
-
-The large pages don't have render tests; their logic lives in `lib/` and is tested there.
+| Every page | Rendered and driven through the UI against the real `lib/` code: discover feed and batches, season tracking, recommendations filters, analysis sections and graph, watched/watchlist sorting and filters, search, similar, person; the planner's add/edit/delete/undo, checklist, repeats, scheduling, drag and drop, resize, quick add, carry-over, move/copy, focus timer, reminders, backup, sync, week view and stats |
 
 ---
 
@@ -186,21 +214,16 @@ Without a Blob store, sync on Vercel won't persist, because its filesystem is re
 
 ### Reset the "already shown" lists
 
-Paste this into the browser console while signed in. It clears `shown` and `displayed` locally and on the server, so the discovery feed starts fresh:
+Use **Clear Displayed & Shown** on the Discover page. It clears `shown` and `displayed` on every device.
 
-```javascript
-(() => {
-  const key = "reel-radar-v1";
-  const state = JSON.parse(localStorage.getItem(key) || "{}");
-  state.shown = [];
-  state.displayed = [];
-  localStorage.setItem(key, JSON.stringify(state));
-  fetch("/api/storage", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(state),
-  }).then(() => location.reload());
-})();
+### Upload a backup to Blob
+
+`data/storage.json` (a Reel Radar export) can be uploaded as the synced docs. The script merges it with what Blob already holds, so nothing is lost:
+
+```bash
+npx vite-node --config vitest.config.ts scripts/upload-storage.ts -- --dry-run   # show what would be written
+npx vite-node --config vitest.config.ts scripts/upload-storage.ts                # write it
+# add --purge-old-planner to also delete the old per-day planner blobs under todos/
 ```
 
 ---

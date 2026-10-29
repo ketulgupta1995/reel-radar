@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { AppSwitcher } from "@/components/AppSwitcher";
 import { useEffect, useState, useMemo } from "react";
 import { Title, keyOf, MediaType } from "@/types/title";
-import { load, save, syncWithServer, State } from "@/lib/storage";
+import { load, save, useStorageSync, State } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
 import { StorageControls } from "@/components/StorageControls";
 
@@ -32,10 +33,9 @@ export default function WatchlistPage() {
   useEffect(() => {
     setState(load());
     setIsLoaded(true);
-    syncWithServer().then((synced) => {
-      setState(synced);
-    });
   }, []);
+
+  useStorageSync(setState);
 
   const removeFromWatchlist = (title: Title) => {
     const k = keyOf(title);
@@ -115,9 +115,7 @@ export default function WatchlistPage() {
   return (
     <main className="min-h-screen px-4 py-8 md:px-10">
       <header className="mx-auto flex max-w-7xl items-center justify-between gap-4">
-        <Link href="/" className="font-bold tracking-[.2em] text-gold">
-          REEL RADAR
-        </Link>
+        <AppSwitcher current="reel-radar" />
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <Link href="/discover" className="text-white/70 transition hover:text-white">
             Discover
@@ -136,12 +134,6 @@ export default function WatchlistPage() {
           </Link>
           <Link href="/analysis" className="text-white/70 transition hover:text-white">
             Analysis
-          </Link>
-          <Link
-            href="/todos"
-            className="text-white/70 transition hover:text-white"
-          >
-            Daily Todos
           </Link>
           <StorageControls onStateChange={(s) => setState(s)} />
         </div>

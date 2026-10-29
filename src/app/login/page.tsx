@@ -32,7 +32,7 @@ export default function LoginPage() {
     <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(ellipse_at_top,#261e38_0%,#090910_55%,#050508_100%)] px-6 text-white">
       <form onSubmit={submit} className="w-full max-w-sm space-y-4 rounded-2xl border border-white/10 bg-panel p-8">
         <div className="mb-2 text-center">
-          <span className="text-lg font-bold tracking-[.22em] text-gold">REEL RADAR</span>
+          <span className="text-lg font-bold tracking-[.22em] text-gold">MY APPS</span>
           <p className="mt-1 text-sm text-white/50">Private app — please sign in</p>
         </div>
         <input

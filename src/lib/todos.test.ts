@@ -12,7 +12,7 @@ import {
   deleteSubtask,
   deleteTodo,
   dueReminders,
-  exportTodos,
+  exportPlanner,
   getDailyStreak,
   getFocusSession,
   moveTodoToDate,
@@ -22,7 +22,7 @@ import {
   getAllStoredDates,
   getTodayDate,
   getUnfinishedFromYesterday,
-  importTodos,
+  importPlanner,
   loadAllTodos,
   loadDailyTasks,
   loadTodos,
@@ -35,13 +35,13 @@ import {
   setTodoRepeatDays,
   shiftDate,
   stopTodoDaily,
-  syncDailyTasksWithServer,
-  syncTodosWithServer,
+  syncPlanner,
   toggleSubtask,
   toggleTodo,
   updateTodo,
   updateTodoText,
 } from "./todos";
+import { flush } from "./sync";
 import { jsonResponse } from "@/test/fixtures";
 
 const D1 = "2026-03-01";
@@ -78,11 +78,36 @@ describe("dates", () => {
 });
 
 describe("basic todo operations", () => {
-  it("adds a todo with priority and schedule, and syncs it", () => {
+  it("adds a todo with priority and schedule, and pushes its month a few seconds later", () => {
+    vi.useFakeTimers();
     const [t] = addTodo("Write tests", D1, "high", { start: 540 });
     expect(t).toMatchObject({ text: "Write tests", completed: false, priority: "high", start: 540, duration: DEFAULT_DURATION });
     expect(loadTodos(D1)).toEqual([t]);
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ date: D1, todos: [t] });
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(3000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.key).toBe("planner-2026-03");
+    expect(body.data.items).toEqual([expect.objectContaining({ date: D1, pos: 0, todo: t })]);
+  });
+
+  it("batches a burst of edits into one push", () => {
+    vi.useFakeTimers();
+    const [t] = addTodo("a", D1);
+    toggleTodo(t.id, D1);
+    updateTodoText(t.id, "b", D1);
+    vi.advanceTimersByTime(3000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("doesn't push a save that changes nothing", () => {
+    vi.useFakeTimers();
+    saveTodos([todo("a"), todo("b")], D1);
+    vi.advanceTimersByTime(3000);
+    fetchMock.mockClear();
+    saveTodos([todo("a"), todo("b")], D1);
+    vi.advanceTimersByTime(3000);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("defaults to today's date", () => {
@@ -92,9 +117,9 @@ describe("basic todo operations", () => {
 
   it("returns [] for missing or corrupt days", () => {
     expect(loadTodos(D1)).toEqual([]);
-    localStorage.setItem(`reel-radar-todos-${D1}`, "{bad");
+    localStorage.setItem("reel-radar-planner-2026-03", "{bad");
     expect(loadTodos(D1)).toEqual([]);
-    localStorage.setItem(`reel-radar-todos-${D1}`, '{"not":"an array"}');
+    localStorage.setItem("reel-radar-planner-2026-03", '{"not":"an array"}');
     expect(loadTodos(D1)).toEqual([]);
   });
 
@@ -263,16 +288,18 @@ describe("daily tasks", () => {
   });
 
   it("returns [] for corrupt daily task storage", () => {
-    localStorage.setItem("reel-radar-daily-tasks", "{bad");
+    localStorage.setItem("reel-radar-planner-daily", "{bad");
     expect(loadDailyTasks()).toEqual([]);
   });
 });
 
 describe("stored dates", () => {
-  it("lists only valid day keys, newest first", () => {
+  it("lists only days that have todos, newest first", () => {
     saveTodos([todo("a")], D1);
     saveTodos([todo("b")], D3);
-    localStorage.setItem("reel-radar-todos-daily", "[]");
+    saveTodos([todo("c")], "2026-04-10");
+    saveTodos([], "2026-04-10");
+    localStorage.setItem("reel-radar-planner-daily", '{"items":[]}');
     localStorage.setItem("other-key", "[]");
     expect(getAllStoredDates()).toEqual([D3, D1]);
     expect(Object.keys(loadAllTodos())).toEqual([D3, D1]);
@@ -280,59 +307,184 @@ describe("stored dates", () => {
   });
 });
 
+const item = (t: Todo, date = D1, pos = 0, updatedAt = 1) => ({ date, pos, todo: t, updatedAt });
+const monthDoc = (...items: ReturnType<typeof item>[]) => ({ items });
+const docsResponse = (docs: Record<string, unknown>) => jsonResponse({ docs });
+const ids = (date = D1) => loadTodos(date).map((t) => t.id);
+const postBodies = () =>
+  fetchMock.mock.calls.filter(([, init]) => init?.method === "POST").map(([, init]) => JSON.parse(init.body));
+
 describe("server sync", () => {
-  it("takes the server's todos for a day", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ date: D1, todos: [todo("server")] }));
-    expect(await syncTodosWithServer(D1)).toEqual([todo("server")]);
-    expect(fetchMock.mock.calls[0][0]).toBe(`/api/todos?date=${D1}`);
-    expect(loadTodos(D1)).toEqual([todo("server")]);
+  it("pulls the day's month and the daily tasks in one request, and pushes what the server lacks", async () => {
+    saveTodos([todo("local")], D1);
+    const task = { id: "d1", text: "Meditate", startDate: D1 };
+    fetchMock.mockResolvedValueOnce(
+      docsResponse({
+        "planner-2026-03": { etag: '"e1"', data: monthDoc(item(todo("server"), D1, 1)) },
+        "planner-daily": { etag: '"e2"', data: { items: [{ task, updatedAt: 1 }] } },
+      })
+    );
+    expect(await syncPlanner([D1, D2])).toBe(true);
+    expect(decodeURIComponent(fetchMock.mock.calls[0][0])).toBe("/api/sync?keys=planner-daily,planner-2026-03");
+    expect(ids()).toEqual(["local", "server"]);
+    expect(loadDailyTasks()).toEqual([task]);
+    // The month gained "local", so it goes back up, against the etag just read.
+    expect(postBodies()).toEqual([expect.objectContaining({ key: "planner-2026-03", baseEtag: '"e1"' })]);
   });
 
-  it("falls back to local todos on error", async () => {
+  it("asks only for changes after that, and skips docs synced in the last two minutes", async () => {
+    fetchMock.mockResolvedValueOnce(
+      docsResponse({ "planner-daily": null, "planner-2026-03": { etag: '"e1"', data: monthDoc(item(todo("a"))) } })
+    );
+    await syncPlanner([D1], true);
+    fetchMock.mockClear();
+    expect(await syncPlanner([D1])).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockResolvedValueOnce(docsResponse({ "planner-2026-03": { etag: '"e1"', unchanged: true } }));
+    expect(await syncPlanner([D1], true)).toBe(false);
+    expect(decodeURIComponent(fetchMock.mock.calls[0][0])).toContain('planner-2026-03:"e1"');
+    expect(ids()).toEqual(["a"]);
+  });
+
+  it("keeps this browser's todos when the server is unreachable", async () => {
     saveTodos([todo("local")], D1);
     fetchMock.mockResolvedValueOnce(jsonResponse({}, { status: 500 }));
-    expect(await syncTodosWithServer(D1)).toEqual([todo("local")]);
+    expect(await syncPlanner([D1], true)).toBeNull();
     fetchMock.mockRejectedValueOnce(new Error("offline"));
-    expect(await syncTodosWithServer(D1)).toEqual([todo("local")]);
+    expect(await syncPlanner([D1], true)).toBeNull();
+    expect(ids()).toEqual(["local"]);
   });
 
-  it("downloads daily tasks only when this browser has none", async () => {
-    const task = { id: "d1", text: "Meditate", startDate: D1 };
-    fetchMock.mockResolvedValueOnce(jsonResponse({ date: "daily", todos: [task] }));
-    expect(await syncDailyTasksWithServer()).toEqual([task]);
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/todos?date=daily");
+  it("applies a delete made on another device instead of bringing the todo back", async () => {
+    fetchMock.mockResolvedValueOnce(
+      docsResponse({ "planner-2026-03": { etag: '"e1"', data: monthDoc(item(todo("a")), item(todo("b"), D1, 1)) } })
+    );
+    await syncPlanner([D1], true);
     fetchMock.mockClear();
-    expect(await syncDailyTasksWithServer()).toEqual([task]);
-    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockResolvedValueOnce(docsResponse({ "planner-2026-03": { etag: '"e2"', data: monthDoc(item(todo("a"))) } }));
+    await syncPlanner([D1], true);
+    expect(ids()).toEqual(["a"]);
+    expect(postBodies()).toEqual([]);
+  });
+
+  it("keeps both devices' new todos when a push conflicts", async () => {
+    fetchMock.mockResolvedValueOnce(docsResponse({ "planner-2026-03": { etag: '"e1"', data: monthDoc(item(todo("a"))) } }));
+    await syncPlanner([D1], true);
+    saveTodos([...loadTodos(D1), todo("mine")], D1);
+    fetchMock.mockClear();
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ etag: '"e2"', data: monthDoc(item(todo("a")), item(todo("theirs"), D2)) }, { status: 409 })
+      )
+      .mockResolvedValueOnce(jsonResponse({ etag: '"e3"' }));
+    await flush(["planner-2026-03"]);
+    expect(ids()).toEqual(["a", "mine"]);
+    expect(ids(D2)).toEqual(["theirs"]);
+    const [first, retry] = postBodies();
+    expect(first.baseEtag).toBe('"e1"');
+    expect(retry.baseEtag).toBe('"e2"');
+    expect(retry.data.items.map((i: { todo: Todo }) => i.todo.id).sort()).toEqual(["a", "mine", "theirs"]);
+  });
+
+  it("takes the later edit when both devices changed the same todo", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1000);
+    fetchMock.mockResolvedValueOnce(docsResponse({ "planner-2026-03": { etag: '"e1"', data: monthDoc(item(todo("a"))) } }));
+    await syncPlanner([D1], true);
+    updateTodoText("a", "mine", D1); // updatedAt 1000
+    fetchMock.mockResolvedValueOnce(
+      docsResponse({ "planner-2026-03": { etag: '"e2"', data: monthDoc(item(todo("a", { text: "theirs" }), D1, 0, 5000)) } })
+    );
+    await syncPlanner([D1], true);
+    expect(loadTodos(D1)[0].text).toBe("theirs");
+  });
+
+  it("gives a daily task's copy the same id on every device", () => {
+    const [t] = addTodo("Stretch", D1, undefined, undefined, true);
+    const copy = loadTodosWithDaily(D2).find((x) => x.dailyId === t.dailyId)!;
+    expect(copy.id).toBe(`${t.dailyId}:${D2}`);
+  });
+
+  it("drops the old per-day planner keys", async () => {
+    localStorage.setItem(`reel-radar-todos-${D1}`, JSON.stringify([todo("old")]));
+    localStorage.setItem("reel-radar-daily-tasks", "[]");
+    localStorage.setItem("reel-radar-v1", "{}");
+    vi.resetModules();
+    await import("./todos");
+    expect(localStorage.getItem(`reel-radar-todos-${D1}`)).toBeNull();
+    expect(localStorage.getItem("reel-radar-daily-tasks")).toBeNull();
+    expect(localStorage.getItem("reel-radar-v1")).toBe("{}");
   });
 });
 
 describe("export and import", () => {
-  it("exports a day as a JSON download", () => {
-    saveTodos([todo("a")], D1);
-    const createObjectURL = vi.fn(() => "blob:t");
-    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() }));
-    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
-      expect(this.download).toBe(`reel-radar-todos-${D1}.json`);
+  const task = { id: "d1", text: "Meditate", startDate: D1 };
+  const backupFile = (backup: unknown) => new File([JSON.stringify(backup)], "planner.json");
+
+  const captureExport = async () => {
+    let blob: Blob | undefined;
+    vi.stubGlobal(
+      "URL",
+      Object.assign(URL, {
+        createObjectURL: vi.fn((b: Blob) => ((blob = b), "blob:t")),
+        revokeObjectURL: vi.fn(),
+      })
+    );
+    let name = "";
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      name = this.download;
     });
-    exportTodos(D1);
-    expect(click).toHaveBeenCalled();
+    exportPlanner();
+    const text = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsText(blob!);
+    });
+    return { name, backup: JSON.parse(text) };
+  };
+
+  it("exports every day and the daily tasks as one dated file", async () => {
+    saveTodos([todo("a")], D1);
+    saveTodos([todo("b")], "2026-04-10");
+    addTodo("Meditate", D2, undefined, undefined, true);
+    const { name, backup } = await captureExport();
+    expect(name).toBe(`planner-backup-${getTodayDate()}.json`);
+    expect(backup).toMatchObject({ app: "planner", version: 2 });
+    expect(Object.keys(backup.days).sort()).toEqual([D1, D2, "2026-04-10"]);
+    expect(backup.days[D1]).toEqual([todo("a")]);
+    expect(backup.daily).toEqual([expect.objectContaining({ text: "Meditate", startDate: D2 })]);
   });
 
-  it("imports a day's backup", async () => {
-    const onSuccess = vi.fn();
-    const file = new File([JSON.stringify({ date: D2, todos: [todo("x")] })], "t.json");
-    importTodos(file, onSuccess);
-    await vi.waitFor(() => expect(onSuccess).toHaveBeenCalledWith([todo("x")], D2));
-    expect(loadTodos(D2)).toEqual([todo("x")]);
+  it("round-trips an export into an empty browser", async () => {
+    saveTodos([todo("a"), todo("b", { completed: true })], D1);
+    addTodo("Meditate", D2, undefined, undefined, true);
+    const { backup } = await captureExport();
+    localStorage.clear();
+    await importPlanner(backupFile(backup));
+    const { backup: again } = await captureExport();
+    expect(again).toEqual(backup);
   });
 
-  it("rejects backups without a date or todos array", async () => {
-    const onError = vi.fn();
-    importTodos(new File([JSON.stringify({ todos: [] })], "t.json"), vi.fn(), onError);
-    importTodos(new File([JSON.stringify({ date: D1, todos: "x" })], "t.json"), vi.fn(), onError);
-    importTodos(new File(["nope"], "t.json"), vi.fn(), onError);
-    await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(3));
+  it("merges a backup in without deleting anything", async () => {
+    saveTodos([todo("a"), todo("keep")], D1);
+    const r = await importPlanner(
+      backupFile({ app: "planner", version: 2, days: { [D1]: [todo("a", { text: "new" }), todo("b")], [D2]: [todo("x")] }, daily: [task] })
+    );
+    expect(r).toEqual({ todos: 3, days: 2, daily: 1 });
+    expect(loadTodos(D1).map((t) => t.text)).toEqual(["new", "keep", "b"]);
+    expect(ids(D2)).toEqual(["x"]);
+    expect(loadDailyTasks()).toEqual([task]);
+  });
+
+  it("still imports an old single-day file", async () => {
+    expect(await importPlanner(backupFile({ date: D2, todos: [todo("x")] }))).toEqual({ todos: 1, days: 1, daily: 0 });
+    expect(ids(D2)).toEqual(["x"]);
+  });
+
+  it("rejects files that aren't planner backups", async () => {
+    await expect(importPlanner(new File(["nope"], "t.json"))).rejects.toThrow("Invalid JSON backup file.");
+    await expect(importPlanner(backupFile({ todos: [] }))).rejects.toThrow("Not a planner backup file.");
+    await expect(importPlanner(backupFile({ date: D1, todos: "x" }))).rejects.toThrow("Not a planner backup file.");
   });
 });
 

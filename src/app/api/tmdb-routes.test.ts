@@ -149,3 +149,21 @@ describe("GET /api/similar", () => {
     expect((await similarRoute(get("/api/similar?type=movie&id=1"))).status).toBe(500);
   });
 });
+
+describe("browser caching", () => {
+  it("lets the browser reuse successful responses, never errors", async () => {
+    m.detail.mockResolvedValue(mk(1));
+    m.personCredits.mockResolvedValue({ name: "A", titles: [] });
+    m.search.mockResolvedValue([]);
+    m.getSimilar.mockResolvedValue([]);
+    m.discover.mockResolvedValue([]);
+    const cache = async (res: Response | Promise<Response>) => (await res).headers.get("Cache-Control");
+    expect(await cache(titleRoute(get("/api/title?type=movie&id=1")))).toBe("private, max-age=86400");
+    expect(await cache(personRoute(get("/api/person/1"), { params: { id: "1" } }))).toBe("private, max-age=86400");
+    expect(await cache(searchRoute(get("/api/search?query=x")))).toBe("private, max-age=3600");
+    expect(await cache(similarRoute(get("/api/similar?type=movie&id=1")))).toBe("private, max-age=3600");
+    expect(await cache(discoverRoute(get("/api/discover")))).toBe("private, max-age=3600");
+    m.detail.mockRejectedValue(new Error("down"));
+    expect(await cache(titleRoute(get("/api/title?type=movie&id=1")))).toBeNull();
+  });
+});

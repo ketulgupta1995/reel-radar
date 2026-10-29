@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { AppSwitcher } from "@/components/AppSwitcher";
 import { useEffect, useState, useMemo } from "react";
 import { Title, keyOf, MediaType } from "@/types/title";
-import { load, save, syncWithServer, State } from "@/lib/storage";
+import { load, save, useStorageSync, State } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
 import { StorageControls } from "@/components/StorageControls";
 
@@ -118,8 +119,9 @@ export default function Recommendations() {
 
   useEffect(() => {
     get();
-    syncWithServer().then(setState);
   }, []);
+
+  useStorageSync(setState);
 
   const handleStyleChange = (style: "balanced" | "popular" | "deepcuts") => {
     setDiscoveryStyle(style);
@@ -285,9 +287,7 @@ export default function Recommendations() {
   return (
     <main className="min-h-screen px-4 py-8 md:px-10 pb-16">
       <header className="mx-auto flex max-w-7xl items-center justify-between gap-4">
-        <Link href="/" className="font-bold tracking-[.2em] text-gold">
-          REEL RADAR
-        </Link>
+        <AppSwitcher current="reel-radar" />
         <div className="flex flex-wrap items-center gap-4 text-sm">
           <Link href="/discover" className="text-white/70 hover:text-white">
             Discover
@@ -303,12 +303,6 @@ export default function Recommendations() {
           </Link>
           <Link href="/analysis" className="text-white/70 hover:text-white">
             Analysis
-          </Link>
-          <Link
-            href="/todos"
-            className="text-white/70 hover:text-white"
-          >
-            Daily Todos
           </Link>
           <StorageControls onStateChange={(s) => setState(s)} />
         </div>

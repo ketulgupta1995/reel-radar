@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { AppSwitcher } from "@/components/AppSwitcher";
 import WeekView from "./WeekView";
 import {
   HOUR_PX,
@@ -51,12 +52,12 @@ import {
   getFocusSession,
   startFocus,
   stopFocus,
-  syncDailyTasksWithServer,
   getTodayDate,
   shiftDate,
-  exportTodos,
-  importTodos,
-  syncTodosWithServer,
+  exportPlanner,
+  importPlanner,
+  syncPlanner,
+  usePlannerSync,
   DEFAULT_DURATION,
   ALL_DAYS,
   TAGS,
@@ -188,6 +189,9 @@ export default function TodosPage() {
     setDailyTasks(loadDailyTasks());
   };
 
+  // The day shown, and the day before for "add from yesterday".
+  const syncedDates = useMemo(() => [selectedDate, shiftDate(selectedDate, -1)], [selectedDate]);
+
   useEffect(() => {
     let cancelled = false;
     setDeleted(null);
@@ -195,8 +199,8 @@ export default function TodosPage() {
     setQuickAdd(null);
     setShowYesterday(false);
     const local = loadTodos(selectedDate);
-    // Check the server before adding daily copies, or an empty day would never be pulled.
-    (local.length === 0 ? syncTodosWithServer(selectedDate) : Promise.resolve(local)).then(() => {
+    // Sync before adding daily copies, so they're added to the latest copy of the day.
+    syncPlanner(syncedDates).then(() => {
       if (cancelled) return;
       setTodos(loadTodosWithDaily(selectedDate));
       refreshMeta(selectedDate);
@@ -210,13 +214,11 @@ export default function TodosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate, view]);
 
-  // A new device has no daily tasks locally; pull them once.
-  useEffect(() => {
-    syncDailyTasksWithServer().then((tasks) => {
-      if (tasks.length > 0) setTodos(loadTodosWithDaily(selectedDate));
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Edits from another device, picked up when this tab comes back into view.
+  usePlannerSync(syncedDates, () => {
+    setTodos(loadTodosWithDaily(selectedDate));
+    refreshMeta(selectedDate);
+  });
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -390,8 +392,8 @@ export default function TodosPage() {
   };
 
   const handleSendToDay = async (t: Todo, to: string, mode: "move" | "copy") => {
-    // Pull an empty target day from the server first, or this save would overwrite its cloud copy.
-    if (loadTodos(to).length === 0) await syncTodosWithServer(to);
+    // Pull the target day first, so the todo lands in its latest copy.
+    await syncPlanner([to]);
     const schedule = t.start !== undefined ? { start: t.start, duration: t.duration } : undefined;
     if (mode === "copy") copyTodoToDate(t.id, selectedDate, to, schedule);
     else if (moveTodoToDate(t.id, selectedDate, to, schedule) === null) {
@@ -403,29 +405,29 @@ export default function TodosPage() {
     flash(`${mode === "copy" ? "Copied" : "Moved"} to ${getRelativeDateLabel(to)}`);
   };
 
-  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    importTodos(
-      file,
-      (importedTodos, date) => {
-        if (date === selectedDate) setTodos(importedTodos);
-        refreshMeta();
-        flash(`Imported ${importedTodos.length} todos for ${date}`);
-      },
-      (msg) => flash(msg)
-    );
     e.target.value = "";
+    if (!file) return;
+    try {
+      const r = await importPlanner(file);
+      setTodos(loadTodosWithDaily(selectedDate));
+      refreshMeta();
+      flash(
+        `Imported ${r.todos} ${r.todos === 1 ? "todo" : "todos"} across ${r.days} ${r.days === 1 ? "day" : "days"}` +
+          (r.daily ? ` + ${r.daily} daily ${r.daily === 1 ? "task" : "tasks"}` : "")
+      );
+    } catch (err) {
+      flash(err instanceof Error ? err.message : "Could not import that file");
+    }
   };
 
   const handleSync = async () => {
     setSyncStatus("syncing");
-    try {
-      apply(await syncTodosWithServer(selectedDate));
-      setSyncStatus("synced");
-    } catch {
-      setSyncStatus("error");
-    }
+    const result = await syncPlanner(syncedDates, true);
+    if (result !== null) setTodos(loadTodosWithDaily(selectedDate));
+    refreshMeta();
+    setSyncStatus(result === null ? "error" : "synced");
     setTimeout(() => setSyncStatus("idle"), 2000);
   };
 
@@ -512,53 +514,7 @@ export default function TodosPage() {
       {/* Header */}
       <header className="border-b border-white/5 bg-black/20 backdrop-blur-md sticky top-0 z-40">
         <nav className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-4 py-3 sm:px-6 sm:py-4">
-          <Link href="/" className="shrink-0 font-bold tracking-[.2em] text-gold">
-            REEL RADAR
-          </Link>
-          <div className="flex min-w-0 items-center gap-4 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <Link
-              href="/discover"
-              className="text-white/70 transition hover:text-gold text-sm"
-            >
-              Discover
-            </Link>
-            <Link
-              href="/search"
-              className="text-white/70 transition hover:text-gold text-sm"
-            >
-              Search
-            </Link>
-            <Link
-              href="/watchlist"
-              className="text-white/70 transition hover:text-gold text-sm"
-            >
-              Watchlist
-            </Link>
-            <Link
-              href="/watched"
-              className="text-white/70 transition hover:text-gold text-sm"
-            >
-              Viewed
-            </Link>
-            <Link
-              href="/analysis"
-              className="text-white/70 transition hover:text-gold text-sm"
-            >
-              Analysis
-            </Link>
-            <Link
-              href="/recommendations"
-              className="text-white/70 transition hover:text-gold text-sm"
-            >
-              Recommendations
-            </Link>
-            <Link
-              href="/similar"
-              className="text-white/70 transition hover:text-gold text-sm"
-            >
-              Similar
-            </Link>
-          </div>
+          <AppSwitcher current="planner" />
         </nav>
       </header>
 
@@ -961,7 +917,8 @@ export default function TodosPage() {
                   </button>
                 )}
                 <button
-                  onClick={() => exportTodos(selectedDate)}
+                  onClick={exportPlanner}
+                  title="Download a backup of every day and daily task"
                   className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-white/80 hover:border-gold/40 hover:text-gold"
                 >
                   Export
@@ -969,6 +926,7 @@ export default function TodosPage() {
                 <input type="file" accept=".json" onChange={handleImport} className="hidden" id="import-file" />
                 <label
                   htmlFor="import-file"
+                  title="Add todos from a planner backup; nothing here is deleted"
                   className="cursor-pointer rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-white/80 hover:border-gold/40 hover:text-gold"
                 >
                   Import
@@ -976,7 +934,7 @@ export default function TodosPage() {
                 <button
                   onClick={handleSync}
                   disabled={syncStatus === "syncing"}
-                  title="Replace this day with the cloud copy"
+                  title="Sync with your other devices now"
                   className={`rounded-full border px-3 py-1.5 transition ${
                     syncStatus === "synced"
                       ? "border-green-400/50 bg-green-500/10 text-green-300"
@@ -985,7 +943,7 @@ export default function TodosPage() {
                       : "border-white/20 bg-white/5 text-white/80 hover:border-gold/40 hover:text-gold"
                   }`}
                 >
-                  {syncStatus === "syncing" ? "Syncing..." : syncStatus === "synced" ? "Synced" : syncStatus === "error" ? "Failed" : "Pull from cloud"}
+                  {syncStatus === "syncing" ? "Syncing..." : syncStatus === "synced" ? "Synced" : syncStatus === "error" ? "Failed" : "Sync now"}
                 </button>
               </div>
             </div>

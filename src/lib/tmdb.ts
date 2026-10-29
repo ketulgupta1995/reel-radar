@@ -34,7 +34,12 @@ const genres: Record<MediaType, Record<number, string>> = {
 
 export const poster = (path: string | null) => (path ? `${image}${path}` : null);
 
-async function get(path: string, params: Record<string, string | number | boolean> = {}) {
+// How long Next's data cache keeps a TMDB response, in seconds. Lists and search results move;
+// a title's or person's details (credits, keywords, trailer) rarely do.
+const LIST_TTL = 6 * 60 * 60;
+const DETAIL_TTL = 7 * 24 * 60 * 60;
+
+async function get(path: string, params: Record<string, string | number | boolean> = {}, revalidate = LIST_TTL) {
   const key = process.env.TMDB_API_KEY;
   if (!key) throw new Error("TMDB_API_KEY is not configured");
   const u = new URL(base + path);
@@ -43,9 +48,9 @@ async function get(path: string, params: Record<string, string | number | boolea
   // Fail fast and retry once: connect timeouts are common on flaky networks (e.g. WSL).
   let r: Response;
   try {
-    r = await fetch(u, { next: { revalidate: 3600 }, signal: AbortSignal.timeout(8000) });
+    r = await fetch(u, { next: { revalidate }, signal: AbortSignal.timeout(8000) });
   } catch {
-    r = await fetch(u, { next: { revalidate: 3600 }, signal: AbortSignal.timeout(8000) });
+    r = await fetch(u, { next: { revalidate }, signal: AbortSignal.timeout(8000) });
   }
   if (!r.ok) throw new Error(`TMDB request failed (${r.status})`);
   return r.json();
@@ -134,8 +139,8 @@ export async function search(query: string): Promise<Title[]> {
 }
 
 export async function personCredits(personId: number): Promise<{ name: string; titles: Title[] }> {
-  const person = await get(`/person/${personId}`);
-  const credits = await get(`/person/${personId}/combined_credits`);
+  const person = await get(`/person/${personId}`, {}, DETAIL_TTL);
+  const credits = await get(`/person/${personId}/combined_credits`, {}, DETAIL_TTL);
   const titles = (credits.cast || [])
     .filter((x: any) => x.media_type === "movie" || x.media_type === "tv")
     .map((x: any) => normalize(x, x.media_type as MediaType))
@@ -218,7 +223,7 @@ export async function getSimilar(
     try {
       anchor = await detail(type, id);
     } catch {
-      const raw = await get(`/${type}/${id}`).catch(() => null);
+      const raw = await get(`/${type}/${id}`, {}, DETAIL_TTL).catch(() => null);
       if (!raw) return [];
       anchor = normalize(raw, type);
     }
@@ -433,7 +438,7 @@ export async function getSimilar(
 }
 
 export async function detail(type: MediaType, id: number): Promise<Title> {
-  const x = await get(`/${type}/${id}`, { append_to_response: "credits,keywords,videos" });
+  const x = await get(`/${type}/${id}`, { append_to_response: "credits,keywords,videos" }, DETAIL_TTL);
   const t = normalize(x, type);
   t.cast = (x.credits?.cast || []).slice(0, 8).map((p: any) => ({ id: p.id, name: p.name }));
   t.creators =

@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { State, clearDiscoveryHistory, empty, exportData, importData, load, mergeStates, reset, save, syncWithServer } from "./storage";
+import { RESYNC_AFTER, flush } from "./sync";
+import { historyOf, libraryOf } from "./syncDocs";
 import { jsonResponse, mk } from "@/test/fixtures";
 
 const KEY = "reel-radar-v1";
@@ -15,6 +17,7 @@ beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "log").mockImplementation(() => {});
 });
+afterEach(() => vi.useRealTimers());
 
 describe("mergeStates", () => {
   it("unions lists and merges watched seasons", () => {
@@ -62,26 +65,70 @@ describe("load", () => {
   });
 });
 
+// Move the clock past the resync throttle.
+const later = () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(Date.now() + RESYNC_AFTER);
+};
+const docsResponse = (docs: Record<string, unknown>) => jsonResponse({ docs });
+const posts = () =>
+  fetchMock.mock.calls.filter(([, init]) => init?.method === "POST").map(([, init]) => JSON.parse(init.body));
+
 describe("save and reset", () => {
-  it("writes localStorage and posts to the server", () => {
-    const s = state({ shown: ["a"] });
+  it("writes localStorage at once and pushes the library a few seconds later", () => {
+    vi.useFakeTimers();
+    const s = state({ watched: [mk(1)] });
     save(s);
     expect(stored()).toEqual(s);
-    expect(fetchMock).toHaveBeenCalledWith("/api/storage", expect.objectContaining({ method: "POST", body: JSON.stringify(s) }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(5000);
+    expect(posts()).toEqual([{ key: "library", data: { watched: [mk(1)], watchlist: [], dismissed: [] } }]);
+  });
+
+  it("batches rapid saves into one push", () => {
+    vi.useFakeTimers();
+    for (let i = 1; i <= 5; i++) save(state({ watched: [mk(1), mk(i + 1)].slice(0, 2), dismissed: [`movie:${i}`] }));
+    vi.advanceTimersByTime(5000);
+    expect(posts()).toHaveLength(1);
+  });
+
+  it("holds history changes until the next push or until the tab is hidden", async () => {
+    vi.useFakeTimers();
+    save(state({ displayed: ["movie:1"] }));
+    vi.advanceTimersByTime(60000);
+    expect(fetchMock).not.toHaveBeenCalled();
+    save(state({ displayed: ["movie:1"], watched: [mk(2)] }));
+    vi.advanceTimersByTime(5000);
+    expect(posts().map((p) => p.key).sort()).toEqual(["history", "library"]);
+  });
+
+  it("pushes pending changes when the tab is hidden", () => {
+    save(state({ shown: ["a"] }));
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(posts()).toEqual([{ key: "history", data: { displayed: [], shown: ["a"] } }]);
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+  });
+
+  it("drops fields that are fetched fresh anyway, and keeps the full cast", () => {
+    const cast = Array.from({ length: 8 }, (_, i) => ({ id: i, name: `Actor ${i}` }));
+    save(state({ watched: [mk(1, { cast, keywords: ["heist"], trailerYoutubeId: "yt", why: "because" })] }));
+    expect(stored().watched[0]).toEqual(mk(1, { cast }));
   });
 
   it("still saves locally when the server is unreachable", async () => {
     fetchMock.mockRejectedValueOnce(new Error("offline"));
-    save(state({ shown: ["a"] }));
-    await vi.waitFor(() => expect(console.error).toHaveBeenCalled());
-    expect(stored().shown).toEqual(["a"]);
+    save(state({ watched: [mk(1)] }));
+    await flush();
+    expect(console.error).toHaveBeenCalled();
+    expect(stored().watched).toHaveLength(1);
   });
 
-  it("reset clears local data and sends an empty state", () => {
+  it("reset clears local data and pushes empty docs", async () => {
     localStorage.setItem(KEY, JSON.stringify(state({ shown: ["a"] })));
-    reset();
+    await reset();
     expect(localStorage.getItem(KEY)).toBeNull();
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(empty());
+    expect(posts().map((p) => p.data)).toEqual([libraryOf(empty()), historyOf(empty())]);
   });
 });
 
@@ -92,23 +139,70 @@ describe("clearDiscoveryHistory", () => {
     expect(out).toEqual(state({ watched: [mk(1)], dismissed: ["c"] }));
     expect(stored()).toEqual(out);
   });
+
+  it("stays cleared after another device that still has the old history syncs", async () => {
+    fetchMock.mockResolvedValueOnce(
+      docsResponse({ library: null, history: { etag: '"h1"', data: { displayed: ["movie:1"], shown: ["tv:2"] } } })
+    );
+    await syncWithServer();
+    expect(stored().displayed).toEqual(["movie:1"]);
+    clearDiscoveryHistory();
+    fetchMock.mockClear();
+    // The server still holds the history this device cleared, plus one title shown elsewhere since.
+    fetchMock
+      .mockResolvedValueOnce(
+        docsResponse({ library: null, history: { etag: '"h2"', data: { displayed: ["movie:1", "movie:9"], shown: ["tv:2"] } } })
+      )
+      .mockResolvedValue(jsonResponse({ etag: '"h3"' }));
+    later();
+    const out = await syncWithServer();
+    expect(out.displayed).toEqual(["movie:9"]);
+    expect(out.shown).toEqual([]);
+    expect(posts().find((p) => p.key === "history")).toMatchObject({ data: { displayed: ["movie:9"], shown: [] }, baseEtag: '"h2"' });
+  });
 });
 
 describe("syncWithServer", () => {
-  it("merges server data with local data", async () => {
+  it("merges server data with local data and pushes what the server lacks", async () => {
     localStorage.setItem(KEY, JSON.stringify(state({ watched: [mk(1)] })));
-    fetchMock.mockResolvedValueOnce(jsonResponse(state({ watched: [mk(2)] }), { headers: { "x-storage-backend": "vercel-blob" } }));
+    fetchMock.mockResolvedValueOnce(
+      docsResponse({ library: { etag: '"l1"', data: libraryOf(state({ watched: [mk(2)] })) }, history: null })
+    );
     const out = await syncWithServer();
     expect(out.watched.map((t) => t.id)).toEqual([1, 2]);
     expect(stored().watched).toHaveLength(2);
+    expect(posts()).toEqual([expect.objectContaining({ key: "library", baseEtag: '"l1"' })]);
   });
 
-  it("pushes local data when the server is empty", async () => {
+  it("pushes local data when the server has none", async () => {
     localStorage.setItem(KEY, JSON.stringify(state({ watchlist: [mk(1)] })));
-    fetchMock.mockResolvedValueOnce(jsonResponse(empty(), { headers: { "x-storage-backend": "local-file" } }));
+    fetchMock.mockResolvedValueOnce(docsResponse({ library: null, history: null }));
     const out = await syncWithServer();
     expect(out.watchlist).toHaveLength(1);
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body).watchlist).toHaveLength(1);
+    expect(posts()).toEqual([{ key: "library", data: libraryOf(state({ watchlist: [mk(1)] })) }]);
+  });
+
+  it("makes no request when synced in the last two minutes, and no write when nothing changed", async () => {
+    fetchMock.mockResolvedValueOnce(
+      docsResponse({ library: { etag: '"l1"', data: libraryOf(state({ watched: [mk(1)] })) }, history: null })
+    );
+    await syncWithServer();
+    expect(posts()).toEqual([]);
+    fetchMock.mockClear();
+    await syncWithServer();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("takes a removal made on another device", async () => {
+    fetchMock.mockResolvedValueOnce(
+      docsResponse({ library: { etag: '"l1"', data: libraryOf(state({ watched: [mk(1), mk(2)] })) }, history: null })
+    );
+    await syncWithServer();
+    fetchMock.mockResolvedValueOnce(
+      docsResponse({ library: { etag: '"l2"', data: libraryOf(state({ watched: [mk(1)] })) }, history: null })
+    );
+    later();
+    expect((await syncWithServer()).watched.map((t) => t.id)).toEqual([1]);
   });
 
   it("keeps local data when the server errors or is unreachable", async () => {
@@ -130,6 +224,17 @@ describe("importData", () => {
     await vi.waitFor(() => expect(onSuccess).toHaveBeenCalled());
     expect(onSuccess.mock.calls[0][0].watched.map((t: { id: number }) => t.id)).toEqual([1, 2]);
     expect(stored().watched).toHaveLength(2);
+  });
+
+  it("imports an old-format backup and syncs it in the new layout", async () => {
+    vi.useFakeTimers();
+    const old = { ...state({ watched: [mk(1, { keywords: ["x"] })], displayed: ["movie:5"] }) };
+    const onSuccess = vi.fn();
+    importData(file(JSON.stringify(old)), onSuccess);
+    await vi.waitFor(() => expect(onSuccess).toHaveBeenCalled());
+    expect(stored().watched).toEqual([mk(1)]);
+    vi.advanceTimersByTime(5000);
+    expect(posts().map((p) => p.key).sort()).toEqual(["history", "library"]);
   });
 
   it("reports invalid files", async () => {

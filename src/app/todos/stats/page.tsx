@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { loadAllTodos, getTodayDate, shiftDate, TAGS, type TagId, type Todo } from "@/lib/todos";
+import { AppSwitcher } from "@/components/AppSwitcher";
+import { loadAllTodos, syncAllPlanner, getTodayDate, shiftDate, TAGS, type TagId, type Todo } from "@/lib/todos";
 import { computePlannerStats, type PlannerStats } from "@/lib/plannerStats";
 import { DAY_NAMES, TAG_COLORS, fmtDuration, formatShortDate } from "../planner";
 
@@ -23,7 +24,13 @@ export default function PlannerStatsPage() {
   const [days, setDays] = useState<Record<string, Todo[]> | null>(null);
   const [range, setRange] = useState<Range>("30");
 
-  useEffect(() => setDays(loadAllTodos()), []);
+  // Show this browser's copy at once, then every month from the server (mostly unchanged, so cheap).
+  useEffect(() => {
+    setDays(loadAllTodos());
+    syncAllPlanner().then((changed) => {
+      if (changed) setDays(loadAllTodos());
+    });
+  }, []);
 
   const today = getTodayDate();
   const from = useMemo(() => {
@@ -37,9 +44,7 @@ export default function PlannerStatsPage() {
     <main className="min-h-screen bg-[#090910] text-white">
       <header className="sticky top-0 z-40 border-b border-white/5 bg-black/20 backdrop-blur-md">
         <nav className="mx-auto flex max-w-[1200px] items-center justify-between gap-4 px-4 py-3 sm:px-6 sm:py-4">
-          <Link href="/" className="shrink-0 font-bold tracking-[.2em] text-gold">
-            REEL RADAR
-          </Link>
+          <AppSwitcher current="planner" />
           <Link href="/todos" className="text-sm text-white/70 transition hover:text-gold">
             ← Daily Planner
           </Link>

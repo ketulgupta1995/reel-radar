@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { middleware } from "./middleware";
+import { config, middleware } from "./middleware";
 import { SESSION_COOKIE, createSession } from "@/lib/auth";
 
 const SECRET = "mw-secret";
@@ -46,5 +46,16 @@ describe("middleware", () => {
     const token = await createSession(SECRET);
     vi.stubEnv("AUTH_SECRET", "");
     expect((await middleware(req("/api/storage", token))).status).toBe(401);
+  });
+});
+
+describe("matcher", () => {
+  // Next compiles the matcher with path-to-regexp; as a plain regex the group behaves the same.
+  const matches = (path: string) => new RegExp(`^${config.matcher[0]}$`).test(path);
+
+  it("runs on pages and API routes but skips static files", () => {
+    for (const path of ["/", "/discover", "/api/sync", "/api/title", "/person/12"]) expect(matches(path)).toBe(true);
+    for (const path of ["/_next/static/chunk.js", "/_next/image", "/favicon.ico", "/logo.png", "/robots.txt", "/site.webmanifest"])
+      expect(matches(path)).toBe(false);
   });
 });

@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { AppSwitcher } from "@/components/AppSwitcher";
 import { useEffect, useState, useMemo } from "react";
 import { MediaType, Title } from "@/types/title";
-import { load, save, syncWithServer, State } from "@/lib/storage";
+import { load, save, useStorageSync, State } from "@/lib/storage";
 import { StorageControls } from "@/components/StorageControls";
 import { TitleCard } from "@/components/TitleCard";
 import { computeAnalysis, AnalysisFilters, GraphNode } from "@/lib/analysis";
@@ -27,10 +28,9 @@ export default function AnalysisPage() {
     const local = load();
     setState(local);
     setLoading(false);
-    syncWithServer().then((synced) => {
-      setState(synced);
-    });
   }, []);
+
+  useStorageSync(setState);
 
   const stats = useMemo(() => {
     return computeAnalysis(state.watched, state.watchlist, filters);
@@ -55,9 +55,7 @@ export default function AnalysisPage() {
     <main className="min-h-screen px-4 py-8 md:px-10 pb-16">
       {/* Navigation Header */}
       <header className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 mb-8">
-        <Link href="/" className="font-bold tracking-[.2em] text-gold">
-          REEL RADAR
-        </Link>
+        <AppSwitcher current="reel-radar" />
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <Link href="/discover" className="text-white/70 transition hover:text-white">
             Discover
@@ -70,12 +68,6 @@ export default function AnalysisPage() {
           </Link>
           <Link href="/recommendations" className="text-white/70 transition hover:text-white">
             Recommendations
-          </Link>
-          <Link
-            href="/todos"
-            className="text-white/70 transition hover:text-white"
-          >
-            Daily Todos
           </Link>
           <span className="rounded-full bg-gold/15 px-3 py-1 font-semibold text-gold border border-gold/30">
             Analysis

@@ -1,49 +1,29 @@
-import { Title, keyOf } from "@/types/title";
+import { useEffect } from "react";
+import {
+  HistoryDoc,
+  LibraryDoc,
+  State,
+  empty,
+  historyOf,
+  libraryOf,
+  mergeHistory,
+  mergeLibrary,
+  same,
+  toStored,
+} from "@/lib/syncDocs";
+import { SYNC_EVENT, flush, markDirty, registerDocs, syncKeys, watchKeys } from "@/lib/sync";
+
+export type { State };
+export { empty };
 
 const K = "reel-radar-v1";
+const DOCS = ["library", "history"];
 
-export type State = {
-  watched: Title[];
-  displayed: string[];
-  shown: string[];
-  watchlist: Title[];
-  dismissed: string[];
-};
-
-export const empty = (): State => ({
-  watched: [],
-  displayed: [],
-  shown: [],
-  watchlist: [],
-  dismissed: [],
-});
-
+// Two-way merge for imports: nothing in either copy counts as deleted.
 export function mergeStates(base: State, incoming: Partial<State>): State {
-  const watchedMap = new Map<string, Title>();
-  (base.watched || []).forEach((t) => watchedMap.set(keyOf(t), t));
-  (incoming.watched || []).forEach((t) => {
-    const k = keyOf(t);
-    const existing = watchedMap.get(k);
-    if (!existing) {
-      watchedMap.set(k, t);
-    } else {
-      const combinedSeasons = Array.from(
-        new Set([...(existing.watchedSeasons || []), ...(t.watchedSeasons || [])])
-      ).sort((a, b) => a - b);
-      watchedMap.set(k, { ...existing, ...t, watchedSeasons: combinedSeasons });
-    }
-  });
-
-  const watchlistMap = new Map<string, Title>();
-  (base.watchlist || []).forEach((t) => watchlistMap.set(keyOf(t), t));
-  (incoming.watchlist || []).forEach((t) => watchlistMap.set(keyOf(t), t));
-
   return {
-    watched: Array.from(watchedMap.values()),
-    watchlist: Array.from(watchlistMap.values()),
-    dismissed: Array.from(new Set([...(base.dismissed || []), ...(incoming.dismissed || [])])),
-    shown: Array.from(new Set([...(base.shown || []), ...(incoming.shown || [])])),
-    displayed: Array.from(new Set([...(base.displayed || []), ...(incoming.displayed || [])])),
+    ...mergeLibrary(libraryOf(base), libraryOf(incoming)),
+    ...mergeHistory(historyOf(base), historyOf(incoming)),
   };
 }
 
@@ -59,46 +39,46 @@ export const load = (): State => {
   }
 };
 
+const writeLocal = (s: State) => localStorage.setItem(K, JSON.stringify(s));
+const slim = (s: State): State => ({ ...s, watched: s.watched.map(toStored), watchlist: s.watchlist.map(toStored) });
+
+registerDocs((key) => {
+  if (key === "library")
+    return {
+      // Slimmed here too, for titles saved before toStored existed.
+      read: () => libraryOf(slim(load())),
+      write: (doc: LibraryDoc) => writeLocal({ ...load(), ...doc }),
+      merge: mergeLibrary,
+      empty: () => libraryOf(empty()),
+      flushDelay: 5000,
+    };
+  if (key === "history")
+    // Discover marks titles as displayed on every visit; those ride along with the next push.
+    return {
+      read: () => historyOf(load()),
+      write: (doc: HistoryDoc) => writeLocal({ ...load(), ...doc }),
+      merge: mergeHistory,
+      empty: () => historyOf(empty()),
+      flushDelay: null,
+    };
+});
+
+// Save locally, then let the sync engine push whichever doc changed, a few seconds later.
 export const save = (s: State) => {
   if (typeof window === "undefined") return;
-  localStorage.setItem(K, JSON.stringify(s));
-
-  fetch("/api/storage", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(s),
-  })
-    .then((res) => {
-      const backend = res.headers.get("x-storage-backend");
-      if (backend === "local-file") {
-        console.warn(
-          "%c[Storage Save]   Vercel Blob is not configured. Saved to local file (data/storage.json).",
-          "color: #eab308; font-weight: bold;"
-        );
-      } else if (backend === "local-file-fallback") {
-        console.error(
-          "%c[Storage Save]   Vercel Blob write failed! Saved to local file (data/storage.json) as fallback.",
-          "color: #ef4444; font-weight: bold;"
-        );
-      }
-    })
-    .catch((err) => {
-      console.error(
-        "%c[Storage Save]   Could not contact /api/storage. Saved only to browser localStorage.",
-        "color: #ef4444; font-weight: bold;",
-        err
-      );
-    });
+  const prev = slim(load());
+  const next = slim({ ...empty(), ...s });
+  writeLocal(next);
+  if (!same(libraryOf(prev), libraryOf(next))) markDirty("library");
+  if (!same(historyOf(prev), historyOf(next))) markDirty("history");
 };
 
-export const reset = () => {
-  if (typeof window === "undefined") return;
+// Clear everything, on every device: the sync merge reads the now-empty copy as deletions.
+export const reset = (): Promise<void> => {
+  if (typeof window === "undefined") return Promise.resolve();
   localStorage.removeItem(K);
-  fetch("/api/storage", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(empty()),
-  }).catch(() => {});
+  DOCS.forEach(markDirty);
+  return flush(DOCS);
 };
 
 export const clearDiscoveryHistory = (): State => {
@@ -113,56 +93,30 @@ export const clearDiscoveryHistory = (): State => {
   return newState;
 };
 
+// Merge in the server copy. Cheap to call on every page: it only hits the network when the last
+// sync was a couple of minutes ago, and an unchanged copy transfers nothing.
 export async function syncWithServer(): Promise<State> {
-  const local = load();
-  try {
-    const res = await fetch("/api/storage");
-    const backend = res.headers.get("x-storage-backend");
+  await syncKeys(DOCS);
+  return load();
+}
 
-    if (backend === "vercel-blob") {
-      console.log(
-        "%c[Storage Sync]   Vercel Blob storage is ACTIVE and working.",
-        "color: #10b981; font-weight: bold;"
-      );
-    } else if (backend === "local-file-fallback") {
-      console.error(
-        "%c[Storage Sync]   Vercel Blob failed. Falling back to local storage (data/storage.json).",
-        "color: #ef4444; font-weight: bold;"
-      );
-    } else {
-      console.warn(
-        "%c[Storage Sync]   Vercel Blob is NOT working/configured (BLOB_READ_WRITE_TOKEN is missing). Using local storage (data/storage.json & browser localStorage).",
-        "color: #eab308; font-weight: bold;"
-      );
-    }
-
-    if (!res.ok) return local;
-    const serverState: State = await res.json();
-
-    const serverHasData =
-      (serverState.watched && serverState.watched.length > 0) ||
-      (serverState.watchlist && serverState.watchlist.length > 0);
-
-    const localHasData =
-      (local.watched && local.watched.length > 0) ||
-      (local.watchlist && local.watchlist.length > 0);
-
-    if (localHasData && !serverHasData) {
-      save(local);
-      return local;
-    }
-
-    const merged = mergeStates(local, serverState);
-    save(merged);
-    return merged;
-  } catch (err) {
-    console.error(
-      "%c[Storage Sync]   Server storage unreachable. Using browser localStorage only.",
-      "color: #ef4444; font-weight: bold;",
-      err
-    );
-    return local;
-  }
+// For pages showing Reel Radar data: sync on mount, and take in changes made on another device
+// when this tab comes back into view.
+export function useStorageSync(onState: (s: State) => void): void {
+  useEffect(() => {
+    const stop = watchKeys(DOCS);
+    const onSync = (e: Event) => {
+      if ((e as CustomEvent<{ keys: string[] }>).detail.keys.some((k) => DOCS.includes(k))) onState(load());
+    };
+    window.addEventListener(SYNC_EVENT, onSync);
+    syncWithServer().then(onState);
+    return () => {
+      stop();
+      window.removeEventListener(SYNC_EVENT, onSync);
+    };
+    // onState is a state setter; run once per mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 }
 
 export const exportData = () => {

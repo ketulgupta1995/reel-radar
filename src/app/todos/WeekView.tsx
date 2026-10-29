@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   loadTodos,
   loadTodosWithDaily,
-  syncTodosWithServer,
+  syncPlanner,
+  usePlannerSync,
   moveTodoToDate,
   copyTodoToDate,
   scheduleTodo,
@@ -62,14 +63,16 @@ export default function WeekView({
   useEffect(() => {
     let cancelled = false;
     setWeek(Object.fromEntries(days.map((d) => [d, loadTodos(d)])));
-    // Like the day view: pull empty days from the server before adding daily copies.
-    Promise.all(days.map((d) => (loadTodos(d).length === 0 ? syncTodosWithServer(d) : null))).then(() => {
+    // Like the day view: sync the week's months (one request) before adding daily copies.
+    syncPlanner(days).then(() => {
       if (!cancelled) setWeek(Object.fromEntries(days.map((d) => [d, loadTodosWithDaily(d)])));
     });
     return () => {
       cancelled = true;
     };
   }, [days]);
+
+  usePlannerSync(days, () => setWeek(Object.fromEntries(days.map((d) => [d, loadTodosWithDaily(d)]))));
 
   // Scroll to the week's earliest block, or 7 AM.
   useEffect(() => {
