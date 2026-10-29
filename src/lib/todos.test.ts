@@ -3,11 +3,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_DURATION,
   Todo,
+  addSpentTime,
+  addSubtask,
   addTodo,
   carryOverFromYesterday,
   clearCompletedTodos,
+  deleteSubtask,
   deleteTodo,
+  dueReminders,
   exportTodos,
+  getDailyStreak,
+  getFocusSession,
+  moveTodoToDate,
+  setTodoTag,
+  startFocus,
+  stopFocus,
   getAllStoredDates,
   getTodayDate,
   getUnfinishedFromYesterday,
@@ -21,11 +31,14 @@ import {
   saveTodos,
   scheduleTodo,
   setTodoPriority,
+  setTodoRepeatDays,
   shiftDate,
   stopTodoDaily,
   syncDailyTasksWithServer,
   syncTodosWithServer,
+  toggleSubtask,
   toggleTodo,
+  updateTodo,
   updateTodoText,
 } from "./todos";
 import { jsonResponse } from "@/test/fixtures";
@@ -94,6 +107,17 @@ describe("basic todo operations", () => {
     expect(deleteTodo("a", D1).map((t) => t.id)).toEqual(["b"]);
   });
 
+  it("adds, edits and removes a note, trimming it", () => {
+    const [t] = addTodo("Call bank", D1, undefined, undefined, false, "  ask about the fee  ");
+    expect(t.note).toBe("ask about the fee");
+    expect(addTodo("No note", D1, undefined, undefined, false, "   ")[1]).not.toHaveProperty("note");
+
+    const [edited] = updateTodo(t.id, { text: "Call the bank", note: "fee + card" }, D1);
+    expect(edited).toMatchObject({ text: "Call the bank", note: "fee + card" });
+    expect(updateTodoText(t.id, "Renamed", D1)[0].note).toBe("fee + card"); // title-only edit keeps it
+    expect(updateTodo(t.id, { note: "" }, D1)[0]).not.toHaveProperty("note");
+  });
+
   it("schedules and unschedules, keeping an existing duration", () => {
     saveTodos([todo("a", { duration: 30 })], D1);
     expect(scheduleTodo("a", { start: 600 }, D1)[0]).toMatchObject({ start: 600, duration: 30 });
@@ -131,6 +155,11 @@ describe("carry over from yesterday", () => {
     expect(out[1]).toMatchObject({ carriedFrom: D1 });
     expect(out[1]).not.toHaveProperty("start");
     expect(loadTodos(D1)).toEqual([]);
+  });
+
+  it("keeps a carried task's note", () => {
+    saveTodos([todo("a", { note: "details" })], D1);
+    expect(carryOverFromYesterday(D2)[0].note).toBe("details");
   });
 
   it("moves only the chosen ids and keeps the original carriedFrom", () => {
@@ -177,6 +206,15 @@ describe("daily tasks", () => {
     scheduleTodo(t.id, { start: 60, duration: 20 }, D1);
     expect(loadDailyTasks()[0]).toMatchObject({ text: "New", priority: "high", start: 60, duration: 20 });
     expect(loadTodosWithDaily(D2)[0]).toMatchObject({ text: "New", priority: "high", start: 60 });
+  });
+
+  it("copies a daily task's note to later days and carries note edits", () => {
+    const [t] = addTodo("Gym", D1, undefined, undefined, true, "legs");
+    expect(loadDailyTasks()[0].note).toBe("legs");
+    expect(loadTodosWithDaily(D2)[0].note).toBe("legs");
+    updateTodo(t.id, { note: "" }, D1);
+    expect(loadDailyTasks()[0]).not.toHaveProperty("note");
+    expect(loadTodosWithDaily(D3)[0]).not.toHaveProperty("note");
   });
 
   it("skips a day when its copy is deleted, and undo restores it", () => {
@@ -294,5 +332,192 @@ describe("export and import", () => {
     importTodos(new File([JSON.stringify({ date: D1, todos: "x" })], "t.json"), vi.fn(), onError);
     importTodos(new File(["nope"], "t.json"), vi.fn(), onError);
     await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(3));
+  });
+});
+
+// 2026-03-02 is a Monday.
+const MON = "2026-03-02";
+const day = (offset: number) => shiftDate(MON, offset);
+
+describe("subtasks", () => {
+  it("adds, ticks and deletes checklist items", () => {
+    saveTodos([todo("a")], D1);
+    expect(addSubtask("a", "   ", D1)[0]).not.toHaveProperty("subtasks");
+    const [withItems] = addSubtask("a", " milk ", D1);
+    addSubtask("a", "eggs", D1);
+    const [milk, eggs] = loadTodos(D1)[0].subtasks!;
+    expect(withItems.subtasks).toEqual([{ id: milk.id, text: "milk", done: false }]);
+    expect(toggleSubtask("a", milk.id, D1)[0].subtasks![0].done).toBe(true);
+    expect(deleteSubtask("a", milk.id, D1)[0].subtasks).toEqual([eggs]);
+    expect(deleteSubtask("a", eggs.id, D1)[0]).not.toHaveProperty("subtasks");
+  });
+
+  it("gives each day's copy of a daily task the checklist, unticked", () => {
+    const [t] = addTodo("Morning", D1, undefined, undefined, true);
+    addSubtask(t.id, "water", D1);
+    toggleSubtask(t.id, loadTodos(D1)[0].subtasks![0].id, D1);
+    expect(loadDailyTasks()[0].subtasks).toEqual(["water"]);
+    expect(loadTodosWithDaily(D2)[0].subtasks).toEqual([{ id: expect.any(String), text: "water", done: false }]);
+  });
+});
+
+describe("repeat on chosen days", () => {
+  it("creates copies only on the chosen weekdays", () => {
+    addTodo("Gym", MON, undefined, undefined, [1, 3, 5]);
+    expect(loadDailyTasks()[0].days).toEqual([1, 3, 5]);
+    expect(loadTodosWithDaily(day(1))).toEqual([]); // Tuesday
+    expect(loadTodosWithDaily(day(2))).toHaveLength(1); // Wednesday
+  });
+
+  it("treats all seven days as every day", () => {
+    addTodo("Read", MON, undefined, undefined, [0, 1, 2, 3, 4, 5, 6]);
+    expect(loadDailyTasks()[0]).not.toHaveProperty("days");
+  });
+
+  it("changes the days, removing unfinished copies on days it no longer repeats", () => {
+    const [t] = addTodo("Walk", MON, undefined, undefined, true);
+    loadTodosWithDaily(day(1));
+    loadTodosWithDaily(day(2));
+    toggleTodo(loadTodos(day(1))[0].id, day(1));
+    setTodoRepeatDays(t.id, [1, 2], MON);
+    expect(loadDailyTasks()[0].days).toEqual([1, 2]);
+    expect(loadTodos(day(1))).toHaveLength(1); // Tuesday is kept
+    expect(loadTodos(day(2))).toEqual([]); // Wednesday copy removed
+    setTodoRepeatDays(t.id, undefined, MON);
+    expect(loadDailyTasks()[0]).not.toHaveProperty("days");
+  });
+
+  it("makes an existing todo repeat on chosen days", () => {
+    saveTodos([todo("a")], MON);
+    makeTodoDaily("a", MON, [6]);
+    expect(loadDailyTasks()[0].days).toEqual([6]);
+  });
+});
+
+describe("streaks", () => {
+  const complete = (date: string) => {
+    const copy = loadTodosWithDaily(date).find((t) => t.dailyId)!;
+    toggleTodo(copy.id, date);
+  };
+
+  it("counts consecutive done days and ignores an unfinished today", () => {
+    const [t] = addTodo("Stretch", MON, undefined, undefined, true);
+    [0, 1, 2].forEach((i) => complete(day(i)));
+    loadTodosWithDaily(day(3));
+    expect(getDailyStreak(t.dailyId!, day(2))).toBe(3);
+    expect(getDailyStreak(t.dailyId!, day(3))).toBe(3);
+  });
+
+  it("breaks on a missed day", () => {
+    const [t] = addTodo("Stretch", MON, undefined, undefined, true);
+    complete(day(0));
+    loadTodosWithDaily(day(1)); // missed
+    complete(day(2));
+    expect(getDailyStreak(t.dailyId!, day(2))).toBe(1);
+  });
+
+  it("skips days it doesn't repeat on and days the user removed it", () => {
+    const [t] = addTodo("Run", MON, undefined, undefined, [1, 3]);
+    complete(MON);
+    complete(day(2)); // Wednesday; Tuesday isn't a repeat day
+    complete(day(7));
+    const [skipped] = loadTodosWithDaily(day(9));
+    deleteTodo(skipped.id, day(9)); // removed for that day
+    complete(day(14));
+    expect(getDailyStreak(t.dailyId!, day(14))).toBe(4);
+  });
+
+  it("still counts a done day after its copy is cleared", () => {
+    const [t] = addTodo("Floss", MON, undefined, undefined, true);
+    complete(MON);
+    clearCompletedTodos(MON);
+    complete(day(1));
+    expect(getDailyStreak(t.dailyId!, day(1))).toBe(2);
+  });
+
+  it("is 0 for an unknown daily task", () => {
+    expect(getDailyStreak("nope", MON)).toBe(0);
+  });
+});
+
+describe("reminders", () => {
+  it("returns unfinished blocks starting within the lead time", () => {
+    const todos = [
+      todo("soon", { start: 600 }),
+      todo("now", { start: 590 }),
+      todo("later", { start: 620 }),
+      todo("past", { start: 580 }),
+      todo("done", { start: 595, completed: true }),
+      todo("unscheduled"),
+    ];
+    expect(dueReminders(todos, 590, 10).map((t) => t.id)).toEqual(["soon", "now"]);
+    expect(dueReminders(todos, 590, 0).map((t) => t.id)).toEqual(["now"]);
+  });
+});
+
+describe("tags", () => {
+  it("adds, changes and clears a tag", () => {
+    const [t] = addTodo("Report", D1, undefined, undefined, false, undefined, "work");
+    expect(t.tag).toBe("work");
+    expect(setTodoTag(t.id, "home", D1)[0].tag).toBe("home");
+    expect(setTodoTag(t.id, undefined, D1)[0]).not.toHaveProperty("tag");
+  });
+
+  it("copies a daily task's tag to later days", () => {
+    const [t] = addTodo("Run", D1, undefined, undefined, true, undefined, "health");
+    expect(loadTodosWithDaily(D2)[0].tag).toBe("health");
+    setTodoTag(t.id, "personal", D1);
+    expect(loadTodosWithDaily(D3)[0].tag).toBe("personal");
+  });
+});
+
+describe("moving between days", () => {
+  it("moves a todo into a time slot on another day", () => {
+    saveTodos([todo("a", { start: 540, duration: 30, note: "n" }), todo("b")], D1);
+    const target = moveTodoToDate("a", D1, D2, { start: 600 })!;
+    expect(target).toEqual([expect.objectContaining({ id: "a", note: "n", start: 600, duration: 30 })]);
+    expect(loadTodos(D1).map((t) => t.id)).toEqual(["b"]);
+  });
+
+  it("moves to another day unscheduled, keeping the length", () => {
+    saveTodos([todo("a", { start: 540, duration: 30 })], D1);
+    const [moved] = moveTodoToDate("a", D1, D2)!;
+    expect(moved).not.toHaveProperty("start");
+    expect(moved.duration).toBe(30);
+  });
+
+  it("only reschedules within the same day", () => {
+    saveTodos([todo("a")], D1);
+    expect(moveTodoToDate("a", D1, D1, { start: 60, duration: 15 })![0]).toMatchObject({ start: 60, duration: 15 });
+  });
+
+  it("refuses to move a daily task's copy to another day", () => {
+    const [t] = addTodo("Daily", D1, undefined, undefined, true);
+    expect(moveTodoToDate(t.id, D1, D2)).toBeNull();
+    expect(loadTodos(D1)).toHaveLength(1);
+  });
+});
+
+describe("focus timer", () => {
+  it("records the session length on the todo, adding to earlier sessions", () => {
+    saveTodos([todo("a", { spent: 10 })], D1);
+    startFocus(loadTodos(D1)[0], D1, 0);
+    expect(getFocusSession()).toMatchObject({ todoId: "a", date: D1, text: "a", startedAt: 0 });
+    expect(stopFocus(25 * 60000 + 20000)![0].spent).toBe(35);
+    expect(getFocusSession()).toBeNull();
+    expect(stopFocus()).toBeNull();
+  });
+
+  it("stops and records a running session when another starts", () => {
+    saveTodos([todo("a"), todo("bb")], D1);
+    startFocus(loadTodos(D1)[0], D1, 0);
+    startFocus(loadTodos(D1)[1], D1, 5 * 60000);
+    expect(loadTodos(D1)[0].spent).toBe(5);
+    expect(getFocusSession()!.todoId).toBe("bb");
+  });
+
+  it("ignores sessions under a minute", () => {
+    saveTodos([todo("a")], D1);
+    expect(addSpentTime("a", 0, D1)[0]).not.toHaveProperty("spent");
   });
 });

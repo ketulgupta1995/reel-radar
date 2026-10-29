@@ -54,7 +54,8 @@ If any of the three login variables is missing, nobody can sign in.
 | `/watchlist` | Your saved titles, with sorting and filters |
 | `/search` | Search across movies, series, and people |
 | `/person/[id]` | An actor's or director's filmography, with quick watch and watchlist buttons |
-| `/todos` | **Daily Planner**: tasks with priorities and a drag-to-schedule timeline. Tasks can repeat daily, and you can bring over unfinished tasks from yesterday. |
+| `/todos` | **Daily Planner**: tasks with a title, an optional note, a checklist, a priority and a colour tag (Work, Home, Health…), on a drag-to-schedule timeline where you resize blocks by dragging their bottom edge. A **week view** shows seven days side by side, so you can drag tasks between days. A **focus timer** on any task counts down its planned time and records the time actually spent. Tasks can repeat every day or on chosen weekdays (with a 🔥 streak count), the planner can send browser reminders before each block while the page is open, and you can bring over unfinished tasks from yesterday. |
+| `/todos/stats` | Planner stats: completion rate by weekday, planned vs. done hours, tasks by tag, focus time, and the most postponed tasks, over 7/30/90 days or all time. Uses the days saved in this browser. |
 | `/login` | Single-user sign-in. Every other page and API route requires it. |
 
 **Season tracking.** Series are tracked per season (S1, S2, …). The more seasons you finish, the more weight a series carries in your taste profile.
@@ -110,7 +111,7 @@ src/
 │   ├── page.tsx                  # Landing page
 │   ├── discover/  recommendations/  similar/  analysis/
 │   ├── watched/   watchlist/        search/   person/[id]/
-│   ├── todos/                    # Daily planner
+│   ├── todos/                    # Daily planner (page, WeekView, shared planner.tsx), stats/
 │   ├── login/
 │   └── api/
 │       ├── discover/        GET   TMDB discover feed (region filters)
@@ -133,7 +134,8 @@ src/
 │   ├── analysis.ts               # Analytics aggregation
 │   ├── region.ts                 # Indian vs Global rule (single source of truth)
 │   ├── storage.ts                # Client state: load/save, merge, sync, export/import
-│   ├── todos.ts                  # Planner model: daily tasks, carry-over, sync
+│   ├── todos.ts                  # Planner model: daily tasks, carry-over, tags, focus timer, sync
+│   ├── plannerStats.ts           # Planner stats aggregation
 │   ├── auth.ts                   # HMAC session cookie (Web Crypto, edge-safe)
 │   └── *.test.ts                 # Vitest unit tests
 ├── test/                         # Shared test fixtures and setup
@@ -153,7 +155,7 @@ Imports use the `@/` alias for `src/`. Tailwind theme tokens: `ink` `#07070c` (b
 |---|---|
 | `lib/recommend`, `lib/analysis`, `lib/region` | Scoring, filters, categories, explanations, every analytics metric, personas |
 | `lib/tmdb` | Normalisation, request retry and errors, discover/search/credits/detail, similar-title scoring |
-| `lib/storage`, `lib/todos` | Merge, sync, import/export, daily tasks, carry-over, skip/undo |
+| `lib/storage`, `lib/todos`, `lib/plannerStats` | Merge, sync, import/export, daily tasks, repeat days, streaks, subtasks, tags, moving between days, focus timer, reminders, carry-over, skip/undo, planner stats |
 | `lib/auth`, `middleware` | Session signing and expiry, redirects, 401s |
 | API routes | Validation, responses, Blob ↔ local-file fallback, private → public retry |
 | Components, `/login` | Title card, details modal, backup controls, logout, sign-in flow and safe redirects |

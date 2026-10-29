@@ -40,7 +40,7 @@ Copy `.env.example` to `.env.local`. Never commit `.env.local` or print its valu
 src/
   middleware.ts          Auth gate for every route except /login and /api/auth/*
   app/                   Pages (discover, recommendations, analysis, watched, watchlist,
-                         search, similar, person/[id], todos, login)
+                         search, similar, person/[id], todos, todos/stats, login)
   app/api/               Route handlers: discover, recommendations, similar, search, title,
                          person/[id], storage, todos, auth/login, auth/logout
   components/            TitleCard, TitleDetailsModal, StorageControls, LogoutButton
@@ -51,6 +51,7 @@ src/
     analysis.ts          Analytics aggregation
     storage.ts           Client state: load/save, merge, export/import, server sync
     todos.ts             Todo and daily-task model and logic ("use client")
+    plannerStats.ts      Planner stats aggregation (pure; used by /todos/stats)
     auth.ts              Session signing/verification via Web Crypto
   types/title.ts         Title / MediaType types and keyOf()
 data/                    Local storage fallback (storage.json, reel-radar-todos-<date>.json)
@@ -75,7 +76,7 @@ Import through the `@/` alias (maps to `src/`).
 
 ## Testing
 
-- Tests live next to their source as `*.test.ts(x)`. Covered: everything in `lib/`, `types/`, `middleware.ts`, all API routes, the shared components, and the login page. The large pages (discover, recommendations, analysis, watched, watchlist, search, similar, person, todos, home) have no render tests. Their logic lives in `lib/` and is tested there.
+- Tests live next to their source as `*.test.ts(x)`. Covered: everything in `lib/`, `types/`, `middleware.ts`, all API routes, the shared components, and the login page. The large pages (discover, recommendations, analysis, watched, watchlist, search, similar, person, todos, todos/stats, home) have no render tests. `app/todos/planner.tsx` holds the planner UI shared by the day view, `WeekView.tsx` and the stats page. Their logic lives in `lib/` and is tested there.
 - Tests run in Node by default. Anything that touches the DOM or `localStorage` starts with `// @vitest-environment jsdom`.
 - Shared helpers: `src/test/fixtures.ts` (`mk()` builds a `Title`, `jsonResponse()` builds a fetch response) and `src/test/setup.ts` (React cleanup, `localStorage` reset).
 - Never hit the network: stub `fetch` with `vi.stubGlobal`, and mock `@/lib/tmdb` or `@vercel/blob` with `vi.mock`.

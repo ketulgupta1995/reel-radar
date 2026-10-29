@@ -2,6 +2,26 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import WeekView from "./WeekView";
+import {
+  HOUR_PX,
+  SNAP,
+  PRIORITY_STYLE,
+  TAG_COLORS,
+  DAY_LETTERS,
+  DAY_NAMES,
+  TimeBlock,
+  useBlockResize,
+  formatDate,
+  formatShortDate,
+  getRelativeDateLabel,
+  fmtTime,
+  fmtDuration,
+  snap,
+  clampStart,
+  layoutBlocks,
+} from "./planner";
+import { weekStart } from "@/lib/plannerStats";
 import {
   loadTodos,
   addTodo,
@@ -10,7 +30,7 @@ import {
   restoreTodo,
   setTodoPriority,
   scheduleTodo,
-  updateTodoText,
+  updateTodo,
   clearCompletedTodos,
   getAllStoredDates,
   getUnfinishedFromYesterday,
@@ -18,6 +38,17 @@ import {
   loadTodosWithDaily,
   makeTodoDaily,
   stopTodoDaily,
+  setTodoRepeatDays,
+  loadDailyTasks,
+  getDailyStreak,
+  addSubtask,
+  toggleSubtask,
+  deleteSubtask,
+  dueReminders,
+  setTodoTag,
+  getFocusSession,
+  startFocus,
+  stopFocus,
   syncDailyTasksWithServer,
   getTodayDate,
   shiftDate,
@@ -25,24 +56,61 @@ import {
   importTodos,
   syncTodosWithServer,
   DEFAULT_DURATION,
+  ALL_DAYS,
+  TAGS,
+  type DailyTask,
+  type FocusSession,
+  type TagId,
   type Priority,
   type Todo,
 } from "@/lib/todos";
 
 type Filter = "all" | "active" | "done";
 type MobileView = "tasks" | "schedule";
+type View = "day" | "week";
 
-const HOUR_PX = 64;
-const SNAP = 15; // minutes
+const TAG_LABEL = Object.fromEntries(TAGS.map((t) => [t.id, t.label])) as Record<TagId, string>;
+
+// 5:07 / 1:02:30
+function fmtClock(totalSeconds: number): string {
+  const s = Math.floor(Math.abs(totalSeconds));
+  const h = Math.floor(s / 3600);
+  const mm = String(Math.floor((s % 3600) / 60));
+  const ss = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${mm.padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
+}
+
 const DURATIONS = [15, 30, 45, 60, 90, 120, 180, 240];
 
 const PRIORITY_ORDER: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
-const PRIORITY_STYLE: Record<Priority, { dot: string; label: string; block: string }> = {
-  high: { dot: "bg-red-500", label: "High", block: "border-red-400/60 bg-red-500/20" },
-  medium: { dot: "bg-yellow-400", label: "Medium", block: "border-yellow-400/60 bg-yellow-400/15" },
-  low: { dot: "bg-sky-400", label: "Low", block: "border-sky-400/60 bg-sky-400/15" },
-};
-const NO_PRIORITY_BLOCK = "border-white/25 bg-white/10";
+const REMINDER_KEY = "reel-radar-reminder-lead"; // minutes before a block starts; unset = off
+const REMINDER_LEADS = [0, 5, 10, 15];
+
+function repeatLabel(days?: number[]): string {
+  if (!days) return "Daily";
+  if (days.join() === "1,2,3,4,5") return "Weekdays";
+  if (days.join() === "0,6") return "Weekends";
+  return days.map((d) => DAY_NAMES[d]).join(", ");
+}
+
+function loadReminderLead(): number | null {
+  try {
+    const v = localStorage.getItem(REMINDER_KEY);
+    return v === null ? null : Number(v);
+  } catch {
+    return null;
+  }
+}
+
+function saveReminderLead(lead: number | null): void {
+  try {
+    if (lead === null) localStorage.removeItem(REMINDER_KEY);
+    else localStorage.setItem(REMINDER_KEY, String(lead));
+  } catch {
+    // Storage unavailable: the setting just won't persist.
+  }
+}
+
 const NEXT_PRIORITY: Record<string, Priority | undefined> = {
   none: "high",
   high: "medium",
@@ -50,34 +118,12 @@ const NEXT_PRIORITY: Record<string, Priority | undefined> = {
   low: undefined,
 };
 
-function formatDate(dateStr: string): string {
-  const date = new Date(dateStr + "T00:00:00");
-  return date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
-}
-
-function getRelativeDateLabel(dateStr: string): string {
-  const today = getTodayDate();
-  if (dateStr === today) return "Today";
-  if (dateStr === shiftDate(today, -1)) return "Yesterday";
-  if (dateStr === shiftDate(today, 1)) return "Tomorrow";
-  return formatDate(dateStr);
-}
-
-const fmtTime = (mins: number): string => {
-  const h = Math.floor(mins / 60) % 24;
-  const m = mins % 60;
-  return `${h % 12 || 12}${m ? ":" + String(m).padStart(2, "0") : ""} ${h < 12 ? "AM" : "PM"}`;
-};
-const fmtDuration = (mins: number): string =>
-  mins % 60 === 0 ? `${mins / 60}h` : mins > 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
 const toInputTime = (mins: number): string =>
   `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
 const fromInputTime = (v: string): number | null => {
   const m = /^(\d{2}):(\d{2})$/.exec(v);
   return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 };
-const snap = (mins: number) => Math.round(mins / SNAP) * SNAP;
-const clampStart = (start: number, duration: number) => Math.max(0, Math.min(start, 24 * 60 - duration));
 
 // Active first, then by priority, then oldest first; done items sink to the bottom.
 function sortTodos(todos: Todo[]): Todo[] {
@@ -90,32 +136,6 @@ function sortTodos(todos: Todo[]): Todo[] {
   });
 }
 
-// Side-by-side lanes for overlapping blocks.
-function layoutBlocks(blocks: Todo[]): Map<string, { lane: number; lanes: number }> {
-  const sorted = [...blocks].sort((a, b) => a.start! - b.start! || (b.duration ?? 0) - (a.duration ?? 0));
-  const result = new Map<string, { lane: number; lanes: number }>();
-  let cluster: { id: string; lane: number }[] = [];
-  let clusterEnd = -1;
-  const laneEnds: number[] = [];
-  const flush = () => {
-    cluster.forEach((c) => result.set(c.id, { lane: c.lane, lanes: laneEnds.length }));
-    cluster = [];
-    laneEnds.length = 0;
-  };
-  for (const b of sorted) {
-    const start = b.start!;
-    const end = start + (b.duration ?? DEFAULT_DURATION);
-    if (start >= clusterEnd) flush();
-    let lane = laneEnds.findIndex((e) => e <= start);
-    if (lane === -1) lane = laneEnds.length;
-    laneEnds[lane] = end;
-    cluster.push({ id: b.id, lane });
-    clusterEnd = cluster.length === 1 ? end : Math.max(clusterEnd, end);
-  }
-  flush();
-  return result;
-}
-
 export default function TodosPage() {
   const [selectedDate, setSelectedDate] = useState<string>(() => getTodayDate());
   const [todos, setTodos] = useState<Todo[]>([]);
@@ -124,10 +144,21 @@ export default function TodosPage() {
   const [newTime, setNewTime] = useState("");
   const [newDuration, setNewDuration] = useState(DEFAULT_DURATION);
   const [newDaily, setNewDaily] = useState(false);
+  const [newRepeatDays, setNewRepeatDays] = useState<number[]>(ALL_DAYS);
+  const [newTag, setNewTag] = useState<TagId | "">("");
+  const [tagFilter, setTagFilter] = useState<TagId | "all">("all");
+  const [view, setView] = useState<View>("day");
+  const [focus, setFocus] = useState<FocusSession | null>(null);
+  const [clockNow, setClockNow] = useState(0);
+  const [dailyTasks, setDailyTasks] = useState<DailyTask[]>([]);
+  const [reminderLead, setReminderLead] = useState<number | null>(null);
+  const [newNote, setNewNote] = useState("");
+  const [showNewNote, setShowNewNote] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  const [editNote, setEditNote] = useState("");
   const [availableDates, setAvailableDates] = useState<string[]>([]);
   const [yesterdayTodos, setYesterdayTodos] = useState<Todo[]>([]);
   const [showYesterday, setShowYesterday] = useState(false);
@@ -145,10 +176,14 @@ export default function TodosPage() {
   quickRef.current = quickAdd;
   const gridRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const firedReminders = useRef(new Set<string>());
+  const focusAlerted = useRef<string | null>(null);
+  const resize = useBlockResize((t, date, duration) => apply(scheduleTodo(t.id, { start: t.start!, duration }, date)));
 
   const refreshMeta = (date = selectedDate) => {
     setAvailableDates(getAllStoredDates());
     setYesterdayTodos(getUnfinishedFromYesterday(date));
+    setDailyTasks(loadDailyTasks());
   };
 
   useEffect(() => {
@@ -169,8 +204,9 @@ export default function TodosPage() {
     return () => {
       cancelled = true;
     };
+    // view: the week view may have changed this day.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDate]);
+  }, [selectedDate, view]);
 
   // A new device has no daily tasks locally; pull them once.
   useEffect(() => {
@@ -182,6 +218,8 @@ export default function TodosPage() {
 
   useEffect(() => {
     inputRef.current?.focus();
+    setReminderLead(loadReminderLead());
+    setFocus(getFocusSession());
   }, []);
 
   // Current-time marker, updated every minute.
@@ -207,7 +245,55 @@ export default function TodosPage() {
         : 8 * 60;
     if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, (target / 60 - 1) * HOUR_PX);
     // Re-run on mobile view switch: a hidden planner can't be scrolled.
-  }, [selectedDate, mobileView]);
+  }, [selectedDate, mobileView, view]);
+
+  // Focus timer clock.
+  useEffect(() => {
+    if (!focus) return;
+    setClockNow(Date.now());
+    const id = setInterval(() => setClockNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [focus]);
+
+  // Notify about today's blocks as they come up (only while this page is open).
+  useEffect(() => {
+    if (reminderLead === null || now === null) return;
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    const today = getTodayDate();
+    for (const t of dueReminders(loadTodos(today), now, reminderLead)) {
+      const key = `${today}:${t.id}:${t.start}`;
+      if (firedReminders.current.has(key)) continue;
+      firedReminders.current.add(key);
+      const mins = t.start! - now;
+      const when = `${mins > 0 ? `In ${mins} min` : "Starting now"} · ${fmtTime(t.start!)}–${fmtTime(t.start! + (t.duration ?? DEFAULT_DURATION))}`;
+      try {
+        new Notification(t.text, { body: t.note ? `${when}\n${t.note}` : when, tag: key });
+      } catch {
+        // Some mobile browsers only allow notifications from a service worker.
+      }
+    }
+  }, [now, reminderLead]);
+
+  const handleReminderChange = async (value: string) => {
+    if (value === "") {
+      setReminderLead(null);
+      saveReminderLead(null);
+      return;
+    }
+    if (typeof Notification === "undefined") {
+      flash("This browser can't show notifications");
+      return;
+    }
+    const permission =
+      Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
+    if (permission !== "granted") {
+      flash("Notifications are blocked for this site");
+      return;
+    }
+    setReminderLead(Number(value));
+    saveReminderLead(Number(value));
+    flash("Reminders on while this page is open");
+  };
 
   const flash = (text: string) => {
     setMessage(text);
@@ -229,10 +315,15 @@ export default function TodosPage() {
         selectedDate,
         newPriority || undefined,
         start !== null ? { start, duration: newDuration } : undefined,
-        newDaily
+        newDaily ? newRepeatDays : false,
+        newNote,
+        newTag || undefined
       )
     );
+    setNewRepeatDays(ALL_DAYS);
     setNewTodoText("");
+    setNewNote("");
+    setShowNewNote(false);
     setNewDaily(false);
     setNewTime("");
     inputRef.current?.focus();
@@ -257,9 +348,10 @@ export default function TodosPage() {
 
   const handleEditSave = (id: string) => {
     if (!editText.trim()) handleDelete(id);
-    else apply(updateTodoText(id, editText.trim(), selectedDate));
+    else apply(updateTodo(id, { text: editText.trim(), note: editNote }, selectedDate));
     setEditingId(null);
     setEditText("");
+    setEditNote("");
   };
 
   const handleCarryOver = (ids?: string[]) => {
@@ -276,6 +368,23 @@ export default function TodosPage() {
       apply(makeTodoDaily(t.id, selectedDate));
       flash("Repeats every day from now on");
     }
+  };
+
+  const handleStartFocus = (t: Todo) => {
+    setFocus(startFocus(t, selectedDate));
+    focusAlerted.current = null;
+    apply(loadTodos(selectedDate)); // a session stopped by this one has just been recorded
+  };
+
+  const handleStopFocus = (markDone: boolean) => {
+    const session = focus;
+    if (!session) return;
+    const minutes = Math.round((Date.now() - session.startedAt) / 60000);
+    const updated = stopFocus() ?? [];
+    setFocus(null);
+    if (markDone && updated.some((t) => t.id === session.todoId && !t.completed)) toggleTodo(session.todoId, session.date);
+    apply(loadTodos(selectedDate));
+    flash(minutes > 0 ? `Recorded ${fmtDuration(minutes)} on "${session.text}"` : "Under a minute, so nothing was recorded");
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -352,6 +461,14 @@ export default function TodosPage() {
   const completedCount = todos.length - activeCount;
   const percent = todos.length ? Math.round((completedCount / todos.length) * 100) : 0;
 
+  const repeatDaysById = useMemo(() => new Map(dailyTasks.map((d) => [d.id, d.days])), [dailyTasks]);
+  const streaks = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const t of todos) if (t.dailyId) m.set(t.dailyId, getDailyStreak(t.dailyId, selectedDate));
+    return m;
+    // dailyTasks: clearing a finished copy changes a streak's doneDates without changing todos' completion.
+  }, [todos, dailyTasks, selectedDate]);
+
   const scheduled = useMemo(() => todos.filter((t) => t.start !== undefined), [todos]);
   const unscheduledActive = todos.filter((t) => t.start === undefined && !t.completed).length;
   const plannedMinutes = scheduled.reduce((n, t) => n + (t.duration ?? DEFAULT_DURATION), 0);
@@ -363,10 +480,14 @@ export default function TodosPage() {
     return sortTodos(todos).filter(
       (t) =>
         (filter === "all" || (filter === "active" ? !t.completed : t.completed)) &&
-        (!q || t.text.toLowerCase().includes(q))
+        (tagFilter === "all" || t.tag === tagFilter) &&
+        (!q || t.text.toLowerCase().includes(q) || t.note?.toLowerCase().includes(q))
     );
-  }, [todos, filter, query]);
+  }, [todos, filter, query, tagFilter]);
 
+  const usedTags = TAGS.map((t) => t.id).filter((id) => id === tagFilter || todos.some((t) => t.tag === id));
+
+  const otherDays = availableDates.filter((d) => d !== selectedDate && loadTodos(d).length > 0);
   const isToday = selectedDate === getTodayDate();
   const prevLabel = getRelativeDateLabel(shiftDate(selectedDate, -1));
 
@@ -429,16 +550,40 @@ export default function TodosPage() {
         {/* Title & Day Navigation */}
         <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold sm:text-3xl">Daily Planner</h1>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <h1 className="text-2xl font-bold sm:text-3xl">Daily Planner</h1>
+              <Link
+                href="/todos/stats"
+                className="rounded-full border border-white/20 bg-white/5 px-3 py-1 text-xs text-white/80 hover:border-gold/40 hover:text-gold"
+              >
+                Stats →
+              </Link>
+            </div>
             <p className="mt-1 text-white/60">
-              {getRelativeDateLabel(selectedDate)} · {formatDate(selectedDate)}
+              {view === "week"
+                ? `Week of ${formatShortDate(weekStart(selectedDate))} – ${formatShortDate(shiftDate(weekStart(selectedDate), 6))}`
+                : `${getRelativeDateLabel(selectedDate)} · ${formatDate(selectedDate)}`}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex rounded-full border border-white/15 bg-white/5 p-0.5 text-sm">
+              {(["day", "week"] as View[]).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  aria-pressed={view === v}
+                  className={`rounded-full px-3 py-1 capitalize transition ${
+                    view === v ? "bg-gold font-semibold text-black" : "text-white/70 hover:text-white"
+                  }`}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
             <button
-              onClick={() => setSelectedDate(shiftDate(selectedDate, -1))}
+              onClick={() => setSelectedDate(shiftDate(selectedDate, view === "week" ? -7 : -1))}
               className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-sm hover:border-gold/40 hover:text-gold"
-              aria-label="Previous day"
+              aria-label={view === "week" ? "Previous week" : "Previous day"}
             >
               ‹
             </button>
@@ -450,9 +595,9 @@ export default function TodosPage() {
               aria-label="Pick a date"
             />
             <button
-              onClick={() => setSelectedDate(shiftDate(selectedDate, 1))}
+              onClick={() => setSelectedDate(shiftDate(selectedDate, view === "week" ? 7 : 1))}
               className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-sm hover:border-gold/40 hover:text-gold"
-              aria-label="Next day"
+              aria-label={view === "week" ? "Next week" : "Next day"}
             >
               ›
             </button>
@@ -467,6 +612,18 @@ export default function TodosPage() {
           </div>
         </div>
 
+        {view === "week" ? (
+          <WeekView
+            anchorDate={selectedDate}
+            now={now}
+            flash={flash}
+            onOpenDay={(d) => {
+              setSelectedDate(d);
+              setView("day");
+            }}
+          />
+        ) : (
+        <>
         {/* Day summary */}
         <div className="mb-5 grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4">
           {[
@@ -576,6 +733,19 @@ export default function TodosPage() {
                 <option value="medium">Medium</option>
                 <option value="low">Low</option>
               </select>
+              <select
+                value={newTag}
+                onChange={(e) => setNewTag(e.target.value as TagId | "")}
+                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-panel px-3 py-3 text-sm text-white focus:border-gold/50 focus:outline-none sm:flex-none"
+                aria-label="Tag"
+              >
+                <option value="">No tag</option>
+                {TAGS.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
               <input
                 type="time"
                 value={newTime}
@@ -600,6 +770,19 @@ export default function TodosPage() {
               )}
               <button
                 type="button"
+                onClick={() => setShowNewNote((v) => !v)}
+                aria-pressed={showNewNote}
+                title="Add a description"
+                className={`rounded-xl border px-3 py-3 text-sm transition ${
+                  showNewNote || newNote.trim()
+                    ? "border-gold/60 bg-gold/15 text-gold"
+                    : "border-white/10 bg-panel text-white/60 hover:text-white"
+                }`}
+              >
+                ✎ Note
+              </button>
+              <button
+                type="button"
                 onClick={() => setNewDaily((v) => !v)}
                 aria-pressed={newDaily}
                 title="Repeat this task every day"
@@ -609,7 +792,7 @@ export default function TodosPage() {
                     : "border-white/10 bg-panel text-white/60 hover:text-white"
                 }`}
               >
-                ↻ Daily
+                ↻ {newDaily ? repeatLabel(newRepeatDays.length === 7 ? undefined : newRepeatDays) : "Daily"}
               </button>
               <button
                 type="submit"
@@ -618,6 +801,24 @@ export default function TodosPage() {
               >
                 Add
               </button>
+              {newDaily && (
+                <div className="flex basis-full items-center gap-3 text-xs text-white/55">
+                  Repeats on
+                  <DayPicker value={newRepeatDays} onChange={setNewRepeatDays} />
+                </div>
+              )}
+              {showNewNote && (
+                <textarea
+                  value={newNote}
+                  onChange={(e) => setNewNote(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleAddTodo(e);
+                  }}
+                  placeholder="Description (optional)"
+                  rows={3}
+                  className="basis-full resize-y rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-white/40 transition focus:border-gold/50 focus:outline-none focus:ring-1 focus:ring-gold/50"
+                />
+              )}
             </form>
 
             {todos.length > 0 && (
@@ -643,6 +844,25 @@ export default function TodosPage() {
                   placeholder="Search tasks"
                   className="min-w-0 flex-1 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-sm text-white placeholder-white/40 focus:border-gold/50 focus:outline-none"
                 />
+                {usedTags.length > 0 && (
+                  <div className="flex basis-full flex-wrap gap-1.5 text-xs">
+                    {(["all", ...usedTags] as (TagId | "all")[]).map((tag) => (
+                      <button
+                        key={tag}
+                        onClick={() => setTagFilter(tag)}
+                        aria-pressed={tagFilter === tag}
+                        className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 transition ${
+                          tagFilter === tag
+                            ? "border-gold/60 bg-gold/15 text-white"
+                            : "border-white/15 text-white/60 hover:text-white"
+                        }`}
+                      >
+                        {tag !== "all" && <span className="h-2 w-2 rounded-full" style={{ background: TAG_COLORS[tag] }} />}
+                        {tag === "all" ? "All tags" : TAG_LABEL[tag]}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -663,16 +883,20 @@ export default function TodosPage() {
                     todo={todo}
                     isEditing={editingId === todo.id}
                     editText={editText}
+                    editNote={editNote}
                     onEditStart={(t) => {
                       setEditingId(t.id);
                       setEditText(t.text);
+                      setEditNote(t.note ?? "");
                     }}
                     onEditSave={handleEditSave}
                     onEditCancel={() => {
                       setEditingId(null);
                       setEditText("");
+                      setEditNote("");
                     }}
                     onEditTextChange={setEditText}
+                    onEditNoteChange={setEditNote}
                     onToggle={(id) => apply(toggleTodo(id, selectedDate))}
                     onDelete={handleDelete}
                     onCyclePriority={(t) =>
@@ -680,6 +904,17 @@ export default function TodosPage() {
                     }
                     onSchedule={quickSchedule}
                     onToggleDaily={handleToggleDaily}
+                    repeatDays={todo.dailyId ? repeatDaysById.get(todo.dailyId) : undefined}
+                    streak={todo.dailyId ? streaks.get(todo.dailyId) ?? 0 : 0}
+                    onSetRepeatDays={(t, days) => {
+                      apply(setTodoRepeatDays(t.id, days.length === 7 ? undefined : days, selectedDate));
+                    }}
+                    onAddSubtask={(t, text) => apply(addSubtask(t.id, text, selectedDate))}
+                    onToggleSubtask={(t, subId) => apply(toggleSubtask(t.id, subId, selectedDate))}
+                    onDeleteSubtask={(t, subId) => apply(deleteSubtask(t.id, subId, selectedDate))}
+                    onSetTag={(t, tag) => apply(setTodoTag(t.id, tag, selectedDate))}
+                    focusing={focus?.todoId === todo.id}
+                    onStartFocus={handleStartFocus}
                     onShowBlock={(t) => {
                       setSelectedBlock(t.id);
                       setMobileView("schedule");
@@ -737,12 +972,11 @@ export default function TodosPage() {
               </div>
             </div>
 
-            {availableDates.filter((d) => d !== selectedDate).length > 0 && (
+            {otherDays.length > 0 && (
               <div className="mt-8">
                 <h2 className="mb-3 text-lg font-semibold">Other days</h2>
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {availableDates
-                    .filter((d) => d !== selectedDate)
+                  {otherDays
                     .slice(0, 6)
                     .map((date) => {
                       const day = loadTodos(date);
@@ -775,10 +1009,24 @@ export default function TodosPage() {
               mobileView === "schedule" ? "" : "hidden lg:block"
             }`}
           >
-            <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-white/10 px-4 py-3">
               <h2 className="font-semibold">Schedule</h2>
-              <p className="hidden text-xs text-white/45 sm:block">Click a slot to add · drag tasks here to time-block</p>
-              <p className="text-xs text-white/45 sm:hidden">Tap a slot to add · tap a block to edit</p>
+              <p className="hidden text-xs text-white/45 xl:block">Click a slot to add · drag tasks here to time-block</p>
+              <p className="order-last basis-full text-xs text-white/45 sm:hidden">Tap a slot to add · tap a block to edit</p>
+              <select
+                value={reminderLead ?? ""}
+                onChange={(e) => handleReminderChange(e.target.value)}
+                className="rounded-lg border border-white/10 bg-panel px-2 py-1 text-xs text-white focus:border-gold/50 focus:outline-none"
+                aria-label="Reminders"
+                title="Browser notification before each block today (while this page is open)"
+              >
+                <option value="">🔕 No reminders</option>
+                {REMINDER_LEADS.map((m) => (
+                  <option key={m} value={m}>
+                    🔔 {m === 0 ? "At start" : `${m} min before`}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {selected && (
@@ -816,6 +1064,11 @@ export default function TodosPage() {
                 <button onClick={() => apply(toggleTodo(selected.id, selectedDate))} className="text-xs text-gold hover:brightness-110">
                   {selected.completed ? "Mark not done" : "Mark done"}
                 </button>
+                {!selected.completed && focus?.todoId !== selected.id && (
+                  <button onClick={() => handleStartFocus(selected)} className="text-xs text-gold hover:brightness-110">
+                    ▶ Focus
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     apply(scheduleTodo(selected.id, undefined, selectedDate));
@@ -828,6 +1081,9 @@ export default function TodosPage() {
                 <button onClick={() => setSelectedBlock(null)} className="ml-auto text-xs text-white/40 hover:text-white" aria-label="Close">
                   ✕
                 </button>
+                {selected.note && (
+                  <p className="w-full whitespace-pre-wrap break-words text-xs text-white/55">{selected.note}</p>
+                )}
               </div>
             )}
 
@@ -880,55 +1136,22 @@ export default function TodosPage() {
 
                 {/* blocks */}
                 {scheduled.map((t) => {
-                  const duration = t.duration ?? DEFAULT_DURATION;
                   const { lane, lanes: count } = lanes.get(t.id) ?? { lane: 0, lanes: 1 };
-                  const style = t.priority ? PRIORITY_STYLE[t.priority].block : NO_PRIORITY_BLOCK;
                   return (
-                    <div
+                    <TimeBlock
                       key={t.id}
-                      draggable
-                      onDragStart={(e) => {
-                        e.dataTransfer.setData("text/todo-id", t.id);
-                        e.dataTransfer.effectAllowed = "move";
-                      }}
-                      onDragEnd={() => setDragOver(null)}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedBlock(t.id);
+                      todo={t}
+                      date={selectedDate}
+                      lane={lane}
+                      lanes={count}
+                      selected={selectedBlock === t.id}
+                      resize={resize}
+                      onSelect={(b) => {
+                        setSelectedBlock(b.id);
                         setQuickAdd(null);
                       }}
-                      className={`absolute z-10 cursor-grab overflow-hidden rounded-lg border px-2 py-1 text-xs transition active:cursor-grabbing ${style} ${
-                        selectedBlock === t.id ? "ring-2 ring-gold" : ""
-                      } ${t.completed ? "opacity-50" : ""}`}
-                      style={{
-                        top: (t.start! / 60) * HOUR_PX + 1,
-                        height: Math.max((duration / 60) * HOUR_PX - 2, 22),
-                        left: `${(lane / count) * 100}%`,
-                        width: `calc(${100 / count}% - 3px)`,
-                      }}
-                      title={`${t.text} · ${fmtTime(t.start!)}–${fmtTime(t.start! + duration)}`}
-                    >
-                      <div className="flex items-start gap-1.5">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            apply(toggleTodo(t.id, selectedDate));
-                          }}
-                          className={`mt-px flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border ${
-                            t.completed ? "border-gold bg-gold text-black" : "border-white/50"
-                          }`}
-                          aria-label={t.completed ? "Mark as incomplete" : "Mark as complete"}
-                        >
-                          {t.completed && <span className="text-[9px] leading-none">✓</span>}
-                        </button>
-                        <span className={`min-w-0 flex-1 truncate font-medium ${t.completed ? "line-through" : ""}`}>{t.text}</span>
-                      </div>
-                      {duration >= 45 && (
-                        <div className="mt-0.5 text-[10px] text-white/55">
-                          {fmtTime(t.start!)} – {fmtTime(t.start! + duration)}
-                        </div>
-                      )}
-                    </div>
+                      onToggle={(b) => apply(toggleTodo(b.id, selectedDate))}
+                    />
                   );
                 })}
 
@@ -957,10 +1180,13 @@ export default function TodosPage() {
             </div>
           </section>
         </div>
+        </>
+        )}
       </div>
 
       {/* Toasts */}
-      <div className="fixed bottom-[calc(1.5rem+env(safe-area-inset-bottom))] left-1/2 z-50 flex w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col items-center gap-2">
+      {focus && <FocusBar session={focus} nowMs={clockNow} selectedDate={selectedDate} onStop={handleStopFocus} alerted={focusAlerted} />}
+      <div className={`fixed left-1/2 ${focus ? "bottom-[calc(6rem+env(safe-area-inset-bottom))]" : "bottom-[calc(1.5rem+env(safe-area-inset-bottom))]"} z-50 flex w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col items-center gap-2`}>
         {deleted && (
           <div className="flex items-center gap-4 rounded-full border border-white/15 bg-panel px-4 py-2 text-sm shadow-2xl">
             <span className="text-white/80">Task deleted</span>
@@ -981,32 +1207,62 @@ function TodoItem({
   todo,
   isEditing,
   editText,
+  editNote,
   onEditStart,
   onEditSave,
   onEditCancel,
   onEditTextChange,
+  onEditNoteChange,
   onToggle,
   onDelete,
   onCyclePriority,
   onSchedule,
   onShowBlock,
   onToggleDaily,
+  repeatDays,
+  streak,
+  onSetRepeatDays,
+  onAddSubtask,
+  onToggleSubtask,
+  onDeleteSubtask,
+  onSetTag,
+  focusing,
+  onStartFocus,
 }: {
   todo: Todo;
   isEditing: boolean;
   editText: string;
+  editNote: string;
   onEditStart: (todo: Todo) => void;
   onEditSave: (id: string) => void;
   onEditCancel: () => void;
   onEditTextChange: (text: string) => void;
+  onEditNoteChange: (note: string) => void;
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
   onCyclePriority: (todo: Todo) => void;
   onSchedule: (todo: Todo) => void;
   onShowBlock: (todo: Todo) => void;
   onToggleDaily: (todo: Todo) => void;
+  repeatDays?: number[];
+  streak: number;
+  onSetRepeatDays: (todo: Todo, days: number[]) => void;
+  onAddSubtask: (todo: Todo, text: string) => void;
+  onToggleSubtask: (todo: Todo, subtaskId: string) => void;
+  onDeleteSubtask: (todo: Todo, subtaskId: string) => void;
+  onSetTag: (todo: Todo, tag: TagId | undefined) => void;
+  focusing: boolean;
+  onStartFocus: (todo: Todo) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [showRepeat, setShowRepeat] = useState(false);
+  const [addingSubtask, setAddingSubtask] = useState(false);
+  const [subtaskText, setSubtaskText] = useState("");
+
+  const submitSubtask = () => {
+    if (subtaskText.trim()) onAddSubtask(todo, subtaskText);
+    setSubtaskText("");
+  };
 
   useEffect(() => {
     if (isEditing) {
@@ -1017,7 +1273,13 @@ function TodoItem({
 
   if (isEditing) {
     return (
-      <div className="rounded-xl border border-gold/30 bg-gold/5 p-3">
+      <div
+        className="rounded-xl border border-gold/30 bg-gold/5 p-3"
+        // Save when focus leaves the editor, not when it moves between title and note.
+        onBlur={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) onEditSave(todo.id);
+        }}
+      >
         <input
           ref={inputRef}
           type="text"
@@ -1027,16 +1289,30 @@ function TodoItem({
             if (e.key === "Enter") onEditSave(todo.id);
             else if (e.key === "Escape") onEditCancel();
           }}
-          onBlur={() => onEditSave(todo.id)}
+          placeholder="Title"
           className="w-full bg-transparent px-2 py-1.5 text-white focus:outline-none"
           autoComplete="off"
         />
+        <textarea
+          value={editNote}
+          onChange={(e) => onEditNoteChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) onEditSave(todo.id);
+            else if (e.key === "Escape") onEditCancel();
+          }}
+          placeholder="Description (optional)"
+          rows={3}
+          className="mt-1 w-full resize-y rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-sm text-white/80 placeholder-white/40 focus:border-gold/40 focus:outline-none"
+        />
+        <p className="mt-1 px-2 text-[11px] text-white/40">Enter saves the title · Ctrl+Enter saves from the note · Esc cancels</p>
       </div>
     );
   }
 
   const pri = todo.priority ? PRIORITY_STYLE[todo.priority] : null;
   const duration = todo.duration ?? DEFAULT_DURATION;
+  const subtasks = todo.subtasks ?? [];
+  const subtasksDone = subtasks.filter((st) => st.done).length;
 
   return (
     <div
@@ -1073,6 +1349,70 @@ function TodoItem({
           >
             {todo.text}
           </p>
+          {todo.note && (
+            <p
+              onDoubleClick={() => onEditStart(todo)}
+              className={`mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed ${
+                todo.completed ? "text-white/30" : "text-white/55"
+              }`}
+            >
+              {todo.note}
+            </p>
+          )}
+          {(subtasks.length > 0 || addingSubtask) && (
+            <ul className="mt-2 space-y-1">
+              {subtasks.map((st) => (
+                <li key={st.id} className="group flex items-start gap-2 text-xs">
+                  <button
+                    onClick={() => onToggleSubtask(todo, st.id)}
+                    className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border ${
+                      st.done ? "border-gold bg-gold text-black" : "border-white/40 hover:border-gold/60"
+                    }`}
+                    aria-label={st.done ? `Mark "${st.text}" as not done` : `Mark "${st.text}" as done`}
+                  >
+                    {st.done && <span className="text-[9px] leading-none">✓</span>}
+                  </button>
+                  <span className={`min-w-0 flex-1 break-words ${st.done ? "text-white/35 line-through" : "text-white/75"}`}>
+                    {st.text}
+                  </span>
+                  <button
+                    onClick={() => onDeleteSubtask(todo, st.id)}
+                    className="shrink-0 px-1 text-white/30 hover:text-red-400 focus:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                    aria-label={`Delete "${st.text}"`}
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+              <li>
+                {addingSubtask ? (
+                  <input
+                    autoFocus
+                    value={subtaskText}
+                    onChange={(e) => setSubtaskText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") submitSubtask();
+                      else if (e.key === "Escape") {
+                        setSubtaskText("");
+                        setAddingSubtask(false);
+                      }
+                    }}
+                    onBlur={() => {
+                      submitSubtask();
+                      setAddingSubtask(false);
+                    }}
+                    placeholder="Add an item, Enter for the next"
+                    className="w-full rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs text-white placeholder-white/40 focus:border-gold/40 focus:outline-none"
+                    autoComplete="off"
+                  />
+                ) : (
+                  <button onClick={() => setAddingSubtask(true)} className="text-[11px] text-white/45 hover:text-gold">
+                    + Add item
+                  </button>
+                )}
+              </li>
+            </ul>
+          )}
           <p className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-white/40">
             {todo.start !== undefined ? (
               <button
@@ -1091,11 +1431,92 @@ function TodoItem({
                 + Schedule
               </button>
             )}
-            {todo.dailyId && <span className="rounded-full bg-gold/10 px-2 py-0.5 text-gold/80">↻ Daily</span>}
+            <label
+              className="relative inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-white/15 px-2 py-0.5 text-white/60 focus-within:border-gold/50 hover:border-white/30 hover:text-white"
+              title="Tag"
+            >
+              {todo.tag && <span className="h-2 w-2 rounded-full" style={{ background: TAG_COLORS[todo.tag] }} />}
+              {todo.tag ? TAG_LABEL[todo.tag] : "+ Tag"}
+              <select
+                value={todo.tag ?? ""}
+                onChange={(e) => onSetTag(todo, (e.target.value || undefined) as TagId | undefined)}
+                className="absolute inset-0 cursor-pointer opacity-0"
+                aria-label="Tag"
+              >
+                <option value="">No tag</option>
+                {TAGS.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {focusing ? (
+              <span className="flex items-center gap-1.5 rounded-full bg-gold/15 px-2 py-0.5 text-gold">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-gold" /> Focusing
+              </span>
+            ) : (
+              !todo.completed && (
+                <button
+                  onClick={() => onStartFocus(todo)}
+                  className="rounded-full border border-white/15 px-2 py-0.5 text-white/60 hover:border-gold/50 hover:text-gold"
+                  title="Start a focus timer for this task"
+                >
+                  ▶ Focus
+                </button>
+              )
+            )}
+            {todo.spent ? (
+              <span title="Time spent (focus timer) / time planned">
+                ⏱ {fmtDuration(todo.spent)}
+                {todo.start !== undefined && ` / ${fmtDuration(duration)}`}
+              </span>
+            ) : null}
+            {todo.dailyId && (
+              <button
+                onClick={() => setShowRepeat((v) => !v)}
+                aria-expanded={showRepeat}
+                className="rounded-full bg-gold/10 px-2 py-0.5 text-gold/80 hover:bg-gold/20"
+                title="Choose which days it repeats"
+              >
+                ↻ {repeatLabel(repeatDays)}
+              </button>
+            )}
+            {streak >= 2 && (
+              <span className="rounded-full bg-orange-500/15 px-2 py-0.5 text-orange-300" title={`Done ${streak} times in a row`}>
+                🔥 {streak}
+              </span>
+            )}
+            {subtasks.length > 0 ? (
+              <span className={subtasksDone === subtasks.length ? "text-gold/80" : ""}>
+                ☑ {subtasksDone}/{subtasks.length}
+              </span>
+            ) : (
+              !addingSubtask && (
+                <button onClick={() => setAddingSubtask(true)} className="text-white/45 hover:text-gold">
+                  + Checklist
+                </button>
+              )
+            )}
             {todo.carriedFrom && (
               <span className="rounded-full bg-white/10 px-2 py-0.5 text-white/60">from {getRelativeDateLabel(todo.carriedFrom)}</span>
             )}
           </p>
+          {showRepeat && todo.dailyId && (
+            <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-white/55">
+              Repeats on
+              <DayPicker value={repeatDays ?? ALL_DAYS} onChange={(days) => onSetRepeatDays(todo, days)} />
+              <button
+                onClick={() => {
+                  setShowRepeat(false);
+                  onToggleDaily(todo);
+                }}
+                className="text-white/45 hover:text-red-400"
+              >
+                Stop repeating
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="-mr-1 flex shrink-0 items-center sm:mr-0 sm:gap-1">
@@ -1136,6 +1557,105 @@ function TodoItem({
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
             </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Weekday toggles; at least one day stays selected.
+function DayPicker({ value, onChange }: { value: number[]; onChange: (days: number[]) => void }) {
+  return (
+    <div className="flex gap-1">
+      {DAY_LETTERS.map((letter, d) => {
+        const on = value.includes(d);
+        return (
+          <button
+            key={d}
+            type="button"
+            onClick={() => {
+              if (on && value.length === 1) return;
+              onChange(on ? value.filter((x) => x !== d) : [...value, d].sort((a, b) => a - b));
+            }}
+            aria-pressed={on}
+            aria-label={DAY_NAMES[d]}
+            title={DAY_NAMES[d]}
+            className={`h-7 w-7 rounded-full text-[11px] font-semibold transition ${
+              on ? "bg-gold text-black" : "border border-white/20 text-white/55 hover:border-gold/50 hover:text-gold"
+            }`}
+          >
+            {letter}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function FocusBar({
+  session,
+  nowMs,
+  selectedDate,
+  onStop,
+  alerted,
+}: {
+  session: FocusSession;
+  nowMs: number;
+  selectedDate: string;
+  onStop: (markDone: boolean) => void;
+  alerted: React.MutableRefObject<string | null>;
+}) {
+  const todo = loadTodos(session.date).find((t) => t.id === session.todoId);
+  const elapsed = Math.max(0, (nowMs - session.startedAt) / 1000);
+  const spentBefore = (todo?.spent ?? 0) * 60;
+  const planned = todo?.start !== undefined ? (todo.duration ?? DEFAULT_DURATION) * 60 : null;
+  const remaining = planned === null ? null : planned - spentBefore - elapsed;
+  const over = remaining !== null && remaining < 0;
+
+  // Tell the user once when the planned time runs out.
+  useEffect(() => {
+    if (!over || alerted.current === session.todoId + session.startedAt) return;
+    alerted.current = session.todoId + session.startedAt;
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      try {
+        new Notification(`Time's up: ${session.text}`, { body: "Your planned time for this block is over." });
+      } catch {
+        // Some mobile browsers only allow notifications from a service worker.
+      }
+    }
+  }, [over, session, alerted]);
+
+  return (
+    <div className="fixed inset-x-0 bottom-0 z-50 border-t border-gold/30 bg-panel/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur sm:px-6">
+      <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-x-4 gap-y-2">
+        <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-gold" />
+        <span className="min-w-0 flex-1 truncate text-sm text-white/80">
+          Focusing on <span className="font-semibold text-white">{session.text}</span>
+          {session.date !== selectedDate && ` (${getRelativeDateLabel(session.date)})`}
+        </span>
+        <span className={`font-mono text-xl tabular-nums ${over ? "text-red-300" : "text-gold"}`} aria-live="off">
+          {remaining === null ? fmtClock(spentBefore + elapsed) : `${over ? "+" : ""}${fmtClock(remaining)}`}
+        </span>
+        <span className="text-xs text-white/50">
+          {remaining === null
+            ? "spent so far"
+            : over
+            ? `over the ${fmtDuration(planned! / 60)} planned`
+            : `left of ${fmtDuration(planned! / 60)} planned`}
+        </span>
+        <div className="flex gap-2">
+          <button
+            onClick={() => onStop(false)}
+            className="rounded-full border border-white/20 px-3 py-1.5 text-sm text-white/80 hover:border-gold/40 hover:text-gold"
+          >
+            Stop
+          </button>
+          <button
+            onClick={() => onStop(true)}
+            className="rounded-full bg-gold px-3 py-1.5 text-sm font-semibold text-black hover:brightness-110"
+          >
+            Done
           </button>
         </div>
       </div>
