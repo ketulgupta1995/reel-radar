@@ -150,7 +150,7 @@ export function TimeBlock({
         if (resize.active.current) return e.preventDefault();
         e.dataTransfer.setData("text/todo-id", todo.id);
         e.dataTransfer.setData("text/todo-date", date);
-        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.effectAllowed = "copyMove";
       }}
       onClick={(e) => {
         e.stopPropagation();

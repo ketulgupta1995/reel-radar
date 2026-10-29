@@ -46,6 +46,8 @@ import {
   deleteSubtask,
   dueReminders,
   setTodoTag,
+  moveTodoToDate,
+  copyTodoToDate,
   getFocusSession,
   startFocus,
   stopFocus,
@@ -385,6 +387,20 @@ export default function TodosPage() {
     if (markDone && updated.some((t) => t.id === session.todoId && !t.completed)) toggleTodo(session.todoId, session.date);
     apply(loadTodos(selectedDate));
     flash(minutes > 0 ? `Recorded ${fmtDuration(minutes)} on "${session.text}"` : "Under a minute, so nothing was recorded");
+  };
+
+  const handleSendToDay = async (t: Todo, to: string, mode: "move" | "copy") => {
+    // Pull an empty target day from the server first, or this save would overwrite its cloud copy.
+    if (loadTodos(to).length === 0) await syncTodosWithServer(to);
+    const schedule = t.start !== undefined ? { start: t.start, duration: t.duration } : undefined;
+    if (mode === "copy") copyTodoToDate(t.id, selectedDate, to, schedule);
+    else if (moveTodoToDate(t.id, selectedDate, to, schedule) === null) {
+      flash("Repeating tasks stay on their own day. Copy it instead.");
+      return;
+    }
+    if (mode === "move" && selectedBlock === t.id) setSelectedBlock(null);
+    apply(loadTodos(selectedDate));
+    flash(`${mode === "copy" ? "Copied" : "Moved"} to ${getRelativeDateLabel(to)}`);
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -915,6 +931,8 @@ export default function TodosPage() {
                     onSetTag={(t, tag) => apply(setTodoTag(t.id, tag, selectedDate))}
                     focusing={focus?.todoId === todo.id}
                     onStartFocus={handleStartFocus}
+                    date={selectedDate}
+                    onSendToDay={handleSendToDay}
                     onShowBlock={(t) => {
                       setSelectedBlock(t.id);
                       setMobileView("schedule");
@@ -1228,6 +1246,8 @@ function TodoItem({
   onSetTag,
   focusing,
   onStartFocus,
+  date,
+  onSendToDay,
 }: {
   todo: Todo;
   isEditing: boolean;
@@ -1253,9 +1273,13 @@ function TodoItem({
   onSetTag: (todo: Todo, tag: TagId | undefined) => void;
   focusing: boolean;
   onStartFocus: (todo: Todo) => void;
+  date: string;
+  onSendToDay: (todo: Todo, to: string, mode: "move" | "copy") => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [showRepeat, setShowRepeat] = useState(false);
+  const [showSend, setShowSend] = useState(false);
+  const [sendDate, setSendDate] = useState("");
   const [addingSubtask, setAddingSubtask] = useState(false);
   const [subtaskText, setSubtaskText] = useState("");
 
@@ -1502,6 +1526,42 @@ function TodoItem({
               <span className="rounded-full bg-white/10 px-2 py-0.5 text-white/60">from {getRelativeDateLabel(todo.carriedFrom)}</span>
             )}
           </p>
+          {showSend && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-white/55">
+              <input
+                type="date"
+                value={sendDate}
+                onChange={(e) => setSendDate(e.target.value)}
+                className="rounded-lg border border-white/10 bg-panel px-2 py-1 text-white [color-scheme:dark] focus:border-gold/50 focus:outline-none"
+                aria-label="Day to move or copy to"
+              />
+              <button
+                onClick={() => {
+                  setShowSend(false);
+                  onSendToDay(todo, sendDate, "move");
+                }}
+                disabled={!sendDate || sendDate === date || Boolean(todo.dailyId)}
+                title={todo.dailyId ? "Repeating tasks stay on their own day. Copy it instead." : undefined}
+                className="rounded-full border border-white/20 px-3 py-1 text-white/80 hover:border-gold/50 hover:text-gold disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-white/20 disabled:hover:text-white/80"
+              >
+                Move
+              </button>
+              <button
+                onClick={() => {
+                  setShowSend(false);
+                  onSendToDay(todo, sendDate, "copy");
+                }}
+                disabled={!sendDate}
+                className="rounded-full bg-gold px-3 py-1 font-semibold text-black hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Copy
+              </button>
+              <button onClick={() => setShowSend(false)} className="text-white/45 hover:text-white">
+                Cancel
+              </button>
+              {todo.start !== undefined && <span className="basis-full text-white/40">Keeps the {fmtTime(todo.start)} time slot</span>}
+            </div>
+          )}
           {showRepeat && todo.dailyId && (
             <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-white/55">
               Repeats on
@@ -1539,6 +1599,20 @@ function TodoItem({
             title={todo.dailyId ? "Repeats daily - click to stop" : "Repeat every day"}
           >
             <span className="inline-block h-4 w-4 text-center">↻</span>
+          </button>
+          <button
+            onClick={() => {
+              setSendDate(shiftDate(date, 1));
+              setShowSend((v) => !v);
+            }}
+            className={`rounded-lg p-2 text-sm leading-4 transition hover:bg-white/10 sm:p-1.5 ${
+              showSend ? "text-gold" : "text-white/50 hover:text-white"
+            }`}
+            aria-label="Move or copy to another day"
+            aria-expanded={showSend}
+            title="Move or copy to another day"
+          >
+            <span className="inline-block h-4 w-4 text-center">⇄</span>
           </button>
           <button
             onClick={() => onEditStart(todo)}

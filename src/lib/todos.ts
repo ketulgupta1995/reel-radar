@@ -443,6 +443,32 @@ export function moveTodoToDate(id: string, from: string, to: string, schedule?: 
   return updated;
 }
 
+// Copy a todo to another day (or the same one), optionally into a time slot there.
+// The copy starts fresh: not done, checklist unticked, no focus time, and it is always a
+// one-off, even when copied from a daily task's copy. Returns the target day's todos.
+export function copyTodoToDate(id: string, from: string, to: string, schedule?: Schedule): Todo[] {
+  const todo = loadTodos(from).find((t) => t.id === id);
+  if (!todo) return loadTodos(to);
+  const { start: _s, duration: _d, dailyId: _id, carriedFrom: _c, spent: _sp, subtasks, ...rest } = todo;
+  const copy: Todo = {
+    ...rest,
+    id: crypto.randomUUID(),
+    completed: false,
+    createdAt: new Date().toISOString(),
+    ...(subtasks?.length
+      ? { subtasks: subtasks.map((st) => ({ id: crypto.randomUUID(), text: st.text, done: false })) }
+      : {}),
+    ...(schedule
+      ? { start: schedule.start, duration: schedule.duration ?? todo.duration ?? DEFAULT_DURATION }
+      : todo.duration !== undefined
+      ? { duration: todo.duration }
+      : {}),
+  };
+  const updated = [...loadTodos(to), copy];
+  saveTodos(updated, to);
+  return updated;
+}
+
 // ---------------- Focus timer ----------------
 
 export type FocusSession = { todoId: string; date: string; text: string; startedAt: number };

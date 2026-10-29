@@ -7,6 +7,7 @@ import {
   addSubtask,
   addTodo,
   carryOverFromYesterday,
+  copyTodoToDate,
   clearCompletedTodos,
   deleteSubtask,
   deleteTodo,
@@ -495,6 +496,49 @@ describe("moving between days", () => {
     const [t] = addTodo("Daily", D1, undefined, undefined, true);
     expect(moveTodoToDate(t.id, D1, D2)).toBeNull();
     expect(loadTodos(D1)).toHaveLength(1);
+  });
+});
+
+describe("copying to another day", () => {
+  it("copies a todo fresh, leaving the original in place", () => {
+    saveTodos(
+      [
+        todo("a", {
+          completed: true,
+          note: "n",
+          tag: "work",
+          priority: "high",
+          spent: 20,
+          carriedFrom: "2026-02-28",
+          start: 540,
+          duration: 30,
+          subtasks: [{ id: "s1", text: "step", done: true }],
+        }),
+      ],
+      D1
+    );
+    const [copy] = copyTodoToDate("a", D1, D2, { start: 600 });
+    expect(copy).toMatchObject({ text: "a", note: "n", tag: "work", priority: "high", completed: false, start: 600, duration: 30 });
+    expect(copy.id).not.toBe("a");
+    expect(copy).not.toHaveProperty("spent");
+    expect(copy).not.toHaveProperty("carriedFrom");
+    expect(copy.subtasks).toEqual([{ id: expect.any(String), text: "step", done: false }]);
+    expect(copy.subtasks![0].id).not.toBe("s1");
+    expect(loadTodos(D1)).toHaveLength(1);
+  });
+
+  it("copies unscheduled, keeping the length, and can duplicate on the same day", () => {
+    saveTodos([todo("a", { start: 540, duration: 45 })], D1);
+    const [, dup] = copyTodoToDate("a", D1, D1);
+    expect(dup).not.toHaveProperty("start");
+    expect(dup.duration).toBe(45);
+  });
+
+  it("turns a copy of a daily task into a one-off", () => {
+    const [t] = addTodo("Daily", D1, undefined, undefined, true);
+    const [copy] = copyTodoToDate(t.id, D1, D2);
+    expect(copy).not.toHaveProperty("dailyId");
+    expect(loadDailyTasks()).toHaveLength(1);
   });
 });
 

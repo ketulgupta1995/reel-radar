@@ -6,6 +6,7 @@ import {
   loadTodosWithDaily,
   syncTodosWithServer,
   moveTodoToDate,
+  copyTodoToDate,
   scheduleTodo,
   toggleTodo,
   shiftDate,
@@ -48,7 +49,7 @@ export default function WeekView({
     return Array.from({ length: 7 }, (_, i) => shiftDate(first, i));
   }, [anchorDate]);
   const [week, setWeek] = useState<Record<string, Todo[]>>({});
-  const [dragOver, setDragOver] = useState<{ date: string; minutes: number | null } | null>(null);
+  const [dragOver, setDragOver] = useState<{ date: string; minutes: number | null; copy: boolean } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const today = getTodayDate();
 
@@ -82,6 +83,15 @@ export default function WeekView({
     return Math.max(0, Math.min(snap(((e.clientY - rect.top) / HOUR_PX) * 60), 24 * 60 - SNAP));
   };
 
+  // Holding Ctrl, Alt/Option or Cmd while dropping copies instead of moving.
+  const isCopy = (e: React.DragEvent) => e.ctrlKey || e.altKey || e.metaKey;
+
+  const dragOverAt = (e: React.DragEvent, date: string, minutes: number | null) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = isCopy(e) ? "copy" : "move";
+    setDragOver({ date, minutes, copy: isCopy(e) });
+  };
+
   // minutes === null: dropped on a day's "to do" strip, so it ends up unscheduled.
   const drop = (e: React.DragEvent, date: string, minutes: number | null) => {
     e.preventDefault();
@@ -92,8 +102,14 @@ export default function WeekView({
     if (!todo) return;
     const duration = todo.duration ?? DEFAULT_DURATION;
     const schedule = minutes === null ? undefined : { start: clampStart(minutes, duration), duration };
+    if (isCopy(e)) {
+      copyTodoToDate(id, from, date, schedule);
+      flash(`Copied to ${getRelativeDateLabel(date)}`);
+      reload();
+      return;
+    }
     if (moveTodoToDate(id, from, date, schedule) === null) {
-      flash("Repeating tasks stay on their own day. Drop it on the same day to change its time.");
+      flash("Repeating tasks stay on their own day. Hold Ctrl or Alt while dropping to copy it instead.");
       return;
     }
     if (from !== date) flash(`Moved to ${getRelativeDateLabel(date)}`);
@@ -112,7 +128,7 @@ export default function WeekView({
           {weekDone}/{all.length} done · {weekPlanned ? fmtDuration(weekPlanned) : "nothing"} planned
         </span>
         <p className="text-xs text-white/40 sm:ml-auto">
-          Drag blocks between days · drag a block&apos;s bottom edge to resize · click a day to open it
+          Drag to move between days · hold Ctrl/Alt to copy · drag a bottom edge to resize · click a day to open it
         </p>
       </div>
 
@@ -156,10 +172,7 @@ export default function WeekView({
                 return (
                   <div
                     key={d}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      setDragOver({ date: d, minutes: null });
-                    }}
+                    onDragOver={(e) => dragOverAt(e, d, null)}
                     onDragLeave={() => setDragOver(null)}
                     onDrop={(e) => drop(e, d, null)}
                     className={`min-h-[2.25rem] space-y-1 border-l border-white/10 p-1 transition ${
@@ -173,7 +186,7 @@ export default function WeekView({
                         onDragStart={(e) => {
                           e.dataTransfer.setData("text/todo-id", t.id);
                           e.dataTransfer.setData("text/todo-date", d);
-                          e.dataTransfer.effectAllowed = "move";
+                          e.dataTransfer.effectAllowed = "copyMove";
                         }}
                         onClick={() => onOpenDay(d)}
                         className="cursor-grab truncate rounded border border-white/15 bg-white/5 px-1.5 py-0.5 text-[11px] text-white/80 hover:border-gold/40"
@@ -213,10 +226,7 @@ export default function WeekView({
                 <div
                   key={d}
                   className={`relative border-l border-white/10 ${d === today ? "bg-gold/[.03]" : ""}`}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setDragOver({ date: d, minutes: minutesAt(e) });
-                  }}
+                  onDragOver={(e) => dragOverAt(e, d, minutesAt(e))}
                   onDragLeave={() => setDragOver(null)}
                   onDrop={(e) => drop(e, d, minutesAt(e))}
                 >
@@ -233,6 +243,7 @@ export default function WeekView({
                       style={{ top: (dragOver.minutes / 60) * HOUR_PX }}
                     >
                       <span className="absolute -top-2.5 right-0 rounded bg-gold px-1 text-[10px] font-semibold text-black">
+                        {dragOver.copy ? "Copy · " : ""}
                         {fmtTime(dragOver.minutes)}
                       </span>
                     </div>
