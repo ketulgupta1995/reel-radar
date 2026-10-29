@@ -5,7 +5,7 @@ import { jsonResponse, mk } from "@/test/fixtures";
 
 const pathname = vi.hoisted(() => ({ value: "/" }));
 vi.mock("next/navigation", () => ({ usePathname: () => pathname.value }));
-vi.mock("@/lib/storage", () => ({ exportData: vi.fn(), importData: vi.fn() }));
+vi.mock("@/lib/storage", () => ({ exportData: vi.fn(), importData: vi.fn(), clearDiscoveryHistory: vi.fn(), reset: vi.fn() }));
 
 import { TitleCard } from "./TitleCard";
 import { TitleDetailsModal } from "./TitleDetailsModal";

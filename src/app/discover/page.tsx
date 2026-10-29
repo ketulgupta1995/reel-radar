@@ -5,7 +5,7 @@ import { AppSwitcher } from "@/components/AppSwitcher";
 import { ReelNavLinks } from "@/components/ReelNavLinks";
 import { useEffect, useRef, useState } from "react";
 import { Title, keyOf, MediaType } from "@/types/title";
-import { load, reset, save, useStorageSync, State, clearDiscoveryHistory } from "@/lib/storage";
+import { load, save, useStorageSync, State } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
 import { StorageControls } from "@/components/StorageControls";
 
@@ -281,33 +281,10 @@ export default function Discover() {
         <AppSwitcher current="reel-radar" />
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <ReelNavLinks counts={{ watchlist: state.watchlist.length, watched: state.watched.length, dismissed: state.dismissed.length }} />
-          <StorageControls onStateChange={(merged) => setState(merged)} />
-          <button
-            onClick={() => {
-              if (
-                confirm(
-                  "Clear displayed and shown titles history? (Your watched list, watchlist, and dismissed titles will be kept)"
-                )
-              ) {
-                const refreshedState = clearDiscoveryHistory();
-                setState(refreshedState);
-                loadAllBatches(refreshedState, region, true);
-              }
-            }}
-            className="text-xs text-blue-300 hover:text-blue-200 bg-blue-500/10 border border-blue-500/30 px-2.5 py-1 rounded transition"
-          >
-            Clear Displayed &amp; Shown
-          </button>
-          <button
-            onClick={() => {
-              if (confirm("Reset ALL data including watched history and watchlist?")) {
-                reset().then(() => location.reload());
-              }
-            }}
-            className="text-xs text-white/50 underline hover:text-red-400"
-          >
-            Reset All
-          </button>
+          <StorageControls
+            onStateChange={(merged) => setState(merged)}
+            onHistoryCleared={(refreshed) => loadAllBatches(refreshed, region, true)}
+          />
         </div>
       </header>
 
