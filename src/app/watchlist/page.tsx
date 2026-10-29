@@ -135,6 +135,9 @@ export default function WatchlistPage() {
           <Link href="/analysis" className="text-white/70 transition hover:text-white">
             Analysis
           </Link>
+          <Link href="/dismissed" className="text-white/70 transition hover:text-white">
+            Not interested ({state.dismissed.length})
+          </Link>
           <StorageControls onStateChange={(s) => setState(s)} />
         </div>
       </header>
