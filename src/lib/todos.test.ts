@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  sortTodos,
+  reorderTodo,
+  loadDayLog,
+  updateDayLog,
+  addWater,
   DEFAULT_DURATION,
   Todo,
   addSpentTime,
@@ -293,6 +298,71 @@ describe("daily tasks", () => {
   });
 });
 
+describe("task order", () => {
+  const t = (id: string, extra: Partial<Todo> = {}): Todo => ({ ...todo(id), createdAt: `2026-01-01T00:00:0${id.length}.000Z`, ...extra });
+  const names = (list: Todo[]) => list.map((x) => x.id);
+
+  it("lists unfinished daily tasks first, then by priority, with done tasks last", () => {
+    const list = [t("done", { completed: true, dailyId: "d" }), t("low", { priority: "low" }), t("high", { priority: "high" }), t("daily!", { dailyId: "d2" }), t("plain")];
+    expect(names(sortTodos(list))).toEqual(["daily!", "high", "low", "plain", "done"]);
+  });
+
+  it("puts hand-arranged tasks first, in their order, and keeps done ones last", () => {
+    const list = [t("a", { order: 1 }), t("b", { order: 0 }), t("new", { dailyId: "d" }), t("c", { order: 0, completed: true })];
+    expect(names(sortTodos(list))).toEqual(["b", "a", "new", "c"]);
+  });
+
+  it("reorderTodo moves a task into another's place and the arrangement sticks", () => {
+    saveTodos([t("daily!", { dailyId: "d" }), t("high", { priority: "high" }), t("plain"), t("done", { completed: true })], D1);
+    reorderTodo("plain", "daily!", D1);
+    expect(names(sortTodos(loadTodos(D1)))).toEqual(["plain", "daily!", "high", "done"]);
+    reorderTodo("plain", "high", D1);
+    expect(names(sortTodos(loadTodos(D1)))).toEqual(["daily!", "high", "plain", "done"]);
+    const before = loadTodos(D1);
+    expect(reorderTodo("plain", "plain", D1)).toEqual(before);
+    expect(reorderTodo("plain", "done", D1)).toEqual(before);
+    expect(reorderTodo("done", "plain", D1)).toEqual(before);
+    expect(reorderTodo("nope", "plain", D1)).toEqual(before);
+  });
+
+  it("forgets the arrangement when a task moves to another day", () => {
+    saveTodos([t("a"), t("b")], D1);
+    reorderTodo("b", "a", D1);
+    moveTodoToDate("b", D1, D2);
+    copyTodoToDate("a", D1, D2);
+    expect(loadTodos(D2).every((x) => x.order === undefined)).toBe(true);
+  });
+});
+
+describe("day log", () => {
+  it("starts empty and keeps wake, sleep and water per day", () => {
+    expect(loadDayLog(D1)).toEqual({});
+    expect(updateDayLog(D1, { wake: "06:30" })).toEqual({ wake: "06:30" });
+    updateDayLog(D1, { sleep: "23:10" });
+    addWater(D1, 250);
+    addWater(D1, 500);
+    expect(loadDayLog(D1)).toEqual({ wake: "06:30", sleep: "23:10", water: 750 });
+    expect(loadDayLog(D2)).toEqual({});
+  });
+
+  it("clears fields, ignores bad times, never goes below zero water, and drops an empty log", () => {
+    updateDayLog(D1, { wake: "25:99", water: -5 });
+    expect(loadDayLog(D1)).toEqual({});
+    addWater(D1, -250);
+    expect(loadDayLog(D1)).toEqual({});
+    updateDayLog(D1, { wake: "07:00" });
+    expect(updateDayLog(D1, { wake: "07:00" })).toEqual({ wake: "07:00" });
+    updateDayLog(D1, { well: "  ", bad: "" });
+    expect(loadDayLog(D1)).toEqual({ wake: "07:00" });
+    updateDayLog(D1, { improve: "Sleep earlier" });
+    expect(loadDayLog(D1).improve).toBe("Sleep earlier");
+    updateDayLog(D1, { improve: "" });
+    updateDayLog(D1, { wake: undefined });
+    expect(loadDayLog(D1)).toEqual({});
+    expect(JSON.parse(localStorage.getItem("reel-radar-planner-log")!).items).toEqual([]);
+  });
+});
+
 describe("stored dates", () => {
   it("lists only days that have todos, newest first", () => {
     saveTodos([todo("a")], D1);
@@ -325,7 +395,7 @@ describe("server sync", () => {
       })
     );
     expect(await syncPlanner([D1, D2])).toBe(true);
-    expect(decodeURIComponent(fetchMock.mock.calls[0][0])).toBe("/api/sync?keys=planner-daily,planner-2026-03");
+    expect(decodeURIComponent(fetchMock.mock.calls[0][0])).toBe("/api/sync?keys=planner-daily,planner-log,planner-2026-03");
     expect(ids()).toEqual(["local", "server"]);
     expect(loadDailyTasks()).toEqual([task]);
     // The month gained "local", so it goes back up, against the etag just read.
@@ -334,7 +404,7 @@ describe("server sync", () => {
 
   it("asks only for changes after that, and skips docs synced in the last two minutes", async () => {
     fetchMock.mockResolvedValueOnce(
-      docsResponse({ "planner-daily": null, "planner-2026-03": { etag: '"e1"', data: monthDoc(item(todo("a"))) } })
+      docsResponse({ "planner-daily": null, "planner-log": null, "planner-2026-03": { etag: '"e1"', data: monthDoc(item(todo("a"))) } })
     );
     await syncPlanner([D1], true);
     fetchMock.mockClear();

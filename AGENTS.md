@@ -44,7 +44,7 @@ src/
                          recommendations, analysis, watched, watchlist, search, similar,
                          person/[id], todos, todos/stats, login
   app/api/               Route handlers: discover, recommendations, similar, search, title,
-                         person/[id], sync, auth/login, auth/logout
+                         person/[id], sync, usage, auth/login, auth/logout
   components/            TitleCard, TitleDetailsModal, StorageControls, LogoutButton, AppSwitcher
   lib/
     apps.ts              App registry (home page cards + AppSwitcher menu)
@@ -59,6 +59,7 @@ src/
     docStore.ts          Server-only doc storage: one Turso row per doc, or data/ locally
     http.ts              cachedJson() for browser-cacheable API responses
     plannerStats.ts      Planner stats aggregation (pure; used by /todos/stats)
+    usageStats.ts        Database reads/writes per local day (pure; used by /todos/stats)
     auth.ts              Session signing/verification via Web Crypto
   types/title.ts         Title / MediaType types and keyOf()
 data/                    storage.json (tracked backup of the watch history) + local fallback docs (<doc>.json, gitignored)
@@ -80,6 +81,7 @@ Import through the `@/` alias (maps to `src/`).
   - Pushes are batched through `markDirty()`; don't `fetch` the sync route from features directly. A sync must not write back what it just read.
   - Merges are three-way against the stored base (`merge3`), so deletes carry across devices. Planner items carry `updatedAt`; daily copies use the fixed id `<dailyId>:<date>`.
   - Without `TURSO_DATABASE_URL` everything falls back to `data/<doc>.json`.
+  - `readDoc`/`writeDoc` count every call per half hour (`flushUsage()` saves the counts to the `usage` table, or `data/usage.json`; `/api/usage` serves them to the stats page). Any new code path that queries the `docs` table must go through them so it is counted.
 - **Vercel usage**: TMDB GET routes answer through `cachedJson()` and every route sets `maxDuration`. Keep new routes the same.
 - **Todos** are stored one doc per month (`planner-YYYY-MM`), plus `planner-daily` for repeating tasks. `loadTodos`/`saveTodos` keep the per-day API on top of that.
 - **Auth**: `lib/auth.ts` must stay Web Crypto–only (no Node `crypto`) because middleware runs on the edge. New API routes are protected automatically by the middleware matcher. Unauthenticated `/api/*` requests get a 401 JSON response, and unauthenticated pages redirect to `/login?next=...`.

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { loadAllTodos, syncAllPlanner, getTodayDate, shiftDate, TAGS, type TagId, type Todo } from "@/lib/todos";
 import { computePlannerStats, type PlannerStats } from "@/lib/plannerStats";
+import { bucketDate, usageByDay, type UsageBucket } from "@/lib/usageStats";
 import { DAY_NAMES, TAG_COLORS, fmtDuration, formatShortDate } from "../planner";
 
 type Range = "7" | "30" | "90" | "all";
@@ -23,6 +24,7 @@ const hours = (mins: number) => (mins ? fmtDuration(mins) : "0h");
 export default function PlannerStatsPage() {
   const [days, setDays] = useState<Record<string, Todo[]> | null>(null);
   const [range, setRange] = useState<Range>("30");
+  const [usage, setUsage] = useState<UsageBucket[] | null>(null);
 
   // Show this browser's copy at once, then every month from the server (mostly unchanged, so cheap).
   useEffect(() => {
@@ -30,6 +32,10 @@ export default function PlannerStatsPage() {
     syncAllPlanner().then((changed) => {
       if (changed) setDays(loadAllTodos());
     });
+    fetch("/api/usage")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => setUsage(Array.isArray(body?.buckets) ? body.buckets : []))
+      .catch(() => setUsage([]));
   }, []);
 
   const today = getTodayDate();
@@ -85,6 +91,8 @@ export default function PlannerStatsPage() {
         ) : (
           <Stats stats={stats} />
         )}
+
+        {usage && <UsageChart buckets={usage} range={range} today={today} />}
       </div>
     </main>
   );
@@ -313,6 +321,66 @@ function HoursChart({ stats }: { stats: PlannerStats }) {
         rows={stats.buckets.map((b) => [label(b), hours(b.plannedMinutes), hours(b.doneMinutes)])}
       />
     </Card>
+  );
+}
+
+const num = (n: number) => n.toLocaleString("en-US");
+
+// Database reads and writes per day for the whole app (planner, library and history), from /api/usage.
+function UsageChart({ buckets, range, today }: { buckets: UsageBucket[]; range: Range; today: string }) {
+  const days = useMemo(() => {
+    const dates = buckets.map((b) => bucketDate(b.t)).sort();
+    const from = range === "all" ? dates[0] ?? today : shiftDate(today, -(Number(range) - 1));
+    return usageByDay(buckets, from, today);
+  }, [buckets, range, today]);
+  const reads = days.reduce((n, d) => n + d.reads, 0);
+  const writes = days.reduce((n, d) => n + d.writes, 0);
+  const max = Math.max(...days.map((d) => Math.max(d.reads, d.writes)), 1);
+  const labelEvery = Math.ceil(days.length / 10);
+  return (
+    <div className="mt-6">
+      <Card
+        title="Database reads and writes"
+        sub="Every database query the app made, per day. It counts from when this was added, and the last few queries may be missing."
+      >
+        <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/60">
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm bg-gold" /> Reads · {num(reads)}
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm bg-sky-400" /> Writes · {num(writes)}
+          </span>
+        </div>
+        <div className="flex h-44 items-end gap-0.5">
+          {days.map((d, i) => (
+            <div
+              key={d.date}
+              tabIndex={0}
+              className="group relative flex h-full min-w-0 flex-1 flex-col items-center justify-end outline-none"
+              aria-label={`${formatShortDate(d.date)}: ${num(d.reads)} reads, ${num(d.writes)} writes`}
+            >
+              <Tip>
+                <span className="block text-white/50">{formatShortDate(d.date)}</span>
+                <span className="font-semibold text-white">{num(d.reads)}</span> reads
+                <br />
+                <span className="font-semibold text-white">{num(d.writes)}</span> writes
+              </Tip>
+              <div className="flex h-36 w-full max-w-[2.5rem] items-end justify-center gap-px group-hover:bg-white/[.03] group-focus:bg-white/[.03]">
+                <div className="w-1/2 rounded-t bg-gold" style={{ height: `${(d.reads / max) * 100}%` }} />
+                <div className="w-1/2 rounded-t bg-sky-400" style={{ height: `${(d.writes / max) * 100}%` }} />
+              </div>
+              <span className="mt-1.5 h-3 whitespace-nowrap text-[10px] text-white/45">
+                {i % labelEvery === 0 ? formatShortDate(d.date) : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+        <TableToggle
+          head={["Day", "Reads", "Writes"]}
+          rows={[...days].reverse().map((d) => [formatShortDate(d.date), num(d.reads), num(d.writes)])}
+        />
+      </Card>
+    </div>
   );
 }
 

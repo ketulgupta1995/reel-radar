@@ -1,4 +1,4 @@
-import { ConflictError, DOC_KEY, ReadResult, readDoc, readLegacyState, writeDoc } from "@/lib/docStore";
+import { ConflictError, DOC_KEY, ReadResult, flushUsage, readDoc, readLegacyState, writeDoc } from "@/lib/docStore";
 import { empty, historyOf, libraryOf, toStored } from "@/lib/syncDocs";
 
 export const dynamic = "force-dynamic";
@@ -52,6 +52,8 @@ export async function GET(req: Request) {
   } catch (err) {
     console.error("[Sync API] Read failed", err);
     return Response.json({ error: "Failed to read storage" }, { status: 500, headers: noStore });
+  } finally {
+    await flushUsage();
   }
 }
 
@@ -77,5 +79,7 @@ export async function POST(req: Request) {
     }
     console.error(`[Sync API] Write failed for ${key}`, err);
     return Response.json({ error: "Failed to save storage" }, { status: 500, headers: noStore });
+  } finally {
+    await flushUsage(true); // writes are rare; save the counts with them
   }
 }

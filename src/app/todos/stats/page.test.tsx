@@ -69,4 +69,33 @@ describe("PlannerStatsPage", () => {
     render(<PlannerStatsPage />);
     expect(await screen.findByText("1 of 1 tasks done")).toBeTruthy();
   });
+
+  it("charts database reads and writes per day, for the range chosen", async () => {
+    const today = getTodayDate();
+    const at = (date: string, reads: number, writes: number) => ({ t: `${date}T12:00`, reads, writes });
+    routeFetch({
+      "/api/usage": { buckets: [at(shiftDate(today, -40), 7, 3), at(today, 1200, 30)] },
+    });
+    render(<PlannerStatsPage />);
+    expect(await screen.findByText("Database reads and writes")).toBeTruthy();
+    expect(screen.getByText(/Reads · 1,200/)).toBeTruthy(); // the last 30 days leave out 40 days ago
+    expect(screen.getByText(/Writes · 30/)).toBeTruthy();
+    fireEvent.click(screen.getByText("All time"));
+    expect(screen.getByText(/Reads · 1,207/)).toBeTruthy();
+    expect(screen.getByText(/Writes · 33/)).toBeTruthy();
+    fireEvent.click(screen.getByText("7 days"));
+    expect(screen.getByLabelText(new RegExp(`1,200 reads, 30 writes`))).toBeTruthy();
+  });
+
+  it("shows an empty chart when there are no counts yet or they can't be loaded", async () => {
+    routeFetch({ "/api/usage": () => new Response("{}", { status: 500 }) });
+    const { unmount } = render(<PlannerStatsPage />);
+    expect(await screen.findByText(/Reads · 0/)).toBeTruthy();
+    unmount();
+    routeFetch({ "/api/usage": () => Promise.reject(new Error("offline")) });
+    render(<PlannerStatsPage />);
+    expect(await screen.findByText(/Writes · 0/)).toBeTruthy();
+    fireEvent.click(screen.getByText("All time"));
+    expect(screen.getByText(/Reads · 0/)).toBeTruthy();
+  });
 });

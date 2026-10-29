@@ -54,6 +54,13 @@ import {
   stopFocus,
   getTodayDate,
   shiftDate,
+  loadDayLog,
+  sortTodos,
+  reorderTodo,
+  updateDayLog,
+  addWater,
+  WATER_STEP,
+  type DayLog,
   exportPlanner,
   importPlanner,
   syncPlanner,
@@ -85,7 +92,6 @@ function fmtClock(totalSeconds: number): string {
 
 const DURATIONS = [15, 30, 45, 60, 90, 120, 180, 240];
 
-const PRIORITY_ORDER: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
 const REMINDER_KEY = "reel-radar-reminder-lead"; // minutes before a block starts; unset = off
 const REMINDER_LEADS = [0, 5, 10, 15];
 
@@ -128,17 +134,6 @@ const fromInputTime = (v: string): number | null => {
   return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 };
 
-// Active first, then by priority, then oldest first; done items sink to the bottom.
-function sortTodos(todos: Todo[]): Todo[] {
-  return [...todos].sort((a, b) => {
-    if (a.completed !== b.completed) return a.completed ? 1 : -1;
-    const pa = a.priority ? PRIORITY_ORDER[a.priority] : 3;
-    const pb = b.priority ? PRIORITY_ORDER[b.priority] : 3;
-    if (pa !== pb) return pa - pb;
-    return a.createdAt.localeCompare(b.createdAt);
-  });
-}
-
 export default function TodosPage() {
   const [selectedDate, setSelectedDate] = useState<string>(() => getTodayDate());
   const [todos, setTodos] = useState<Todo[]>([]);
@@ -172,7 +167,9 @@ export default function TodosPage() {
   const [selectedBlock, setSelectedBlock] = useState<string | null>(null);
   const [quickAdd, setQuickAdd] = useState<{ start: number; text: string } | null>(null);
   const [now, setNow] = useState<number | null>(null);
+  const [logVersion, setLogVersion] = useState(0);
   const [dragOver, setDragOver] = useState<number | null>(null);
+  const [rowOver, setRowOver] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout>>();
   const quickRef = useRef(quickAdd);
@@ -204,6 +201,7 @@ export default function TodosPage() {
       if (cancelled) return;
       setTodos(loadTodosWithDaily(selectedDate));
       refreshMeta(selectedDate);
+      setLogVersion((v) => v + 1);
     });
     setTodos(local);
     refreshMeta(selectedDate);
@@ -218,6 +216,7 @@ export default function TodosPage() {
   usePlannerSync(syncedDates, () => {
     setTodos(loadTodosWithDaily(selectedDate));
     refreshMeta(selectedDate);
+    setLogVersion((v) => v + 1);
   });
 
   useEffect(() => {
@@ -684,6 +683,7 @@ export default function TodosPage() {
         <div className="grid items-start gap-6 lg:grid-cols-2 xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
           {/* ---------------- Tasks column ---------------- */}
           <section className={mobileView === "tasks" ? "" : "hidden lg:block"}>
+            <DayLogCard date={selectedDate} version={logVersion} />
             <form onSubmit={handleAddTodo} className="mb-4 flex flex-wrap gap-2 sm:gap-3">
               <input
                 ref={inputRef}
@@ -853,6 +853,12 @@ export default function TodosPage() {
                   <TodoItem
                     key={todo.id}
                     todo={todo}
+                    dropTarget={rowOver === todo.id}
+                    onRowOver={setRowOver}
+                    onReorder={(id, target) => {
+                      setRowOver(null);
+                      apply(reorderTodo(id, target, selectedDate));
+                    }}
                     isEditing={editingId === todo.id}
                     editText={editText}
                     editNote={editNote}
@@ -1181,6 +1187,9 @@ export default function TodosPage() {
 
 function TodoItem({
   todo,
+  dropTarget,
+  onRowOver,
+  onReorder,
   isEditing,
   editText,
   editNote,
@@ -1208,6 +1217,9 @@ function TodoItem({
   onSendToDay,
 }: {
   todo: Todo;
+  dropTarget: boolean;
+  onRowOver: (id: string | null) => void;
+  onReorder: (id: string, targetId: string) => void;
   isEditing: boolean;
   editText: string;
   editNote: string;
@@ -1303,7 +1315,22 @@ function TodoItem({
         e.dataTransfer.setData("text/todo-id", todo.id);
         e.dataTransfer.effectAllowed = "move";
       }}
-      className="rounded-xl border border-white/10 bg-panel/60 p-3 pr-2 transition hover:border-white/20 sm:pr-3"
+      onDragEnd={() => onRowOver(null)}
+      onDragOver={(e) => {
+        if (todo.completed) return;
+        e.preventDefault();
+        onRowOver(todo.id);
+      }}
+      onDrop={(e) => {
+        const id = e.dataTransfer.getData("text/todo-id");
+        onRowOver(null);
+        if (!id || todo.completed) return;
+        e.preventDefault();
+        onReorder(id, todo.id);
+      }}
+      className={`rounded-xl border bg-panel/60 p-3 pr-2 transition sm:pr-3 ${
+        dropTarget ? "border-gold/70" : "border-white/10 hover:border-white/20"
+      }`}
     >
       <div className="flex items-start gap-3">
         <button
@@ -1691,6 +1718,72 @@ function FocusBar({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Wake time, sleep time and water for one day.
+function DayLogCard({ date, version }: { date: string; version: number }) {
+  const [log, setLog] = useState<DayLog>({});
+  useEffect(() => setLog(loadDayLog(date)), [date, version]);
+  const timeInput = (field: "wake" | "sleep", label: string) => (
+    <label className="flex items-center gap-2 text-sm text-white/70">
+      {label}
+      <input
+        type="time"
+        aria-label={label}
+        value={log[field] ?? ""}
+        onChange={(e) => setLog(updateDayLog(date, { [field]: e.target.value || undefined }))}
+        className="rounded-lg border border-white/10 bg-panel px-2 py-1 text-white focus:border-gold/50 focus:outline-none"
+      />
+    </label>
+  );
+  const water = log.water ?? 0;
+  const reviewInput = (field: "well" | "bad" | "improve", label: string) => (
+    <label className="flex flex-col gap-1 text-sm text-white/70">
+      {label}
+      <textarea
+        aria-label={label}
+        rows={2}
+        value={log[field] ?? ""}
+        onChange={(e) => setLog(updateDayLog(date, { [field]: e.target.value }))}
+        className="resize-y rounded-lg border border-white/10 bg-panel px-2 py-1 text-white focus:border-gold/50 focus:outline-none"
+      />
+    </label>
+  );
+  return (
+    <div className="mb-4 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+      {timeInput("wake", "Woke up")}
+      {timeInput("sleep", "Went to sleep")}
+      <div className="flex items-center gap-2 text-sm text-white/70">
+        Water
+        <button
+          type="button"
+          aria-label="Less water"
+          onClick={() => setLog(addWater(date, -WATER_STEP))}
+          className="h-7 w-7 rounded-lg border border-white/10 text-white hover:border-gold/50"
+        >
+          −
+        </button>
+        <span className="min-w-[4rem] text-center font-medium text-white" data-testid="water-total">
+          {(water / 1000).toFixed(2).replace(/\.?0+$/, "")} L
+        </span>
+        <button
+          type="button"
+          aria-label="More water"
+          onClick={() => setLog(addWater(date, WATER_STEP))}
+          className="h-7 w-7 rounded-lg border border-white/10 text-white hover:border-gold/50"
+        >
+          +
+        </button>
+      </div>
+    </div>
+    <div className="mt-3 grid gap-3 sm:grid-cols-3">
+      {reviewInput("well", "What went well")}
+      {reviewInput("bad", "What went badly")}
+      {reviewInput("improve", "What to improve")}
+    </div>
     </div>
   );
 }

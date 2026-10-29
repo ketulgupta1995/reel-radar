@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { jsonResponse } from "@/test/fixtures";
 import { requests, routeFetch } from "@/test/pages";
-import { Todo, addTodo, getTodayDate, loadDailyTasks, loadTodos, saveTodos, shiftDate } from "@/lib/todos";
+import { Todo, addTodo, getTodayDate, loadDayLog, loadDailyTasks, loadTodos, saveTodos, shiftDate } from "@/lib/todos";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/todos" }));
 
@@ -51,6 +51,70 @@ beforeEach(() => {
   Element.prototype.scrollTo = vi.fn();
   FakeNotification.permission = "granted";
   FakeNotification.sent = [];
+});
+
+describe("arranging tasks", () => {
+  const rows = () => screen.getAllByText(/^(alpha|beta|gamma|daily)$/, { selector: "p" }).map((p) => p.textContent);
+  // Drop `from` onto `to` the way the browser does: the dragged id travels in the data transfer.
+  const dropOn = (from: string, to: string) => {
+    const target = item(to);
+    const dataTransfer = { getData: () => from, setData: vi.fn(), dropEffect: "", effectAllowed: "" };
+    fireEvent(target, createEvent.dragOver(target, { dataTransfer }));
+    fireEvent(target, createEvent.drop(target, { dataTransfer }));
+  };
+
+  const aged = (id: string, n: number, extra: Partial<Todo> = {}) => todo(id, { createdAt: `2026-01-01T00:00:0${n}.000Z`, ...extra });
+
+  it("shows daily tasks first, then follows a dragged arrangement", () => {
+    saveTodos([aged("alpha", 1), aged("beta", 2), aged("gamma", 3), aged("daily", 4, { dailyId: "d1" })], T);
+    render(<TodosPage />);
+    expect(rows()).toEqual(["daily", "alpha", "beta", "gamma"]);
+    dropOn("gamma", "daily");
+    expect(rows()).toEqual(["gamma", "daily", "alpha", "beta"]);
+    expect(loadTodos(T).map((x) => x.order)).not.toContain(undefined);
+    dropOn("gamma", "gamma");
+    expect(rows()).toEqual(["gamma", "daily", "alpha", "beta"]);
+  });
+
+  it("highlights the row under the drag and ignores drops on done tasks", () => {
+    saveTodos([aged("alpha", 1), aged("beta", 2), aged("gamma", 3, { completed: true })], T);
+    render(<TodosPage />);
+    const beta = item("beta");
+    fireEvent(beta, createEvent.dragOver(beta, { dataTransfer: { getData: () => "alpha" } }));
+    expect(beta.className).toContain("border-gold/70");
+    fireEvent.dragEnd(beta);
+    expect(beta.className).not.toContain("border-gold/70");
+    const done = item("gamma");
+    fireEvent(done, createEvent.dragOver(done, { dataTransfer: { getData: () => "alpha" } }));
+    fireEvent(done, createEvent.drop(done, { dataTransfer: { getData: () => "alpha" } }));
+    fireEvent(beta, createEvent.drop(beta, { dataTransfer: { getData: () => "" } }));
+    expect(rows()).toEqual(["alpha", "beta", "gamma"]);
+    expect(loadTodos(T).every((x) => x.order === undefined)).toBe(true);
+  });
+});
+
+describe("day log", () => {
+  it("records wake time, sleep time and water for the day shown", async () => {
+    render(<TodosPage />);
+    fireEvent.change(screen.getByLabelText("Woke up"), { target: { value: "06:45" } });
+    fireEvent.change(screen.getByLabelText("Went to sleep"), { target: { value: "23:15" } });
+    fireEvent.click(screen.getByLabelText("More water"));
+    fireEvent.click(screen.getByLabelText("More water"));
+    fireEvent.click(screen.getByLabelText("More water"));
+    fireEvent.click(screen.getByLabelText("Less water"));
+    expect(screen.getByTestId("water-total").textContent).toBe("0.5 L");
+    expect(loadDayLog(T)).toEqual({ wake: "06:45", sleep: "23:15", water: 500 });
+    fireEvent.change(screen.getByLabelText("Woke up"), { target: { value: "" } });
+    expect(loadDayLog(T)).toEqual({ sleep: "23:15", water: 500 });
+    fireEvent.change(screen.getByLabelText("What went well"), { target: { value: "Shipped it" } });
+    fireEvent.change(screen.getByLabelText("What went badly"), { target: { value: "Skipped lunch" } });
+    fireEvent.change(screen.getByLabelText("What to improve"), { target: { value: "Plan breaks" } });
+    expect(loadDayLog(T)).toEqual({ sleep: "23:15", water: 500, well: "Shipped it", bad: "Skipped lunch", improve: "Plan breaks" });
+    // Another day has its own log.
+    fireEvent.click(screen.getByLabelText("Previous day"));
+    await waitFor(() => expect((screen.getByLabelText("Went to sleep") as HTMLInputElement).value).toBe(""));
+    expect(screen.getByTestId("water-total").textContent).toBe("0 L");
+  });
 });
 
 describe("adding tasks", () => {

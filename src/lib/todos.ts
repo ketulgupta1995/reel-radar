@@ -32,6 +32,7 @@ export type Todo = {
   subtasks?: Subtask[];
   tag?: TagId;
   spent?: number; // minutes recorded with the focus timer
+  order?: number; // place in the list after the user dragged tasks into their own order
 };
 
 // A task that repeats every day. Each day gets its own Todo copy, so completion is per day.
@@ -83,8 +84,14 @@ type MonthItem = { date: string; pos: number; todo: Todo; updatedAt: number };
 type MonthDoc = { items: MonthItem[] };
 type DailyItem = { task: DailyTask; updatedAt: number };
 type DailyDoc = { items: DailyItem[] };
+type LogItem = { date: string; log: DayLog; updatedAt: number };
+type LogDoc = { items: LogItem[] };
+
+// A day's log: when you woke and slept (HH:MM), the water you drank (millilitres), and a short review.
+export type DayLog = { wake?: string; sleep?: string; water?: number; well?: string; bad?: string; improve?: string };
 
 const DAILY_DOC = "planner-daily";
+const LOG_DOC = "planner-log";
 const MONTH_DOC = /^planner-(\d{4}-\d{2})$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const STORAGE_PREFIX = "reel-radar-";
@@ -116,8 +123,9 @@ const readDaily = () => readDoc<DailyDoc>(DAILY_DOC);
 const newer = <T extends { updatedAt: number }>(local: T, server: T) => (server.updatedAt > local.updatedAt ? server : local);
 
 registerDocs((key) => {
-  if (key !== DAILY_DOC && !MONTH_DOC.test(key)) return undefined;
-  const id = key === DAILY_DOC ? (i: DailyItem) => i.task.id : (i: MonthItem) => i.todo.id;
+  if (key !== DAILY_DOC && key !== LOG_DOC && !MONTH_DOC.test(key)) return undefined;
+  const id =
+    key === DAILY_DOC ? (i: DailyItem) => i.task.id : key === LOG_DOC ? (i: LogItem) => i.date : (i: MonthItem) => i.todo.id;
   return {
     read: () => readDoc(key),
     write: (doc: { items: never[] }) => writeDoc(key, doc),
@@ -181,6 +189,39 @@ export function saveTodos(todos: Todo[], date?: string): void {
   if (sameItems(next.items, doc.items)) return;
   writeDoc(monthDocKey(month), next);
   markDirty(monthDocKey(month));
+}
+
+const PRIORITY_RANK: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
+
+// The order tasks are listed in. Unfinished ones come first, then done ones. Among unfinished
+// tasks, any the user has arranged by hand (`order`) lead, in that order. The rest follow with
+// daily tasks first, then by priority, then oldest first.
+export function sortTodos(todos: Todo[]): Todo[] {
+  return [...todos].sort((a, b) => {
+    if (a.completed !== b.completed) return a.completed ? 1 : -1;
+    if ((a.order !== undefined) !== (b.order !== undefined)) return a.order !== undefined ? -1 : 1;
+    if (a.order !== undefined && b.order !== undefined && a.order !== b.order) return a.order - b.order;
+    if (!a.dailyId !== !b.dailyId) return a.dailyId ? -1 : 1;
+    const pa = a.priority ? PRIORITY_RANK[a.priority] : 3;
+    const pb = b.priority ? PRIORITY_RANK[b.priority] : 3;
+    if (pa !== pb) return pa - pb;
+    return a.createdAt.localeCompare(b.createdAt);
+  });
+}
+
+// Drag `id` into `targetId`'s place in the day's list. Every task then keeps the place it has on
+// screen, so the arrangement sticks. Done tasks always stay below unfinished ones.
+export function reorderTodo(id: string, targetId: string, date?: string): Todo[] {
+  const todos = loadTodos(date);
+  const list = sortTodos(todos);
+  const from = list.findIndex((t) => t.id === id);
+  const to = list.findIndex((t) => t.id === targetId);
+  if (from < 0 || to < 0 || from === to || list[from].completed || list[to].completed) return todos;
+  list.splice(to, 0, ...list.splice(from, 1));
+  const place = new Map(list.map((t, i) => [t.id, i]));
+  const updated = todos.map((t) => ({ ...t, order: place.get(t.id)! }));
+  saveTodos(updated, date);
+  return updated;
 }
 
 export function addTodo(
@@ -290,12 +331,45 @@ export function carryOverFromYesterday(date: string, ids?: string[]): Todo[] {
   saveTodos(loadTodos(yesterday).filter((t) => !movingIds.has(t.id)), yesterday);
   // A carried task keeps no time slot: yesterday's 9 AM isn't today's 9 AM.
   const moved = moving.map((t) => {
-    const { start: _s, duration: _d, ...rest } = t;
+    const { start: _s, duration: _d, order: _o, ...rest } = t;
     return { ...rest, carriedFrom: t.carriedFrom ?? yesterday };
   });
   const updated = [...loadTodos(date), ...moved];
   saveTodos(updated, date);
   return updated;
+}
+
+// ---------------- Day log (wake, sleep, water, review) ----------------
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+export const WATER_STEP = 250;
+
+export function loadDayLog(date: string): DayLog {
+  if (typeof window === "undefined") return {};
+  return readDoc<LogDoc>(LOG_DOC).items.find((i) => i.date === date)?.log ?? {};
+}
+
+// Change part of a day's log; `undefined` clears that field. A log left empty is removed.
+export function updateDayLog(date: string, change: { [K in keyof DayLog]?: DayLog[K] | undefined }): DayLog {
+  if (typeof window === "undefined") return {};
+  const doc = readDoc<LogDoc>(LOG_DOC);
+  const old = doc.items.find((i) => i.date === date)?.log ?? {};
+  const log: DayLog = { ...old, ...change };
+  if (log.wake !== undefined && !TIME_RE.test(log.wake)) delete log.wake;
+  if (log.sleep !== undefined && !TIME_RE.test(log.sleep)) delete log.sleep;
+  if (log.water !== undefined && !(log.water > 0)) delete log.water;
+  for (const k of ["well", "bad", "improve"] as const) if (!log[k]?.trim()) delete log[k];
+  (Object.keys(log) as (keyof DayLog)[]).forEach((k) => log[k] === undefined && delete log[k]);
+  if (sameJson(old, log)) return old;
+  const rest = doc.items.filter((i) => i.date !== date);
+  writeDoc(LOG_DOC, { items: Object.keys(log).length ? [...rest, { date, log, updatedAt: Date.now() }] : rest });
+  markDirty(LOG_DOC);
+  return log;
+}
+
+// Add (or, with a negative amount, remove) water; never below zero.
+export function addWater(date: string, ml: number): DayLog {
+  return updateDayLog(date, { water: Math.max(0, (loadDayLog(date).water ?? 0) + ml) });
 }
 
 // ---------------- Daily tasks ----------------
@@ -497,7 +571,7 @@ export function moveTodoToDate(id: string, from: string, to: string, schedule?: 
   if (!todo) return loadTodos(to);
   if (from === to) return scheduleTodo(id, schedule, to);
   if (todo.dailyId) return null;
-  const { start: _s, duration: _d, ...rest } = todo;
+  const { start: _s, duration: _d, order: _o, ...rest } = todo;
   const moved: Todo = schedule
     ? { ...rest, start: schedule.start, duration: schedule.duration ?? todo.duration ?? DEFAULT_DURATION }
     : { ...rest, ...(todo.duration !== undefined ? { duration: todo.duration } : {}) };
@@ -513,7 +587,7 @@ export function moveTodoToDate(id: string, from: string, to: string, schedule?: 
 export function copyTodoToDate(id: string, from: string, to: string, schedule?: Schedule): Todo[] {
   const todo = loadTodos(from).find((t) => t.id === id);
   if (!todo) return loadTodos(to);
-  const { start: _s, duration: _d, dailyId: _id, carriedFrom: _c, spent: _sp, subtasks, ...rest } = todo;
+  const { start: _s, duration: _d, dailyId: _id, carriedFrom: _c, spent: _sp, order: _o, subtasks, ...rest } = todo;
   const copy: Todo = {
     ...rest,
     id: crypto.randomUUID(),
@@ -647,7 +721,7 @@ export function loadAllTodos(): Record<string, Todo[]> {
 
 // ---------------- Sync ----------------
 
-const plannerKeys = (months: string[]) => [DAILY_DOC, ...Array.from(new Set(months)).map(monthDocKey)];
+const plannerKeys = (months: string[]) => [DAILY_DOC, LOG_DOC, ...Array.from(new Set(months)).map(monthDocKey)];
 
 // Months from PLANNER_EPOCH through a few months ahead, for views that need every day.
 function allMonths(): string[] {
