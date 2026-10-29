@@ -2,7 +2,7 @@
 
 A personal movie & TV tracker for one user. Log what you've watched (down to the season), keep a watchlist, get recommendations and analytics based on your own taste, and plan your day. It covers both Indian and global cinema.
 
-Built with **Next.js 14 (App Router)**, **TypeScript**, and **Tailwind CSS**, with live metadata from **TMDB**. Your data is kept in the browser and synced to **Vercel Blob** (or to local JSON files during development).
+Built with **Next.js 14 (App Router)**, **TypeScript**, and **Tailwind CSS**, with live metadata from **TMDB**. Your data is kept in the browser and synced to **Turso** (or to local JSON files during development).
 
 ---
 
@@ -24,7 +24,7 @@ npm run dev                  # http://localhost:3000, then sign in
 | `APP_USERNAME` | ✅ | Login username. |
 | `APP_PASSWORD` | ✅ | Login password. |
 | `AUTH_SECRET` | ✅ | Signs the session cookie. Generate one with `openssl rand -hex 32`. |
-| `BLOB_READ_WRITE_TOKEN` | optional | Enables cloud sync via Vercel Blob. Without it, data is saved under `data/`. |
+| `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | optional | Enables cloud sync via Turso. Without the URL, data is saved under `data/`. |
 
 If any of the three login variables is missing, nobody can sign in.
 
@@ -71,7 +71,7 @@ If any of the three login variables is missing, nobody can sign in.
 ### Data & sync
 
 ```
-Browser localStorage  ──sync──▶  /api/sync  ──▶  Vercel Blob, v2/<doc>.json.gz   (if BLOB_READ_WRITE_TOKEN is set)
+Browser localStorage  ──sync──▶  /api/sync  ──▶  Turso, table docs(key, data, etag)  (if TURSO_DATABASE_URL is set)
    (instant, offline)                        └─▶  data/<doc>.json                (local fallback)
 ```
 
@@ -85,11 +85,10 @@ Data is synced as separate docs, so a change only moves the doc it touches:
 | `planner-daily` | Repeating daily tasks |
 
 - **Writes are batched.** A change saves to `localStorage` at once and is pushed a few seconds later (5 s for the library, 3 s for the planner), or when the tab is hidden. History changes ride along with the next push.
-- **Reads are cheap.** A page syncs on open, at most every 2 minutes, and again when the tab comes back into view after that. The client sends the etags it holds, so an unchanged doc returns a 304 with no body. Reads use Blob `get()`, never `list()`.
+- **Reads are cheap.** A page syncs on open, at most every 2 minutes, and again when the tab comes back into view after that. The client sends the etags it holds, so an unchanged doc comes back as `unchanged` with no body.
 - **Merges are three-way.** Each device keeps the last copy it agreed on with the server, so a removal or a cleared history on one device carries to the others instead of coming back. Writes are conditional on the etag: if another device wrote first, the server answers 409 with its copy, and the client merges and retries. Planner items carry `updatedAt`, so when both devices edited the same todo, the later edit wins.
 - Watch data lives in `localStorage` under `reel-radar-v1` as `{ watched, watchlist, displayed, shown, dismissed }`. Saved titles drop `keywords`, `trailerYoutubeId` and `why`, which are always fetched fresh.
 - Each title is identified by `"<mediaType>:<tmdbId>"`, e.g. `movie:550` or `tv:1396`.
-- Blob storage works with both private and public stores.
 - The first sync migrates an old single-file `storage.json` into `library` and `history`. `scripts/upload-storage.ts` uploads `data/storage.json` by hand (see below).
 
 ### Keeping Vercel usage low
@@ -160,7 +159,7 @@ src/
 │   ├── todos.ts                  # Planner model: daily tasks, carry-over, tags, focus timer, sync, backup
 │   ├── sync.ts                   # Client sync engine: etags, batching, three-way merge, refocus
 │   ├── syncDocs.ts               # Doc shapes and merges shared by client, server and script
-│   ├── blobStore.ts              # Server: gzipped docs in Blob (get/put), or data/ locally
+│   ├── docStore.ts               # Server: docs as Turso rows, or data/ locally
 │   ├── http.ts                   # cachedJson(): browser-cacheable API responses
 │   ├── plannerStats.ts           # Planner stats aggregation
 │   ├── auth.ts                   # HMAC session cookie (Web Crypto, edge-safe)
@@ -168,7 +167,8 @@ src/
 ├── test/                         # Shared test fixtures and setup
 └── types/title.ts                # Title, MediaType, keyOf()
 data/                             # storage.json backup (tracked); local fallback docs (<doc>.json, gitignored)
-scripts/upload-storage.ts         # Upload data/storage.json to Blob as the library/history docs
+scripts/upload-storage.ts         # Upload data/storage.json to Turso as the library/history docs
+scripts/migrate-blob-to-turso.ts  # One-off: copy the old Vercel Blob docs into Turso
 ```
 
 Imports use the `@/` alias for `src/`. Tailwind theme tokens: `ink` `#07070c` (background), `panel` `#11111a`, and `gold` `#f6c453` (accent).
@@ -177,7 +177,7 @@ Imports use the `@/` alias for `src/`. Tailwind theme tokens: `ink` `#07070c` (b
 
 ## Testing
 
-`npm test` runs about 340 tests, entirely offline, and covers about 99% of the code (`npm run coverage`; it fails below 97% of lines, 95% of functions or 90% of branches). TMDB, Vercel Blob, and `fetch` are mocked, and the storage tests write to a temporary directory, never to `data/`.
+`npm test` runs about 340 tests, entirely offline, and covers about 99% of the code (`npm run coverage`; it fails below 97% of lines, 95% of functions or 90% of branches). TMDB and `fetch` are mocked, sync runs against an in-memory libSQL database, and the storage tests write to a temporary directory, never to `data/`.
 
 | Area | What's covered |
 |---|---|
@@ -196,10 +196,10 @@ Imports use the `@/` alias for `src/`. Tailwind theme tokens: `ink` `#07070c` (b
 
 1. Import the repo into Vercel.
 2. Add `TMDB_API_KEY`, `APP_USERNAME`, `APP_PASSWORD`, and `AUTH_SECRET` as environment variables.
-3. Create a Blob store and connect it to the project. Vercel adds `BLOB_READ_WRITE_TOKEN` for you.
+3. Create a Turso database (`turso db create reel-radar`, `turso db show reel-radar --url`, `turso db tokens create reel-radar`) and add `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`.
 4. Deploy.
 
-Without a Blob store, sync on Vercel won't persist, because its filesystem is read-only and temporary.
+Without a Turso database, sync on Vercel won't persist, because its filesystem is read-only and temporary.
 
 ---
 
@@ -216,14 +216,23 @@ Without a Blob store, sync on Vercel won't persist, because its filesystem is re
 
 Use **Clear Displayed & Shown** on the Discover page. It clears `shown` and `displayed` on every device.
 
-### Upload a backup to Blob
+### Move old Blob data to Turso
 
-`data/storage.json` (a Reel Radar export) can be uploaded as the synced docs. The script merges it with what Blob already holds, so nothing is lost:
+One time, with `BLOB_READ_WRITE_TOKEN`, `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` in `.env.local`. The script only reads Blob and skips docs Turso already has:
+
+```bash
+npx vite-node --config vitest.config.ts scripts/migrate-blob-to-turso.ts            # list what would be copied
+npx vite-node --config vitest.config.ts scripts/migrate-blob-to-turso.ts -- --apply # copy it
+```
+
+### Upload a backup to Turso
+
+`data/storage.json` (a Reel Radar export) can be uploaded as the synced docs. The script merges it with what the store already holds, so nothing is lost:
 
 ```bash
 npx vite-node --config vitest.config.ts scripts/upload-storage.ts -- --dry-run   # show what would be written
 npx vite-node --config vitest.config.ts scripts/upload-storage.ts                # write it
-# add --purge-old-planner to also delete the old per-day planner blobs under todos/
+# add --purge-old-planner to also delete the old per-day planner blobs under todos/ in Blob
 ```
 
 ---

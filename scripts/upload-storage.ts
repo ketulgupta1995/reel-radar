@@ -1,17 +1,17 @@
-// Upload data/storage.json to Vercel Blob as the synced library and history docs.
+// Upload data/storage.json to the doc store (Turso) as the synced library and history docs.
 //
 //   npx vite-node --config vitest.config.ts scripts/upload-storage.ts -- [--dry-run] [--purge-old-planner]
 //
-// Merges the file with whatever Blob already holds (the v2 docs, or the old storage.json), so
-// nothing added in the app after the file was exported is lost. --purge-old-planner also deletes
-// the old per-day planner blobs under todos/. --dry-run prints what would happen and writes nothing.
-// Reads BLOB_READ_WRITE_TOKEN from .env.local; the token is never printed.
+// Merges the file with whatever the store already holds, so nothing added in the app after the
+// file was exported is lost. --purge-old-planner also deletes the old per-day planner blobs under
+// todos/ in Vercel Blob (needs BLOB_READ_WRITE_TOKEN). --dry-run prints what would happen and
+// writes nothing. Reads TURSO_DATABASE_URL and TURSO_AUTH_TOKEN from .env.local; they are never printed.
 
 import { del, list } from "@vercel/blob";
 import { readFileSync } from "fs";
 import path from "path";
 import { gzipSync } from "zlib";
-import { isBlobConfigured, readDoc, readLegacyState, writeDoc } from "@/lib/blobStore";
+import { isStoreConfigured, readDoc, readLegacyState, writeDoc } from "@/lib/docStore";
 import { State, empty, historyOf, libraryOf, mergeHistory, mergeLibrary, toStored } from "@/lib/syncDocs";
 
 const args = new Set(process.argv.slice(2));
@@ -33,7 +33,7 @@ const kb = (data: unknown) => {
 
 async function main() {
   loadEnvLocal();
-  if (!isBlobConfigured()) throw new Error("BLOB_READ_WRITE_TOKEN is not set in .env.local");
+  if (!isStoreConfigured()) throw new Error("TURSO_DATABASE_URL is not set in .env.local");
 
   const file: State = { ...empty(), ...JSON.parse(readFileSync(path.join(process.cwd(), "data", "storage.json"), "utf-8")) };
   console.log(`data/storage.json: ${file.watched.length} watched, ${file.watchlist.length} watchlist`);
@@ -47,7 +47,7 @@ async function main() {
     ...(history && "data" in history ? (history.data as object) : {}),
   };
   console.log(
-    `Blob now: ${library ? "v2 docs" : legacy ? "old storage.json" : "nothing"}, ` +
+    `Store now: ${library ? "v2 docs" : legacy ? "old storage.json" : "nothing"}, ` +
       `${server.watched.length} watched, ${server.watchlist.length} watchlist`
   );
 
@@ -59,8 +59,8 @@ async function main() {
   console.log(`history: ${historyDoc.displayed.length} displayed, ${historyDoc.shown.length} shown (${kb(historyDoc)})`);
 
   if (!dryRun) {
-    console.log(`Wrote v2/library.json.gz, etag ${await writeDoc("library", libraryDoc)}`);
-    console.log(`Wrote v2/history.json.gz, etag ${await writeDoc("history", historyDoc)}`);
+    console.log(`Wrote library, etag ${await writeDoc("library", libraryDoc)}`);
+    console.log(`Wrote history, etag ${await writeDoc("history", historyDoc)}`);
   }
 
   if (purgeOldPlanner) {

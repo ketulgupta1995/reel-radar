@@ -1,4 +1,4 @@
-import { ConflictError, DOC_KEY, ReadResult, readDoc, readLegacyState, writeDoc } from "@/lib/blobStore";
+import { ConflictError, DOC_KEY, ReadResult, readDoc, readLegacyState, writeDoc } from "@/lib/docStore";
 import { empty, historyOf, libraryOf, toStored } from "@/lib/syncDocs";
 
 export const dynamic = "force-dynamic";
