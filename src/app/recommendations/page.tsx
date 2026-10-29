@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { AppSwitcher } from "@/components/AppSwitcher";
+import { ReelNavLinks } from "@/components/ReelNavLinks";
 import { useEffect, useState, useMemo } from "react";
 import { Title, keyOf, MediaType } from "@/types/title";
 import { load, save, useStorageSync, State } from "@/lib/storage";
@@ -289,21 +290,7 @@ export default function Recommendations() {
       <header className="mx-auto flex max-w-7xl items-center justify-between gap-4">
         <AppSwitcher current="reel-radar" />
         <div className="flex flex-wrap items-center gap-4 text-sm">
-          <Link href="/discover" className="text-white/70 hover:text-white">
-            Discover
-          </Link>
-          <Link href="/search" className="text-white/70 hover:text-white">
-            Search
-          </Link>
-          <Link href="/watchlist" className="text-white/70 hover:text-white">
-            Watchlist ({state.watchlist.length})
-          </Link>
-          <Link href="/watched" className="text-white/70 hover:text-white">
-            Viewed titles ({state.watched.length})
-          </Link>
-          <Link href="/analysis" className="text-white/70 hover:text-white">
-            Analysis
-          </Link>
+          <ReelNavLinks counts={{ watchlist: state.watchlist.length, watched: state.watched.length, dismissed: state.dismissed.length }} />
           <StorageControls onStateChange={(s) => setState(s)} />
         </div>
       </header>

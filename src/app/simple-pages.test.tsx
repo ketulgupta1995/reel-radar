@@ -48,7 +48,7 @@ describe("SearchPage", () => {
     stubLocation("");
     render(<SearchPage />);
     fireEvent.change(screen.getByPlaceholderText(/Search for a movie/), { target: { value: "villeneuve" } });
-    fireEvent.click(screen.getByText("Search"));
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByText("Dune")).toBeTruthy();
     expect(screen.getByText("Arrival")).toBeTruthy();
     expect(requests(fetch, "/api/search")[0].url.searchParams.get("query")).toBe("villeneuve");
@@ -61,7 +61,7 @@ describe("SearchPage", () => {
     expect(await screen.findByText("Dune")).toBeTruthy();
     expect((screen.getByPlaceholderText(/Search for a movie/) as HTMLInputElement).value).toBe("dune");
     fireEvent.change(screen.getByPlaceholderText(/Search for a movie/), { target: { value: "  " } });
-    fireEvent.click(screen.getByText("Search"));
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(requests(fetch, "/api/search")).toHaveLength(1);
   });
 
@@ -90,8 +90,8 @@ describe("SearchPage", () => {
     stubLocation("");
     render(<SearchPage />);
     fireEvent.change(screen.getByPlaceholderText(/Search for a movie/), { target: { value: "x" } });
-    fireEvent.click(screen.getByText("Search"));
-    await waitFor(() => expect(screen.getByText("Search")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Search" })).toBeTruthy());
     expect(console.error).toHaveBeenCalled();
   });
 });

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { AppSwitcher } from "@/components/AppSwitcher";
+import { ReelNavLinks } from "@/components/ReelNavLinks";
 import { useEffect, useRef, useState } from "react";
 import { Title, keyOf, MediaType } from "@/types/title";
 import { load, reset, save, useStorageSync, State, clearDiscoveryHistory } from "@/lib/storage";
@@ -279,36 +280,7 @@ export default function Discover() {
       <header className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4">
         <AppSwitcher current="reel-radar" />
         <div className="flex flex-wrap items-center gap-3 text-sm">
-          <Link
-            href="/search"
-            className="text-white/70 transition hover:text-white"
-          >
-            Search
-          </Link>
-          <Link
-            href="/watchlist"
-            className="rounded-full bg-white/10 px-3.5 py-1.5 text-xs text-white/80 transition hover:bg-white/20 hover:text-white"
-          >
-            Watchlist (<b className="text-gold">{state.watchlist.length}</b>)
-          </Link>
-          <Link
-            href="/watched"
-            className="rounded-full bg-white/10 px-3.5 py-1.5 text-xs text-white/80 transition hover:bg-white/20 hover:text-white"
-          >
-            Viewed titles (<b className="text-gold">{count}</b>)
-          </Link>
-          <Link
-            href="/recommendations"
-            className="text-white/70 transition hover:text-white text-xs"
-          >
-            Recommendations
-          </Link>
-          <Link
-            href="/analysis"
-            className="text-white/70 transition hover:text-white text-xs"
-          >
-            Analysis
-          </Link>
+          <ReelNavLinks counts={{ watchlist: state.watchlist.length, watched: state.watched.length, dismissed: state.dismissed.length }} />
           <StorageControls onStateChange={(merged) => setState(merged)} />
           <button
             onClick={() => {
