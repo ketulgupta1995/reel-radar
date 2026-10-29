@@ -7,3 +7,5 @@ node_modules
 data/*.json
 !data/storage.json
 coverage
+
+*.tsbuildinfo
