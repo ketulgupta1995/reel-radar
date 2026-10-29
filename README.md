@@ -1,172 +1,191 @@
 # Reel Radar 🎬
 
-A modern, cinematic web application built with **Next.js 14 (App Router)**, **TypeScript**, and **Tailwind CSS**. Reel Radar provides personalized movie and TV series discovery powered by live TMDB metadata, intelligent taste analysis, and hybrid local/cloud state persistence—protected by a simple single-user login.
+A personal movie & TV tracker for one user. Log what you've watched (down to the season), keep a watchlist, get recommendations and analytics based on your own taste, and plan your day. It covers both Indian and global cinema.
+
+Built with **Next.js 14 (App Router)**, **TypeScript**, and **Tailwind CSS**, with live metadata from **TMDB**. Your data is kept in the browser and synced to **Vercel Blob** (or to local JSON files during development).
 
 ---
 
-## 🚀 Key Features
+## Quick start
 
-1. **Dual Cinema & Series Support (Indian & Global)**:
-   - Filter seamlessly between **All Regions**, **Indian Cinema & Series** (Bollywood, South Indian, OTT web series), and **Hollywood & Global**.
-   - Special heuristic handling for Indian regional languages (`hi`, `te`, `ta`, `ml`, `kn`, `bn`, etc.) and origin countries.
+**You need:** Node.js **18.17+** and a free [TMDB v3 API key](https://www.themoviedb.org/settings/api).
 
-2. **Interactive Discovery Feed (`/discover`)**:
-   - Continuous paginated discovery feed.
-   - Per-title quick action buttons on every card matching the recommendations experience:
-     - **Mark seen / ✓ Seen**: Toggles title in your watched list.
-     - **+ Watchlist / ✓ Watchlist**: Adds or removes title from your personal watchlist.
-     - **Not interested**: Instantly dismisses title so it won't clutter your feed or recommendations again.
-     - **Trailer & Details**: Opens an embedded YouTube trailer modal, complete synopsis, director/creator links, and cast.
-
-3. **Season-Level TV Progress Tracking**:
-   - Track series at granular season levels (e.g., S1, S2, S3).
-   - Higher season completions give weighted boosts to your taste engine.
-
-4. **Recommendation Engine (`/recommendations`)**:
-   - Unlocked once you have logged at least 10 titles.
-   - Categorized buckets:
-     - **Indian Movies**
-     - **Global & Hollywood Movies**
-     - **Indian Web Series & Shows**
-     - **Global & International Series**
-   - Deterministic ranking incorporating normalized genre overlap, keywords, cast/creator credits, type balance, rating quality, and diversity passes.
-   - Transparent, human-readable **Why recommended** explanation badges on each title.
-
-5. **Viewing & Taste Analytics (`/analysis`)**:
-   - Deep-dive into your cinematic DNA:
-     - Key metrics: total titles, total estimated runtime hours, average TMDB rating, Indian cinema ratio.
-     - Media format split (Movies vs. TV series).
-     - Top genres distribution bar charts.
-     - Decade & era breakdown (from classic 1970s–1990s to contemporary releases).
-     - Top directors, creators, and actors by frequency in your library.
-     - Highest-rated titles milestone showcase.
-     - Dynamic filtering across Movies, Series, Indian, or Global titles.
-
-6. **Global Search & Creator Profiles**:
-   - Multi-search across TMDB for any film, series, actor, or director (`/search`).
-   - Creator/actor profile pages (`/person/[id]`) showing filmography and credits with instant watch/watchlist controls.
-
-7. **Multi-Tier Hybrid Storage & Portability**:
-   - **Local Browser Storage**: Instant responsive reads and offline resilience via `localStorage`.
-   - **Cloud Sync**: Automatic background persistence to **Vercel Blob Storage** (when configured) or local `data/storage.json`.
-   - **Export & Import**: Download a `.json` backup of your viewing history and watchlist at any time, or restore/merge across devices.
-
----
-
-## 🛠️ Technology Stack & Architecture
-
-- **Framework**: [Next.js 14](https://nextjs.org/) (App Router, Server & Client Components)
-- **Language**: [TypeScript](https://www.typescriptlang.org/)
-- **Styling**: [Tailwind CSS](https://tailwindcss.com/) with a curated dark luxury palette (`#07070c` ink background, `#11111a` panels, and `#f6c453` warm gold accents)
-- **API & Data**: [The Movie Database (TMDB) API v3](https://developer.themoviedb.org/docs)
-- **Cloud Storage**: Optional [@vercel/blob](https://vercel.com/docs/storage/vercel-blob) with automatic fallback to local JSON file
-- **Testing**: [Vitest](https://vitest.dev/)
-
----
-
-## 📁 Project Structure
-
-```
-reel-radar-final/
-├── src/
-│   ├── app/
-│   │   ├── layout.tsx              # Root HTML wrapper and metadata
-│   │   ├── globals.css             # Tailwind base & custom animations
-│   │   ├── page.tsx                # Polished Home / Landing page with live spotlight
-│   │   ├── discover/page.tsx       # Discovery feed with Seen/Watchlist/Dismiss actions
-│   │   ├── recommendations/page.tsx# Categorized recommendation engine
-│   │   ├── analysis/page.tsx       # Viewing history and taste analytics
-│   │   ├── watchlist/page.tsx      # User's saved watchlist with sorting and filters
-│   │   ├── watched/page.tsx        # User's viewed titles history with season breakdown
-│   │   ├── search/page.tsx         # Multi-search across movies & TV
-│   │   ├── person/[id]/page.tsx    # Filmography & creator credits page
-│   │   └── api/
-│   │       ├── discover/route.ts   # TMDB discover proxy with Indian & Global region feeds
-│   │       ├── recommendations/    # Deterministic scoring & categorization endpoint
-│   │       ├── search/route.ts     # Multi-search endpoint
-│   │       ├── title/route.ts      # Enriched title details & YouTube trailer lookup
-│   │       ├── person/[id]/        # Cast/crew credits endpoint
-│   │       └── storage/route.ts    # Dual-backend storage handler (Vercel Blob / local file)
-│   ├── components/
-│   │   ├── TitleCard.tsx           # Reusable poster card with badges & trailer button
-│   │   ├── TitleDetailsModal.tsx   # Video trailer player, synopsis, cast & crew modal
-│   │   └── StorageControls.tsx     # Backup Export & Import controls
-│   ├── lib/
-│   │   ├── tmdb.ts                 # TMDB API client & normalization
-│   │   ├── recommend.ts            # Scoring algorithm, ranking & explanations
-│   │   ├── analysis.ts             # Analytics math & breakdown aggregator
-│   │   └── storage.ts              # LocalStorage, sync, merge & export/import utilities
-│   └── types/
-│       └── title.ts                # TypeScript interfaces (Title, CastMember, MediaType)
-├── data/
-│   └── storage.json                # Local JSON fallback for server storage sync
-├── vitest.config.ts                # Unit testing configuration
-├── tailwind.config.ts              # Theme tokens & custom colors
-└── package.json
-```
-
----
-
-## ⚙️ Getting Started Locally
-
-### 1. Prerequisites
-- **Node.js 18.17+** or newer installed.
-- A free TMDB v3 API Key from [The Movie Database](https://www.themoviedb.org/settings/api).
-
-### 2. Setup Environment Variables
-Copy `.env.example` to `.env.local`:
-```bash
-cp .env.example .env.local
-```
-Add your TMDB API key:
-```ini
-TMDB_API_KEY=your_tmdb_api_key_here
-
-# (Optional) For cloud sync on Vercel:
-# BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...
-
-# Single-user login (required — set the same three vars in Vercel for deployment)
-APP_USERNAME=your_username
-APP_PASSWORD=your_password
-AUTH_SECRET=long_random_string   # openssl rand -hex 32
-```
-
-### 3. Install and Run
 ```bash
 npm install
-npm run dev
+cp .env.example .env.local   # then fill in the values below
+npm run dev                  # http://localhost:3000, then sign in
 ```
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+### Environment variables
+
+| Variable | Required | What it does |
+|---|---|---|
+| `TMDB_API_KEY` | ✅ | TMDB v3 key. Used only on the server. |
+| `APP_USERNAME` | ✅ | Login username. |
+| `APP_PASSWORD` | ✅ | Login password. |
+| `AUTH_SECRET` | ✅ | Signs the session cookie. Generate one with `openssl rand -hex 32`. |
+| `BLOB_READ_WRITE_TOKEN` | optional | Enables cloud sync via Vercel Blob. Without it, data is saved under `data/`. |
+
+If any of the three login variables is missing, nobody can sign in.
+
+### Scripts
+
+| Command | Purpose |
+|---|---|
+| `npm run dev` | Start the dev server |
+| `npm test` | Run the test suite (Vitest + Testing Library) |
+| `npx vitest` | Run tests in watch mode |
+| `npm run build` | Production build (also does a full typecheck) |
+| `npm start` | Serve the production build |
+| `npm run lint` | Run the Next.js linter |
 
 ---
 
-## 🧪 Testing & Verification
+## Features
 
-Run unit tests:
-```bash
-npm test
-```
+| Page | What you can do |
+|---|---|
+| `/` | Landing page with a live spotlight of trending Indian and global titles |
+| `/discover` | Endless feed you can filter by region (All / Indian / Global). Each card has **Mark seen**, **+ Watchlist**, **Not interested**, and **Trailer & details** buttons. |
+| `/recommendations` | Unlocks after **10 logged titles**. Results come in four groups: Indian Movies, Global Movies, Indian Series, Global Series. You can tune them by discovery style (balanced / popular / deep cuts) and mood (dark, adrenaline, feel-good, mind-bending), and each pick says why it was recommended. |
+| `/similar` | Titles similar to one you choose, with an optional year range |
+| `/analysis` | Taste analytics: total titles, hours watched, average rating, Indian vs global split, genres, decades, top directors and actors, blind spots, and your viewer "persona". Filter by movies/series and Indian/global. |
+| `/watched` | Everything you've watched, with season-by-season progress for series |
+| `/watchlist` | Your saved titles, with sorting and filters |
+| `/search` | Search across movies, series, and people |
+| `/person/[id]` | An actor's or director's filmography, with quick watch and watchlist buttons |
+| `/todos` | **Daily Planner**: tasks with priorities and a drag-to-schedule timeline. Tasks can repeat daily, and you can bring over unfinished tasks from yesterday. |
+| `/login` | Single-user sign-in. Every other page and API route requires it. |
 
-Create production build:
-```bash
-npm run build
-```
+**Season tracking.** Series are tracked per season (S1, S2, …). The more seasons you finish, the more weight a series carries in your taste profile.
 
----
-
-## 💡 How the Taste Engine Works
-
-1. **Viewing Profile**: As you mark movies and series as seen, their genres, keywords, cast, and directors are aggregated into a weighted preference profile.
-2. **Season Amplification**: TV series with completed seasons receive exponential weighting over casual views.
-3. **Multi-Factor Scoring**:
-   $$\text{Score} = (4.2 \cdot \text{Genre} + 2.2 \cdot \text{Keywords} + 1.8 \cdot \text{Cast/Crew} + 0.9 \cdot \text{Rating} + 0.3 \cdot \text{Popularity} + 0.5 \cdot \text{FormatFit}) \times \text{RegionMultiplier} \times \text{FreshnessPenalty}$$
-4. **Categorization Pass**: Candidates are partitioned into dedicated categories (*Indian Movies*, *Global Movies*, *Indian TV*, *Global TV*) with a genre-diversity threshold ensuring varied recommendations.
+**Backup.** Export your history and watchlist to a `.json` file, or import one to restore or merge data across devices.
 
 ---
 
-## 🧹 Resetting State (Developer Utility)
+## How it works
 
-To reset your local cache and server backup directly from the browser developer console:
+### Data & sync
+
+```
+Browser localStorage  ──sync──▶  /api/storage, /api/todos  ──▶  Vercel Blob   (if BLOB_READ_WRITE_TOKEN is set)
+   (instant, offline)                                       └─▶  data/*.json   (local fallback)
+```
+
+- Watch data lives in `localStorage` under `reel-radar-v1`. Its shape is `{ watched, watchlist, displayed, shown, dismissed }`.
+- Todos are stored one file per day (`reel-radar-todos-YYYY-MM-DD.json`), plus a `daily` file for repeating tasks.
+- Each title is identified by `"<mediaType>:<tmdbId>"`, e.g. `movie:550` or `tv:1396`.
+- Blob storage works with both private and public stores. If a private write fails because the store is public, it retries as public.
+
+### Indian vs Global
+
+A title counts as **Indian** if its origin country is `IN` or its original language is one of `hi, te, ta, ml, kn, bn, mr, pa, gu`. This rule is defined once in [`src/lib/region.ts`](src/lib/region.ts), and the discover feed, recommendations, analytics, and title cards all use it.
+
+### Recommendation scoring
+
+Your watched titles are combined into a weighted profile of genres, creators, cast, and keywords. Finished seasons add extra weight. Each candidate is then scored:
+
+```
+score = ( 4.0·genre + 2.6·director/creator + 1.8·cast + 2.0·keywords
+        + quality·rating + popularityBonus + 0.4·formatFit − dislike )
+        × regionFactor × seenPenalty
+```
+
+- **quality / popularityBonus**: set by the discovery style. *Deep cuts* raises the weight on rating and penalises blockbusters.
+- **dislike**: overlap with titles you marked **Not interested** (by genre, people, and keywords).
+- **regionFactor**: if at least 20% of what you watch is Indian, Indian titles score 1.4 and global titles 0.85. Otherwise highly rated Indian titles get a smaller lift.
+- **seenPenalty**: titles you've already been shown are multiplied by 0.45.
+
+Watched, watchlisted, and dismissed titles are never recommended. The top-scoring candidates are then sorted into the four groups, with a step that keeps the genres varied. The ranking is deterministic, so the same inputs always give the same results. The implementation is in [`src/lib/recommend.ts`](src/lib/recommend.ts).
+
+---
+
+## Project structure
+
+```
+src/
+├── middleware.ts                 # Auth gate: pages redirect to /login, APIs return 401
+├── app/
+│   ├── layout.tsx, globals.css   # Root layout + Tailwind base
+│   ├── page.tsx                  # Landing page
+│   ├── discover/  recommendations/  similar/  analysis/
+│   ├── watched/   watchlist/        search/   person/[id]/
+│   ├── todos/                    # Daily planner
+│   ├── login/
+│   └── api/
+│       ├── discover/        GET   TMDB discover feed (region filters)
+│       ├── recommendations/ POST  Score & categorise candidates for the posted history
+│       ├── similar/         GET   ?type=&id=&minYear=&maxYear=&limit=
+│       ├── search/          GET   ?query=
+│       ├── title/           GET   Title details, credits, trailer
+│       ├── person/[id]/     GET   Person credits
+│       ├── storage/         GET/POST  Watch-data sync (Blob or data/storage.json)
+│       ├── todos/           GET/POST  ?date=YYYY-MM-DD|daily
+│       └── auth/login, auth/logout   POST
+├── components/
+│   ├── TitleCard.tsx             # Poster card with badges & quick actions
+│   ├── TitleDetailsModal.tsx     # Trailer, synopsis, cast & crew
+│   ├── StorageControls.tsx       # Export / import
+│   └── LogoutButton.tsx
+├── lib/
+│   ├── tmdb.ts                   # TMDB client: normalisation, 8s timeout + one retry, 1h cache
+│   ├── recommend.ts              # Taste profile, scoring, categorisation, "why" text
+│   ├── analysis.ts               # Analytics aggregation
+│   ├── region.ts                 # Indian vs Global rule (single source of truth)
+│   ├── storage.ts                # Client state: load/save, merge, sync, export/import
+│   ├── todos.ts                  # Planner model: daily tasks, carry-over, sync
+│   ├── auth.ts                   # HMAC session cookie (Web Crypto, edge-safe)
+│   └── *.test.ts                 # Vitest unit tests
+├── test/                         # Shared test fixtures and setup
+└── types/title.ts                # Title, MediaType, keyOf()
+data/                             # Local storage fallback (storage.json, todo files)
+```
+
+Imports use the `@/` alias for `src/`. Tailwind theme tokens: `ink` `#07070c` (background), `panel` `#11111a`, and `gold` `#f6c453` (accent).
+
+---
+
+## Testing
+
+`npm test` runs about 175 tests, entirely offline. TMDB, Vercel Blob, and `fetch` are mocked, and the storage tests write to a temporary directory, never to `data/`.
+
+| Area | What's covered |
+|---|---|
+| `lib/recommend`, `lib/analysis`, `lib/region` | Scoring, filters, categories, explanations, every analytics metric, personas |
+| `lib/tmdb` | Normalisation, request retry and errors, discover/search/credits/detail, similar-title scoring |
+| `lib/storage`, `lib/todos` | Merge, sync, import/export, daily tasks, carry-over, skip/undo |
+| `lib/auth`, `middleware` | Session signing and expiry, redirects, 401s |
+| API routes | Validation, responses, Blob ↔ local-file fallback, private → public retry |
+| Components, `/login` | Title card, details modal, backup controls, logout, sign-in flow and safe redirects |
+
+The large pages don't have render tests; their logic lives in `lib/` and is tested there.
+
+---
+
+## Deploying to Vercel
+
+1. Import the repo into Vercel.
+2. Add `TMDB_API_KEY`, `APP_USERNAME`, `APP_PASSWORD`, and `AUTH_SECRET` as environment variables.
+3. Create a Blob store and connect it to the project. Vercel adds `BLOB_READ_WRITE_TOKEN` for you.
+4. Deploy.
+
+Without a Blob store, sync on Vercel won't persist, because its filesystem is read-only and temporary.
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `SyntaxError: Unexpected token '?'` when running `npx tsc` or `npm test` | Your Node is too old. Use Node 18.17+ (e.g. `nvm use 20`). |
+| Every page redirects to `/login` | Set `APP_USERNAME`, `APP_PASSWORD`, and `AUTH_SECRET` in `.env.local`, then restart the dev server. |
+| `TMDB_API_KEY is not configured` / empty feeds | Add the key to `.env.local` and restart. |
+| TMDB requests time out (common on WSL) | Requests already retry once. Check your network or DNS. |
+
+### Reset the "already shown" lists
+
+Paste this into the browser console while signed in. It clears `shown` and `displayed` locally and on the server, so the discovery feed starts fresh:
+
 ```javascript
 (() => {
   const key = "reel-radar-v1";
@@ -174,21 +193,14 @@ To reset your local cache and server backup directly from the browser developer 
   state.shown = [];
   state.displayed = [];
   localStorage.setItem(key, JSON.stringify(state));
-
   fetch("/api/storage", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(state),
-  })
-    .then((res) => res.json())
-    .then(() => {
-      console.log("Shown and displayed lists cleared successfully.");
-      location.reload();
-    })
-    .catch((err) => console.error("Failed to sync reset to server:", err));
+  }).then(() => location.reload());
 })();
 ```
 
 ---
 
-*Notice: This product uses the TMDB API but is not endorsed or certified by TMDB.*
+*This product uses the TMDB API but is not endorsed or certified by TMDB.*

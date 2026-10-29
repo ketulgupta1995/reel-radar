@@ -1,4 +1,5 @@
 import { MediaType, Title } from "@/types/title";
+import { isIndianTitle } from "@/lib/region";
 
 const base = "https://api.themoviedb.org/3";
 const image = "https://image.tmdb.org/t/p/w500";
@@ -324,10 +325,7 @@ export async function getSimilar(
       if (!c.posterPath) continue;
 
       // Quality Filter: Filter low-vote noise
-      const isIndian =
-        c.originCountry?.includes("IN") ||
-        (c.originalLanguage && ["hi", "te", "ta", "ml", "kn", "bn", "mr"].includes(c.originalLanguage));
-      const minVotes = isIndian ? 5 : 15;
+      const minVotes = isIndianTitle(c) ? 5 : 15;
       if (c.voteCount !== undefined && c.voteCount < minVotes) continue;
 
       // 1. Genre Jaccard & intersection overlap

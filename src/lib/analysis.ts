@@ -1,5 +1,5 @@
 import { Title, MediaType } from "@/types/title";
-import { isIndianTitle } from "@/lib/recommend";
+import { isIndianTitle, isSouthIndianTitle } from "@/lib/region";
 
 export type AnalysisFilters = {
   mediaType: "all" | MediaType;
@@ -676,13 +676,7 @@ export function computeAnalysis(
     });
   }
 
-  const southIndianCount = dataset.filter(
-    (t) =>
-      t.originalLanguage === "te" ||
-      t.originalLanguage === "ta" ||
-      t.originalLanguage === "ml" ||
-      t.originalLanguage === "kn"
-  ).length;
+  const southIndianCount = dataset.filter(isSouthIndianTitle).length;
 
   if (indianCount >= 10 && southIndianCount <= 3) {
     blindspots.push({

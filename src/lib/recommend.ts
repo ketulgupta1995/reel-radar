@@ -1,12 +1,5 @@
 import { Title, keyOf } from "@/types/title";
-
-export const INDIAN_LANGS = new Set(["hi", "te", "ta", "ml", "kn", "bn", "mr", "pa", "gu"]);
-
-export const isIndianTitle = (t: Title): boolean => {
-  if (t.originCountry?.includes("IN")) return true;
-  if (t.originalLanguage && INDIAN_LANGS.has(t.originalLanguage.toLowerCase())) return true;
-  return false;
-};
+import { isIndianTitle } from "@/lib/region";
 
 const frequencies = (
   items: Title[],

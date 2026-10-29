@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Title } from "@/types/title";
 import { poster } from "@/lib/tmdb";
-import { isIndianTitle } from "@/lib/recommend";
+import { isIndianTitle } from "@/lib/region";
 import { TitleDetailsModal } from "./TitleDetailsModal";
 
 export function TitleCard({
