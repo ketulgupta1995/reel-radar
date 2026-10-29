@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import WeekView from "./WeekView";
+import { ClockTimePicker } from "./ClockTimePicker";
 import {
   HOUR_PX,
   SNAP,
@@ -23,9 +24,11 @@ import {
   layoutBlocks,
 } from "./planner";
 import { weekStart } from "@/lib/plannerStats";
+import { parseQuickAdd, type QuickAdd } from "@/lib/quickAdd";
 import {
   loadTodos,
   addTodo,
+  weekday,
   toggleTodo,
   deleteTodo,
   restoreTodo,
@@ -60,6 +63,7 @@ import {
   updateDayLog,
   addWater,
   WATER_STEP,
+  WATER_GOAL,
   type DayLog,
   exportPlanner,
   importPlanner,
@@ -169,7 +173,6 @@ export default function TodosPage() {
   const [now, setNow] = useState<number | null>(null);
   const [logVersion, setLogVersion] = useState(0);
   const [dragOver, setDragOver] = useState<number | null>(null);
-  const [rowOver, setRowOver] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout>>();
   const quickRef = useRef(quickAdd);
@@ -224,6 +227,26 @@ export default function TodosPage() {
     setReminderLead(loadReminderLead());
     setFocus(getFocusSession());
   }, []);
+
+  // Shortcuts: N or / to add a task, ← → to change day (or week), T for today, W to switch view.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement;
+      if (e.metaKey || e.ctrlKey || e.altKey || el.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
+      const step = view === "week" ? 7 : 1;
+      if (e.key === "n" || e.key === "/") {
+        e.preventDefault();
+        if (view === "week") setView("day");
+        setMobileView("tasks");
+        setTimeout(() => inputRef.current?.focus(), 0);
+      } else if (e.key === "ArrowLeft") setSelectedDate((d) => shiftDate(d, -step));
+      else if (e.key === "ArrowRight") setSelectedDate((d) => shiftDate(d, step));
+      else if (e.key === "t") setSelectedDate(getTodayDate());
+      else if (e.key === "w") setView((v) => (v === "week" ? "day" : "week"));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [view]);
 
   // Current-time marker, updated every minute.
   useEffect(() => {
@@ -311,16 +334,18 @@ export default function TodosPage() {
   const handleAddTodo = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTodoText.trim()) return;
-    const start = fromInputTime(newTime);
+    // Shorthand in the title ("6pm", "45m", "#work", "!high", "daily") wins over the form controls.
+    const quick = parseQuickAdd(newTodoText);
+    const start = quick.start ?? fromInputTime(newTime);
     apply(
       addTodo(
-        newTodoText.trim(),
+        quick.text || newTodoText.trim(),
         selectedDate,
-        newPriority || undefined,
-        start !== null ? { start, duration: newDuration } : undefined,
-        newDaily ? newRepeatDays : false,
+        quick.priority ?? (newPriority || undefined),
+        start !== null ? { start, duration: quick.duration ?? newDuration } : undefined,
+        newDaily ? newRepeatDays : quick.daily ?? false,
         newNote,
-        newTag || undefined
+        quick.tag ?? (newTag || undefined)
       )
     );
     setNewRepeatDays(ALL_DAYS);
@@ -489,6 +514,7 @@ export default function TodosPage() {
   const scheduled = useMemo(() => todos.filter((t) => t.start !== undefined), [todos]);
   const unscheduledActive = todos.filter((t) => t.start === undefined && !t.completed).length;
   const plannedMinutes = scheduled.reduce((n, t) => n + (t.duration ?? DEFAULT_DURATION), 0);
+  const focusedMinutes = todos.reduce((n, t) => n + (t.spent ?? 0), 0);
   const lanes = useMemo(() => layoutBlocks(scheduled), [scheduled]);
   const selected = scheduled.find((t) => t.id === selectedBlock) ?? null;
 
@@ -502,6 +528,18 @@ export default function TodosPage() {
     );
   }, [todos, filter, query, tagFilter]);
 
+  const quickPreview = useMemo(() => parseQuickAdd(newTodoText), [newTodoText]);
+
+  const reorder = useListReorder((id, before) => apply(reorderTodo(id, before, selectedDate)));
+  // Keyboard: move a task one place up or down among the unfinished ones.
+  const moveBy = (t: Todo, delta: -1 | 1) => {
+    const ids = sortTodos(todos).filter((x) => !x.completed).map((x) => x.id);
+    const at = ids.indexOf(t.id);
+    const before = delta < 0 ? ids[at - 1] : ids[at + 2] ?? null;
+    if (at + delta < 0 || at + delta >= ids.length) return;
+    apply(reorderTodo(t.id, before, selectedDate));
+  };
+
   const usedTags = TAGS.map((t) => t.id).filter((id) => id === tagFilter || todos.some((t) => t.tag === id));
 
   const otherDays = availableDates.filter((d) => d !== selectedDate && loadTodos(d).length > 0);
@@ -509,7 +547,7 @@ export default function TodosPage() {
   const prevLabel = getRelativeDateLabel(shiftDate(selectedDate, -1));
 
   return (
-    <main className="min-h-screen bg-[#090910] text-white">
+    <main className="min-h-screen bg-[#090910] bg-[radial-gradient(ellipse_at_top,rgba(246,196,83,0.06),transparent_60%)] text-white">
       {/* Header */}
       <header className="border-b border-white/5 bg-black/20 backdrop-blur-md sticky top-0 z-40">
         <nav className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-4 py-3 sm:px-6 sm:py-4">
@@ -518,26 +556,53 @@ export default function TodosPage() {
       </header>
 
       <div className="mx-auto max-w-[1600px] px-4 pb-24 pt-5 sm:px-6 sm:py-8">
-        {/* Title & Day Navigation */}
-        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <h1 className="text-2xl font-bold sm:text-3xl">Daily Planner</h1>
-              <Link
-                href="/todos/stats"
-                className="rounded-full border border-white/20 bg-white/5 px-3 py-1 text-xs text-white/80 hover:border-gold/40 hover:text-gold"
-              >
-                Stats →
-              </Link>
+        {/* Hero: greeting, progress, day navigation */}
+        <section className="relative mb-6 overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-white/[.07] via-white/[.03] to-transparent p-4 sm:p-6">
+          <div aria-hidden className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-gold/10 blur-3xl" />
+          <div aria-hidden className="pointer-events-none absolute -bottom-32 left-1/3 h-64 w-64 rounded-full bg-violet-500/10 blur-3xl" />
+          <div className="relative flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs uppercase tracking-[0.2em] text-white/45">
+                <h1>Daily Planner</h1>
+                <Link
+                  href="/todos/stats"
+                  className="rounded-full border border-white/15 px-2.5 py-0.5 normal-case tracking-normal text-white/70 hover:border-gold/40 hover:text-gold"
+                >
+                  Stats →
+                </Link>
+              </div>
+              <p className="mt-2 text-2xl font-bold sm:text-4xl">
+                {view === "week" ? "This week at a glance" : greeting(isToday, now, selectedDate)}
+              </p>
+              <p className="mt-1 text-white/60">
+                {view === "week"
+                  ? `Week of ${formatShortDate(weekStart(selectedDate))} – ${formatShortDate(shiftDate(weekStart(selectedDate), 6))}`
+                  : `${getRelativeDateLabel(selectedDate)} · ${formatDate(selectedDate)}`}
+              </p>
+              {view === "day" && <p className="mt-3 text-sm text-white/75">{moodLine(todos.length, activeCount, percent)}</p>}
             </div>
-            <p className="mt-1 text-white/60">
-              {view === "week"
-                ? `Week of ${formatShortDate(weekStart(selectedDate))} – ${formatShortDate(shiftDate(weekStart(selectedDate), 6))}`
-                : `${getRelativeDateLabel(selectedDate)} · ${formatDate(selectedDate)}`}
-            </p>
+            {view === "day" && (
+              <div className="flex items-center gap-4 self-start">
+                <ProgressRing percent={percent} label={`${completedCount}/${todos.length}`} />
+                <dl className="grid grid-cols-2 gap-x-5 gap-y-2 text-sm">
+                  {[
+                    { label: "Still to do", value: String(activeCount) },
+                    { label: "Not scheduled", value: String(unscheduledActive) },
+                    { label: "Planned time", value: plannedMinutes ? fmtDuration(plannedMinutes) : "–" },
+                    { label: "Focused", value: focusedMinutes ? fmtDuration(focusedMinutes) : "–" },
+                  ].map((c) => (
+                    <div key={c.label}>
+                      <dt className="text-[11px] uppercase tracking-wider text-white/45">{c.label}</dt>
+                      <dd className="text-lg font-semibold tabular-nums">{c.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            )}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex rounded-full border border-white/15 bg-white/5 p-0.5 text-sm">
+
+          <div className="relative mt-5 flex flex-wrap items-center gap-2">
+            <div className="flex rounded-full border border-white/15 bg-black/20 p-0.5 text-sm">
               {(["day", "week"] as View[]).map((v) => (
                 <button
                   key={v}
@@ -553,7 +618,7 @@ export default function TodosPage() {
             </div>
             <button
               onClick={() => setSelectedDate(shiftDate(selectedDate, view === "week" ? -7 : -1))}
-              className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-sm hover:border-gold/40 hover:text-gold"
+              className="h-8 w-8 rounded-full border border-white/20 bg-black/20 text-sm hover:border-gold/40 hover:text-gold"
               aria-label={view === "week" ? "Previous week" : "Previous day"}
             >
               ‹
@@ -562,12 +627,12 @@ export default function TodosPage() {
               type="date"
               value={selectedDate}
               onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
-              className="min-w-0 flex-1 rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-sm text-white [color-scheme:dark] focus:border-gold/50 focus:outline-none sm:flex-none"
+              className="min-w-0 flex-1 rounded-full border border-white/20 bg-black/20 px-3 py-1 text-sm text-white [color-scheme:dark] focus:border-gold/50 focus:outline-none sm:flex-none"
               aria-label="Pick a date"
             />
             <button
               onClick={() => setSelectedDate(shiftDate(selectedDate, view === "week" ? 7 : 1))}
-              className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-sm hover:border-gold/40 hover:text-gold"
+              className="h-8 w-8 rounded-full border border-white/20 bg-black/20 text-sm hover:border-gold/40 hover:text-gold"
               aria-label={view === "week" ? "Next week" : "Next day"}
             >
               ›
@@ -575,13 +640,15 @@ export default function TodosPage() {
             {!isToday && (
               <button
                 onClick={() => setSelectedDate(getTodayDate())}
-                className="rounded-full bg-gold px-3 py-1.5 text-sm font-semibold text-black hover:brightness-110"
+                className="rounded-full bg-gold px-3 py-1 text-sm font-semibold text-black hover:brightness-110"
               >
                 Today
               </button>
             )}
           </div>
-        </div>
+
+          {view === "day" && <WeekStrip selectedDate={selectedDate} todos={todos} onPick={setSelectedDate} />}
+        </section>
 
         {view === "week" ? (
           <WeekView
@@ -595,27 +662,6 @@ export default function TodosPage() {
           />
         ) : (
         <>
-        {/* Day summary */}
-        <div className="mb-5 grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4">
-          {[
-            { label: "Done", value: `${completedCount}/${todos.length}`, sub: `${percent}% complete` },
-            { label: "Still to do", value: String(activeCount), sub: `${unscheduledActive} not scheduled` },
-            { label: "Planned time", value: plannedMinutes ? fmtDuration(plannedMinutes) : "–", sub: `${scheduled.length} time ${scheduled.length === 1 ? "block" : "blocks"}` },
-            { label: "Unplanned in 24h", value: fmtDuration(Math.max(24 * 60 - plannedMinutes, 0)), sub: "drag tasks into the planner" },
-          ].map((c) => (
-            <div key={c.label} className="rounded-xl border border-white/10 bg-panel/60 px-3 py-2.5 sm:px-4 sm:py-3">
-              <div className="truncate text-[11px] uppercase tracking-wider text-white/45 sm:text-xs">{c.label}</div>
-              <div className="mt-1 text-xl font-semibold sm:text-2xl">{c.value}</div>
-              <div className="truncate text-[11px] text-white/45 sm:text-xs">{c.sub}</div>
-            </div>
-          ))}
-        </div>
-        {todos.length > 0 && (
-          <div className="mb-6 h-1.5 overflow-hidden rounded-full bg-white/10">
-            <div className="h-full rounded-full bg-gold transition-all" style={{ width: `${percent}%` }} />
-          </div>
-        )}
-
         {/* Carry-over from the previous day */}
         {yesterdayTodos.length > 0 && (
           <div className="mb-5 rounded-xl border border-gold/30 bg-gold/5 text-sm">
@@ -684,20 +730,30 @@ export default function TodosPage() {
           {/* ---------------- Tasks column ---------------- */}
           <section className={mobileView === "tasks" ? "" : "hidden lg:block"}>
             <DayLogCard date={selectedDate} version={logVersion} />
-            <form onSubmit={handleAddTodo} className="mb-4 flex flex-wrap gap-2 sm:gap-3">
-              <input
-                ref={inputRef}
-                type="text"
-                value={newTodoText}
-                onChange={(e) => setNewTodoText(e.target.value)}
-                placeholder={isToday ? "What needs to be done today?" : `Add a task for ${getRelativeDateLabel(selectedDate)}`}
-                className="min-w-0 basis-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white sm:min-w-[12rem] sm:flex-1 sm:basis-auto placeholder-white/40 transition focus:border-gold/50 focus:outline-none focus:ring-1 focus:ring-gold/50"
-                autoComplete="off"
-              />
+            <form
+              onSubmit={handleAddTodo}
+              className="mb-4 flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-panel/70 p-3 shadow-lg shadow-black/30 transition focus-within:border-gold/40"
+            >
+              <div className="flex basis-full items-center gap-2">
+                <span aria-hidden className="pl-1 text-xl text-gold">+</span>
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={newTodoText}
+                  onChange={(e) => setNewTodoText(e.target.value)}
+                  placeholder={isToday ? "What needs to be done today?" : `Add a task for ${getRelativeDateLabel(selectedDate)}`}
+                  className="min-w-0 flex-1 bg-transparent py-2 text-base text-white placeholder-white/40 focus:outline-none"
+                  autoComplete="off"
+                />
+                <kbd className="hidden rounded border border-white/15 px-1.5 text-[10px] text-white/40 sm:block" title="Press N anywhere to jump here">
+                  N
+                </kbd>
+              </div>
+              <QuickAddHint quick={quickPreview} typed={newTodoText.trim() !== ""} />
               <select
                 value={newPriority}
                 onChange={(e) => setNewPriority(e.target.value as Priority | "")}
-                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-panel px-3 py-3 text-sm text-white focus:border-gold/50 focus:outline-none sm:flex-none"
+                className="min-w-0 flex-1 rounded-lg border border-white/10 bg-ink px-2.5 py-1.5 text-xs text-white focus:border-gold/50 focus:outline-none sm:flex-none"
                 aria-label="Priority"
               >
                 <option value="">No priority</option>
@@ -708,7 +764,7 @@ export default function TodosPage() {
               <select
                 value={newTag}
                 onChange={(e) => setNewTag(e.target.value as TagId | "")}
-                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-panel px-3 py-3 text-sm text-white focus:border-gold/50 focus:outline-none sm:flex-none"
+                className="min-w-0 flex-1 rounded-lg border border-white/10 bg-ink px-2.5 py-1.5 text-xs text-white focus:border-gold/50 focus:outline-none sm:flex-none"
                 aria-label="Tag"
               >
                 <option value="">No tag</option>
@@ -722,7 +778,7 @@ export default function TodosPage() {
                 type="time"
                 value={newTime}
                 onChange={(e) => setNewTime(e.target.value)}
-                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-panel px-3 py-3 text-sm text-white [color-scheme:dark] focus:border-gold/50 focus:outline-none sm:flex-none"
+                className="min-w-0 flex-1 rounded-lg border border-white/10 bg-ink px-2.5 py-1.5 text-xs text-white [color-scheme:dark] focus:border-gold/50 focus:outline-none sm:flex-none"
                 aria-label="Start time (optional)"
                 title="Start time (optional) - places it in the planner"
               />
@@ -730,7 +786,7 @@ export default function TodosPage() {
                 <select
                   value={newDuration}
                   onChange={(e) => setNewDuration(Number(e.target.value))}
-                  className="rounded-xl border border-white/10 bg-panel px-3 py-3 text-sm text-white focus:border-gold/50 focus:outline-none"
+                  className="rounded-lg border border-white/10 bg-ink px-2.5 py-1.5 text-xs text-white focus:border-gold/50 focus:outline-none"
                   aria-label="Duration"
                 >
                   {DURATIONS.map((d) => (
@@ -745,10 +801,10 @@ export default function TodosPage() {
                 onClick={() => setShowNewNote((v) => !v)}
                 aria-pressed={showNewNote}
                 title="Add a description"
-                className={`rounded-xl border px-3 py-3 text-sm transition ${
+                className={`rounded-lg border px-2.5 py-1.5 text-xs transition ${
                   showNewNote || newNote.trim()
                     ? "border-gold/60 bg-gold/15 text-gold"
-                    : "border-white/10 bg-panel text-white/60 hover:text-white"
+                    : "border-white/10 bg-ink text-white/60 hover:text-white"
                 }`}
               >
                 ✎ Note
@@ -758,10 +814,10 @@ export default function TodosPage() {
                 onClick={() => setNewDaily((v) => !v)}
                 aria-pressed={newDaily}
                 title="Repeat this task every day"
-                className={`rounded-xl border px-3 py-3 text-sm transition ${
+                className={`rounded-lg border px-2.5 py-1.5 text-xs transition ${
                   newDaily
                     ? "border-gold/60 bg-gold/15 text-gold"
-                    : "border-white/10 bg-panel text-white/60 hover:text-white"
+                    : "border-white/10 bg-ink text-white/60 hover:text-white"
                 }`}
               >
                 ↻ {newDaily ? repeatLabel(newRepeatDays.length === 7 ? undefined : newRepeatDays) : "Daily"}
@@ -769,7 +825,7 @@ export default function TodosPage() {
               <button
                 type="submit"
                 disabled={!newTodoText.trim()}
-                className="flex-1 rounded-xl bg-gold px-6 py-3 sm:flex-none font-semibold text-black transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                className="ml-auto rounded-lg bg-gold px-5 py-1.5 text-sm font-semibold text-black transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Add
               </button>
@@ -788,7 +844,7 @@ export default function TodosPage() {
                   }}
                   placeholder="Description (optional)"
                   rows={3}
-                  className="basis-full resize-y rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-white/40 transition focus:border-gold/50 focus:outline-none focus:ring-1 focus:ring-gold/50"
+                  className="basis-full resize-y rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-white/40 transition focus:border-gold/50 focus:outline-none focus:ring-1 focus:ring-gold/50"
                 />
               )}
             </form>
@@ -838,27 +894,43 @@ export default function TodosPage() {
               </div>
             )}
 
+            {todos.length > 0 && activeCount === 0 && (
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-400/30 bg-gradient-to-r from-emerald-500/15 via-gold/10 to-transparent px-4 py-3">
+                <div>
+                  <p className="font-semibold text-white">All done for {getRelativeDateLabel(selectedDate)} 🎉</p>
+                  <p className="text-sm text-white/60">Every task is ticked off. Take a breath, or get a head start.</p>
+                </div>
+                <button
+                  onClick={() => setSelectedDate(shiftDate(selectedDate, 1))}
+                  className="rounded-full border border-white/20 px-3 py-1 text-sm text-white/80 hover:border-gold/50 hover:text-gold"
+                >
+                  Plan {getRelativeDateLabel(shiftDate(selectedDate, 1)).toLowerCase()} →
+                </button>
+              </div>
+            )}
+
             {todos.length === 0 ? (
-              <div className="rounded-2xl border border-white/10 bg-panel/60 p-12 text-center">
+              <div className="rounded-2xl border border-dashed border-white/15 bg-panel/40 p-10 text-center">
+                <div aria-hidden className="mb-3 text-4xl">🗒️</div>
                 <h3 className="text-lg font-semibold text-white/80">Nothing planned for {getRelativeDateLabel(selectedDate)}</h3>
                 <p className="mt-1 text-white/50">Add a task above, or click a time slot in the planner.</p>
+                <p className="mt-3 text-xs text-white/40">
+                  Try typing <span className="rounded bg-white/10 px-1.5 py-0.5 text-white/70">Gym 6pm 45m #health !high</span>
+                </p>
               </div>
             ) : visible.length === 0 ? (
               <p className="rounded-xl border border-white/10 bg-panel/60 p-6 text-center text-sm text-white/50">
                 No tasks match this filter.
               </p>
             ) : (
-              <div className="space-y-2">
+              <div ref={reorder.listRef} className="space-y-2">
                 {visible.map((todo) => (
+                  <Fragment key={todo.id}>
+                  {reorder.drag?.before === todo.id && <DropLine />}
                   <TodoItem
-                    key={todo.id}
                     todo={todo}
-                    dropTarget={rowOver === todo.id}
-                    onRowOver={setRowOver}
-                    onReorder={(id, target) => {
-                      setRowOver(null);
-                      apply(reorderTodo(id, target, selectedDate));
-                    }}
+                    reorder={reorder}
+                    onMoveBy={moveBy}
                     isEditing={editingId === todo.id}
                     editText={editText}
                     editNote={editNote}
@@ -905,7 +977,9 @@ export default function TodosPage() {
                       }, 0);
                     }}
                   />
+                  </Fragment>
                 ))}
+                {reorder.drag && reorder.drag.before === null && <DropLine />}
               </div>
             )}
 
@@ -1187,9 +1261,8 @@ export default function TodosPage() {
 
 function TodoItem({
   todo,
-  dropTarget,
-  onRowOver,
-  onReorder,
+  reorder,
+  onMoveBy,
   isEditing,
   editText,
   editNote,
@@ -1217,9 +1290,8 @@ function TodoItem({
   onSendToDay,
 }: {
   todo: Todo;
-  dropTarget: boolean;
-  onRowOver: (id: string | null) => void;
-  onReorder: (id: string, targetId: string) => void;
+  reorder: ListReorder;
+  onMoveBy: (todo: Todo, delta: -1 | 1) => void;
   isEditing: boolean;
   editText: string;
   editNote: string;
@@ -1307,32 +1379,52 @@ function TodoItem({
   const duration = todo.duration ?? DEFAULT_DURATION;
   const subtasks = todo.subtasks ?? [];
   const subtasksDone = subtasks.filter((st) => st.done).length;
+  const lifted = reorder.drag?.id === todo.id;
 
   return (
     <div
-      draggable={!todo.completed}
+      draggable={!todo.completed && !reorder.drag}
       onDragStart={(e) => {
         e.dataTransfer.setData("text/todo-id", todo.id);
         e.dataTransfer.effectAllowed = "move";
       }}
-      onDragEnd={() => onRowOver(null)}
-      onDragOver={(e) => {
-        if (todo.completed) return;
-        e.preventDefault();
-        onRowOver(todo.id);
+      data-reorder-id={todo.completed ? undefined : todo.id}
+      style={{
+        ...(lifted ? { transform: `translateY(${reorder.drag!.dy}px)` } : {}),
+        ...(todo.tag && !todo.completed ? { borderLeftColor: TAG_COLORS[todo.tag], borderLeftWidth: 3 } : {}),
       }}
-      onDrop={(e) => {
-        const id = e.dataTransfer.getData("text/todo-id");
-        onRowOver(null);
-        if (!id || todo.completed) return;
-        e.preventDefault();
-        onReorder(id, todo.id);
-      }}
-      className={`rounded-xl border bg-panel/60 p-3 pr-2 transition sm:pr-3 ${
-        dropTarget ? "border-gold/70" : "border-white/10 hover:border-white/20"
+      className={`relative rounded-xl border bg-panel/60 p-3 pr-2 sm:pr-3 ${
+        lifted
+          ? "z-20 border-gold/60 opacity-90 shadow-2xl shadow-black/60"
+          : "border-white/10 transition hover:border-white/20"
       }`}
     >
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-2">
+        {!todo.completed && (
+          <button
+            type="button"
+            aria-label={`Drag to reorder ${todo.text}`}
+            title="Drag to reorder (or use ↑ ↓ on the keyboard)"
+            onPointerDown={(e) => reorder.start(e, todo.id)}
+            onKeyDown={(e) => {
+              if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+              e.preventDefault();
+              onMoveBy(todo, e.key === "ArrowUp" ? -1 : 1);
+            }}
+            className={`-ml-1 mt-0.5 flex h-6 w-6 shrink-0 touch-none select-none items-center justify-center rounded-md text-white/30 transition hover:bg-white/10 hover:text-white/70 focus:text-white/80 focus:outline-none focus:ring-1 focus:ring-gold/50 ${
+              lifted ? "cursor-grabbing text-gold" : "cursor-grab"
+            }`}
+          >
+            <svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor" aria-hidden>
+              {[3, 8, 13].map((y) => (
+                <g key={y}>
+                  <circle cx="3" cy={y} r="1.4" />
+                  <circle cx="9" cy={y} r="1.4" />
+                </g>
+              ))}
+            </svg>
+          </button>
+        )}
         <button
           onClick={() => onToggle(todo.id)}
           className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border-2 transition ${
@@ -1722,68 +1814,281 @@ function FocusBar({
   );
 }
 
-// Wake time, sleep time and water for one day.
+// How the day went: wake and sleep times on a clock, water against a daily goal, and a short review.
 function DayLogCard({ date, version }: { date: string; version: number }) {
   const [log, setLog] = useState<DayLog>({});
-  useEffect(() => setLog(loadDayLog(date)), [date, version]);
-  const timeInput = (field: "wake" | "sleep", label: string) => (
-    <label className="flex items-center gap-2 text-sm text-white/70">
-      {label}
-      <input
-        type="time"
-        aria-label={label}
-        value={log[field] ?? ""}
-        onChange={(e) => setLog(updateDayLog(date, { [field]: e.target.value || undefined }))}
-        className="rounded-lg border border-white/10 bg-panel px-2 py-1 text-white focus:border-gold/50 focus:outline-none"
-      />
-    </label>
-  );
+  const [notesOpen, setNotesOpen] = useState(false);
+  useEffect(() => {
+    const loaded = loadDayLog(date);
+    setLog(loaded);
+    setNotesOpen(Boolean(loaded.well || loaded.bad || loaded.improve));
+  }, [date, version]);
   const water = log.water ?? 0;
-  const reviewInput = (field: "well" | "bad" | "improve", label: string) => (
+  const litres = (ml: number) => `${(ml / 1000).toFixed(2).replace(/\.?0+$/, "")} L`;
+  const hasNotes = Boolean(log.well || log.bad || log.improve);
+  const waterButton = (label: string, ml: number, text: string) => (
+    <button
+      type="button"
+      aria-label={label}
+      onClick={() => setLog(addWater(date, ml))}
+      className="rounded-lg border border-white/10 px-2.5 py-1 text-xs text-white/80 transition hover:border-gold/50 hover:text-white"
+    >
+      {text}
+    </button>
+  );
+  const note = (field: "well" | "bad" | "improve", label: string, hint: string) => (
     <label className="flex flex-col gap-1 text-sm text-white/70">
       {label}
       <textarea
         aria-label={label}
-        rows={2}
+        rows={3}
+        placeholder={hint}
         value={log[field] ?? ""}
         onChange={(e) => setLog(updateDayLog(date, { [field]: e.target.value }))}
-        className="resize-y rounded-lg border border-white/10 bg-panel px-2 py-1 text-white focus:border-gold/50 focus:outline-none"
+        className="resize-y rounded-lg border border-white/10 bg-panel px-2.5 py-1.5 text-white placeholder-white/30 focus:border-gold/50 focus:outline-none"
       />
     </label>
   );
   return (
-    <div className="mb-4 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-      {timeInput("wake", "Woke up")}
-      {timeInput("sleep", "Went to sleep")}
-      <div className="flex items-center gap-2 text-sm text-white/70">
-        Water
+    <div className="mb-4 space-y-3 rounded-xl border border-white/10 bg-white/5 p-3 sm:p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <ClockTimePicker
+          label="Woke up"
+          value={log.wake ?? ""}
+          fallback="07:00"
+          onChange={(v) => setLog(updateDayLog(date, { wake: v || undefined }))}
+        />
+        <ClockTimePicker
+          label="Went to sleep"
+          value={log.sleep ?? ""}
+          fallback="22:30"
+          onChange={(v) => setLog(updateDayLog(date, { sleep: v || undefined }))}
+        />
+      </div>
+
+      <div>
+        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+          <span className="text-sm text-white/70">
+            Water{" "}
+            <span className="font-semibold text-white" data-testid="water-total">
+              {litres(water)}
+            </span>
+            <span className="text-white/40"> of {litres(WATER_GOAL)}</span>
+          </span>
+          <div className="flex items-center gap-1.5">
+            {waterButton("Less water", -WATER_STEP, "− Glass")}
+            {waterButton("More water", WATER_STEP, "+ Glass")}
+            {waterButton("Add a bottle", WATER_STEP * 2, "+ Bottle")}
+          </div>
+        </div>
+        <div
+          className="h-2 overflow-hidden rounded-full bg-white/10"
+          role="progressbar"
+          aria-label="Water goal"
+          aria-valuemin={0}
+          aria-valuemax={WATER_GOAL}
+          aria-valuenow={Math.min(water, WATER_GOAL)}
+        >
+          <div
+            className={`h-full rounded-full transition-all ${water >= WATER_GOAL ? "bg-emerald-400" : "bg-sky-400"}`}
+            style={{ width: `${Math.min(100, (water / WATER_GOAL) * 100)}%` }}
+          />
+        </div>
+      </div>
+
+      <div>
         <button
           type="button"
-          aria-label="Less water"
-          onClick={() => setLog(addWater(date, -WATER_STEP))}
-          className="h-7 w-7 rounded-lg border border-white/10 text-white hover:border-gold/50"
+          onClick={() => setNotesOpen(!notesOpen)}
+          aria-expanded={notesOpen}
+          className="flex items-center gap-1.5 text-sm text-white/70 transition hover:text-white"
         >
-          −
+          <span aria-hidden className={`inline-block transition-transform ${notesOpen ? "rotate-90" : ""}`}>
+            ›
+          </span>
+          How did the day go?
+          {hasNotes && !notesOpen && <span className="h-1.5 w-1.5 rounded-full bg-gold" aria-label="has notes" />}
         </button>
-        <span className="min-w-[4rem] text-center font-medium text-white" data-testid="water-total">
-          {(water / 1000).toFixed(2).replace(/\.?0+$/, "")} L
-        </span>
-        <button
-          type="button"
-          aria-label="More water"
-          onClick={() => setLog(addWater(date, WATER_STEP))}
-          className="h-7 w-7 rounded-lg border border-white/10 text-white hover:border-gold/50"
-        >
-          +
-        </button>
+        {notesOpen && (
+          <div className="mt-2 grid gap-3 sm:grid-cols-3">
+            {note("well", "What went well", "Wins, however small")}
+            {note("bad", "What went badly", "What got in the way")}
+            {note("improve", "What to improve", "One thing for tomorrow")}
+          </div>
+        )}
       </div>
     </div>
-    <div className="mt-3 grid gap-3 sm:grid-cols-3">
-      {reviewInput("well", "What went well")}
-      {reviewInput("bad", "What went badly")}
-      {reviewInput("improve", "What to improve")}
+  );
+}
+
+// Reordering the task list by dragging a row's handle with a mouse, finger or pen. Rows that can
+// move carry data-reorder-id; the one being dragged follows the pointer and a line shows where it
+// will land. `onCommit` gets the task and the one it goes before (null = the end).
+type ListReorder = ReturnType<typeof useListReorder>;
+function useListReorder(onCommit: (id: string, before: string | null) => void) {
+  const [drag, setDrag] = useState<{ id: string; dy: number; before: string | null } | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const start = (e: React.PointerEvent, id: string) => {
+    if (e.button > 0) return;
+    e.preventDefault(); // keeps the row's native drag (to the planner) from starting
+    const startY = e.clientY;
+    let before: string | null | undefined;
+    const move = (ev: PointerEvent) => {
+      // Near the top or bottom edge, scroll the page so a long list can be dragged through.
+      if (ev.clientY < 80) window.scrollBy(0, -14);
+      else if (ev.clientY > window.innerHeight - 80) window.scrollBy(0, 14);
+      const rows = Array.from(listRef.current?.querySelectorAll<HTMLElement>("[data-reorder-id]") ?? []).filter(
+        (r) => r.dataset.reorderId !== id
+      );
+      const next = rows.find((r) => {
+        const box = r.getBoundingClientRect();
+        return ev.clientY < box.top + box.height / 2;
+      });
+      before = next?.dataset.reorderId ?? null;
+      setDrag({ id, dy: ev.clientY - startY, before });
+    };
+    const finish = (commit: boolean) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", drop);
+      window.removeEventListener("pointercancel", cancel);
+      setDrag(null);
+      if (commit && before !== undefined) onCommit(id, before);
+    };
+    const drop = () => finish(true);
+    const cancel = () => finish(false);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", drop);
+    window.addEventListener("pointercancel", cancel);
+  };
+
+  return { drag, listRef, start };
+}
+
+function DropLine() {
+  return <div className="-my-1 h-0.5 rounded-full bg-gold" aria-hidden data-testid="drop-line" />;
+}
+
+function greeting(isToday: boolean, now: number | null, date: string): string {
+  if (!isToday) return getRelativeDateLabel(date);
+  if (now === null) return "Hello";
+  if (now < 5 * 60) return "Up late? 🌙";
+  if (now < 12 * 60) return "Good morning ☀️";
+  if (now < 17 * 60) return "Good afternoon";
+  return "Good evening 🌆";
+}
+
+function moodLine(total: number, active: number, percent: number): string {
+  if (total === 0) return "A blank page. What matters most today?";
+  if (active === 0) return "Everything's done. Nicely handled.";
+  if (percent >= 50) return `Over halfway there. ${active} to go.`;
+  if (percent > 0) return `Good start. ${active} to go, one at a time.`;
+  return `${active} ${active === 1 ? "thing" : "things"} on the list. Pick one and begin.`;
+}
+
+function ProgressRing({ percent, label }: { percent: number; label: string }) {
+  const r = 34;
+  const c = 2 * Math.PI * r;
+  return (
+    <div className="relative h-24 w-24 shrink-0" role="img" aria-label={`${percent}% done`}>
+      <svg viewBox="0 0 80 80" className="h-full w-full -rotate-90">
+        <circle cx="40" cy="40" r={r} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="7" />
+        <circle
+          cx="40"
+          cy="40"
+          r={r}
+          fill="none"
+          stroke={percent === 100 ? "#34d399" : "#f6c453"}
+          strokeWidth="7"
+          strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={c * (1 - percent / 100)}
+          className="transition-[stroke-dashoffset] duration-700"
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-lg font-bold tabular-nums">{label}</span>
+        <span className="text-[10px] uppercase tracking-wider text-white/45">done</span>
+      </div>
     </div>
+  );
+}
+
+// The selected day's week as tappable days, each with a bar for how much of it got done.
+// Counts and "today" come from this browser (localStorage, local clock), so they're filled in after
+// mount: the server render can't know them, and rendering them there breaks hydration.
+function WeekStrip({ selectedDate, todos, onPick }: { selectedDate: string; todos: Todo[]; onPick: (date: string) => void }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const today = mounted ? getTodayDate() : "";
+  const start = weekStart(selectedDate);
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const date = shiftDate(start, i);
+    const list = !mounted ? [] : date === selectedDate ? todos : loadTodos(date);
+    return { date, total: list.length, done: list.filter((t) => t.completed).length };
+  });
+  return (
+    <div className="relative mt-4 grid grid-cols-7 gap-1 sm:gap-2">
+      {days.map((d) => {
+        const selected = d.date === selectedDate;
+        const label = `${formatDate(d.date)}: ${d.total ? `${d.done} of ${d.total} done` : "nothing planned"}`;
+        return (
+          <button
+            key={d.date}
+            onClick={() => onPick(d.date)}
+            aria-label={label}
+            aria-current={selected ? "date" : undefined}
+            title={label}
+            className={`flex flex-col items-center rounded-xl px-1 py-2 transition ${
+              selected ? "bg-gold text-black" : "bg-black/20 text-white/75 hover:bg-white/10"
+            }`}
+          >
+            <span className={`text-[10px] uppercase tracking-wider ${selected ? "text-black/70" : "text-white/45"}`}>
+              {DAY_NAMES[weekday(d.date)]}
+            </span>
+            <span className="text-base font-semibold tabular-nums">
+              {Number(d.date.slice(8))}
+              {d.date === today && !selected && <span className="ml-0.5 inline-block h-1.5 w-1.5 rounded-full bg-gold align-top" />}
+            </span>
+            <span className={`mt-1 h-1 w-6 overflow-hidden rounded-full ${selected ? "bg-black/20" : "bg-white/10"}`}>
+              {d.total > 0 && (
+                <span
+                  className={`block h-full rounded-full ${selected ? "bg-black/70" : d.done === d.total ? "bg-emerald-400" : "bg-gold"}`}
+                  style={{ width: `${Math.max(8, (d.done / d.total) * 100)}%` }}
+                />
+              )}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// What the shorthand in the add box will set, or a tip when there's none.
+function QuickAddHint({ quick, typed }: { quick: QuickAdd; typed: boolean }) {
+  const chips: string[] = [];
+  if (quick.start !== undefined) chips.push(`⏰ ${fmtTime(quick.start)}${quick.duration ? ` · ${fmtDuration(quick.duration)}` : ""}`);
+  else if (quick.duration) chips.push(`⏱ ${fmtDuration(quick.duration)} (add a time to schedule it)`);
+  if (quick.priority) chips.push(`⚑ ${quick.priority[0].toUpperCase()}${quick.priority.slice(1)}`);
+  if (quick.tag) chips.push(`# ${TAG_LABEL[quick.tag]}`);
+  if (quick.daily) chips.push("↻ Every day");
+  if (!chips.length)
+    return typed ? null : (
+      <p className="basis-full px-1 text-[11px] text-white/35">
+        Shorthand: <span className="text-white/55">6pm</span> · <span className="text-white/55">45m</span> ·{" "}
+        <span className="text-white/55">#work</span> · <span className="text-white/55">!high</span> ·{" "}
+        <span className="text-white/55">daily</span>
+      </p>
+    );
+  return (
+    <div className="flex basis-full flex-wrap items-center gap-1.5 px-1" data-testid="quick-add-preview">
+      {chips.map((c) => (
+        <span key={c} className="rounded-full border border-gold/30 bg-gold/10 px-2 py-0.5 text-[11px] text-gold">
+          {c}
+        </span>
+      ))}
+      {quick.text && <span className="text-[11px] text-white/40">→ “{quick.text}”</span>}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { jsonResponse } from "@/test/fixtures";
 import { requests, routeFetch } from "@/test/pages";
+import { weekStart } from "@/lib/plannerStats";
 import { Todo, addTodo, getTodayDate, loadDayLog, loadDailyTasks, loadTodos, saveTodos, shiftDate } from "@/lib/todos";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/todos" }));
@@ -55,65 +56,234 @@ beforeEach(() => {
 
 describe("arranging tasks", () => {
   const rows = () => screen.getAllByText(/^(alpha|beta|gamma|daily)$/, { selector: "p" }).map((p) => p.textContent);
-  // Drop `from` onto `to` the way the browser does: the dragged id travels in the data transfer.
-  const dropOn = (from: string, to: string) => {
-    const target = item(to);
-    const dataTransfer = { getData: () => from, setData: vi.fn(), dropEffect: "", effectAllowed: "" };
-    fireEvent(target, createEvent.dragOver(target, { dataTransfer }));
-    fireEvent(target, createEvent.drop(target, { dataTransfer }));
+  const aged = (id: string, n: number, extra: Partial<Todo> = {}) => todo(id, { createdAt: `2026-01-01T00:00:0${n}.000Z`, ...extra });
+  const handle = (text: string) => screen.getByLabelText(`Drag to reorder ${text}`);
+  const move = (y: number) => act(() => void window.dispatchEvent(new MouseEvent("pointermove", { clientY: y })));
+  const release = (type = "pointerup") => act(() => void window.dispatchEvent(new MouseEvent(type)));
+  // jsdom has no layout: give the rows 100px-tall boxes, one under the other, in the order they are shown.
+  const layout = () =>
+    rows().forEach((text, i) => {
+      item(text!).getBoundingClientRect = () => ({ top: i * 100, height: 100, bottom: i * 100 + 100 }) as DOMRect;
+    });
+  const grab = (text: string, y = 0) => {
+    layout();
+    act(() => void handle(text).dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, clientY: y })));
   };
 
-  const aged = (id: string, n: number, extra: Partial<Todo> = {}) => todo(id, { createdAt: `2026-01-01T00:00:0${n}.000Z`, ...extra });
-
-  it("shows daily tasks first, then follows a dragged arrangement", () => {
+  beforeEach(() => {
+    vi.stubGlobal("scrollBy", vi.fn()); // jsdom doesn't implement it
     saveTodos([aged("alpha", 1), aged("beta", 2), aged("gamma", 3), aged("daily", 4, { dailyId: "d1" })], T);
-    render(<TodosPage />);
-    expect(rows()).toEqual(["daily", "alpha", "beta", "gamma"]);
-    dropOn("gamma", "daily");
-    expect(rows()).toEqual(["gamma", "daily", "alpha", "beta"]);
-    expect(loadTodos(T).map((x) => x.order)).not.toContain(undefined);
-    dropOn("gamma", "gamma");
-    expect(rows()).toEqual(["gamma", "daily", "alpha", "beta"]);
   });
 
-  it("highlights the row under the drag and ignores drops on done tasks", () => {
-    saveTodos([aged("alpha", 1), aged("beta", 2), aged("gamma", 3, { completed: true })], T);
+  it("shows daily tasks first, then drops a dragged task where the line shows", () => {
     render(<TodosPage />);
-    const beta = item("beta");
-    fireEvent(beta, createEvent.dragOver(beta, { dataTransfer: { getData: () => "alpha" } }));
-    expect(beta.className).toContain("border-gold/70");
-    fireEvent.dragEnd(beta);
-    expect(beta.className).not.toContain("border-gold/70");
-    const done = item("gamma");
-    fireEvent(done, createEvent.dragOver(done, { dataTransfer: { getData: () => "alpha" } }));
-    fireEvent(done, createEvent.drop(done, { dataTransfer: { getData: () => "alpha" } }));
-    fireEvent(beta, createEvent.drop(beta, { dataTransfer: { getData: () => "" } }));
-    expect(rows()).toEqual(["alpha", "beta", "gamma"]);
+    expect(rows()).toEqual(["daily", "alpha", "beta", "gamma"]);
+    grab("gamma", 350);
+    move(30); // above the middle of the first row
+    expect(screen.getByTestId("drop-line")).toBeTruthy();
+    expect(item("gamma").style.transform).toBe("translateY(-320px)");
+    release();
+    expect(screen.queryByTestId("drop-line")).toBeNull();
+    expect(rows()).toEqual(["gamma", "daily", "alpha", "beta"]);
+    expect(loadTodos(T).map((x) => x.order)).not.toContain(undefined);
+  });
+
+  it("drops at the end of the unfinished tasks when dragged below the last one", () => {
+    render(<TodosPage />);
+    grab("daily", 50);
+    move(900);
+    expect(screen.getByTestId("drop-line")).toBeTruthy();
+    release();
+    expect(rows()).toEqual(["alpha", "beta", "gamma", "daily"]);
+  });
+
+  it("changes nothing when the task is let go without moving or the drag is cancelled", () => {
+    render(<TodosPage />);
+    grab("alpha", 150);
+    release();
+    grab("gamma", 350);
+    move(10);
+    release("pointercancel");
+    expect(rows()).toEqual(["daily", "alpha", "beta", "gamma"]);
     expect(loadTodos(T).every((x) => x.order === undefined)).toBe(true);
+  });
+
+  it("scrolls the page when dragging near the top or bottom edge", () => {
+    const scrollBy = vi.fn();
+    vi.stubGlobal("scrollBy", scrollBy);
+    render(<TodosPage />);
+    grab("beta", 250);
+    move(20);
+    move(window.innerHeight - 10);
+    release();
+    expect(scrollBy).toHaveBeenCalledWith(0, -14);
+    expect(scrollBy).toHaveBeenCalledWith(0, 14);
+  });
+
+  it("only lets unfinished tasks be dragged, and ignores the right mouse button", () => {
+    saveTodos([aged("alpha", 1), aged("gamma", 3, { completed: true })], T);
+    render(<TodosPage />);
+    expect(screen.queryByLabelText("Drag to reorder gamma")).toBeNull();
+    layout();
+    act(() => void handle("alpha").dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 2, clientY: 0 })));
+    move(500);
+    release();
+    expect(loadTodos(T).every((x) => x.order === undefined)).toBe(true);
+  });
+
+  it("moves a task with the arrow keys, and stops at the ends", () => {
+    render(<TodosPage />);
+    fireEvent.keyDown(handle("beta"), { key: "ArrowUp" });
+    expect(rows()).toEqual(["daily", "beta", "alpha", "gamma"]);
+    fireEvent.keyDown(handle("beta"), { key: "ArrowDown" });
+    fireEvent.keyDown(handle("beta"), { key: "ArrowDown" });
+    expect(rows()).toEqual(["daily", "alpha", "gamma", "beta"]);
+    fireEvent.keyDown(handle("beta"), { key: "ArrowDown" });
+    fireEvent.keyDown(handle("daily"), { key: "ArrowUp" });
+    fireEvent.keyDown(handle("daily"), { key: "Enter" });
+    expect(rows()).toEqual(["daily", "alpha", "gamma", "beta"]);
   });
 });
 
 describe("day log", () => {
+  // Pick a time on the clock face: hour, then minute, then AM/PM, then Done.
+  const setClock = (label: string, hour: number, minute: number, period: "AM" | "PM") => {
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${label}:`) }));
+    fireEvent.click(screen.getByLabelText(`${hour} o'clock`));
+    fireEvent.click(screen.getByLabelText(`${minute} minutes`));
+    const clock = within(screen.getByRole("dialog"));
+    fireEvent.click(clock.getByText(period));
+    fireEvent.click(clock.getByText("Done"));
+  };
+
   it("records wake time, sleep time and water for the day shown", async () => {
     render(<TodosPage />);
-    fireEvent.change(screen.getByLabelText("Woke up"), { target: { value: "06:45" } });
-    fireEvent.change(screen.getByLabelText("Went to sleep"), { target: { value: "23:15" } });
+    expect(screen.getAllByText("Set time")).toHaveLength(2);
+    setClock("Woke up", 6, 45, "AM");
+    setClock("Went to sleep", 11, 15, "PM");
+    expect(screen.getByRole("button", { name: "Woke up: 6:45 AM" })).toBeTruthy();
     fireEvent.click(screen.getByLabelText("More water"));
     fireEvent.click(screen.getByLabelText("More water"));
     fireEvent.click(screen.getByLabelText("More water"));
     fireEvent.click(screen.getByLabelText("Less water"));
-    expect(screen.getByTestId("water-total").textContent).toBe("0.5 L");
-    expect(loadDayLog(T)).toEqual({ wake: "06:45", sleep: "23:15", water: 500 });
-    fireEvent.change(screen.getByLabelText("Woke up"), { target: { value: "" } });
-    expect(loadDayLog(T)).toEqual({ sleep: "23:15", water: 500 });
+    fireEvent.click(screen.getByLabelText("Add a bottle"));
+    expect(screen.getByTestId("water-total").textContent).toBe("1 L");
+    expect(loadDayLog(T)).toEqual({ wake: "06:45", sleep: "23:15", water: 1000 });
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("1000");
+    // Clearing a time removes it.
+    fireEvent.click(screen.getByRole("button", { name: /^Woke up:/ }));
+    fireEvent.click(screen.getByText("Clear"));
+    expect(loadDayLog(T)).toEqual({ sleep: "23:15", water: 1000 });
+    // The notes stay closed until asked for, and keep what you type.
+    expect(screen.queryByLabelText("What went well")).toBeNull();
+    fireEvent.click(screen.getByText("How did the day go?"));
     fireEvent.change(screen.getByLabelText("What went well"), { target: { value: "Shipped it" } });
     fireEvent.change(screen.getByLabelText("What went badly"), { target: { value: "Skipped lunch" } });
     fireEvent.change(screen.getByLabelText("What to improve"), { target: { value: "Plan breaks" } });
-    expect(loadDayLog(T)).toEqual({ sleep: "23:15", water: 500, well: "Shipped it", bad: "Skipped lunch", improve: "Plan breaks" });
+    expect(loadDayLog(T)).toEqual({ sleep: "23:15", water: 1000, well: "Shipped it", bad: "Skipped lunch", improve: "Plan breaks" });
+    fireEvent.click(screen.getByText("How did the day go?"));
+    expect(screen.queryByLabelText("What went well")).toBeNull();
+    expect(screen.getByLabelText("has notes")).toBeTruthy();
     // Another day has its own log.
     fireEvent.click(screen.getByLabelText("Previous day"));
-    await waitFor(() => expect((screen.getByLabelText("Went to sleep") as HTMLInputElement).value).toBe(""));
+    await waitFor(() => expect(screen.getAllByText("Set time")).toHaveLength(2));
     expect(screen.getByTestId("water-total").textContent).toBe("0 L");
+    expect(screen.queryByLabelText("has notes")).toBeNull();
+  });
+
+  it("opens a day that already has notes with them showing, and caps the goal bar", () => {
+    localStorage.setItem(
+      "reel-radar-planner-log",
+      JSON.stringify({ items: [{ date: T, updatedAt: 1, log: { improve: "Sleep earlier", water: 3000 } }] })
+    );
+    render(<TodosPage />);
+    expect((screen.getByLabelText("What to improve") as HTMLTextAreaElement).value).toBe("Sleep earlier");
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("2500");
+  });
+});
+
+describe("friendlier planner", () => {
+  const input = () => screen.getByPlaceholderText("What needs to be done today?") as HTMLInputElement;
+
+  it("adds a task from shorthand, showing what it understood first", () => {
+    render(<TodosPage />);
+    expect(screen.getByText(/Shorthand:/)).toBeTruthy();
+    fireEvent.change(input(), { target: { value: "Gym 6:30pm 45m #health !high daily" } });
+    const preview = within(screen.getByTestId("quick-add-preview"));
+    expect(preview.getByText("⏰ 6:30 PM · 45m")).toBeTruthy();
+    expect(preview.getByText("⚑ High")).toBeTruthy();
+    expect(preview.getByText("# Health")).toBeTruthy();
+    expect(preview.getByText("↻ Every day")).toBeTruthy();
+    expect(preview.getByText("→ “Gym”")).toBeTruthy();
+    fireEvent.click(screen.getByText("Add"));
+    expect(loadTodos(T)[0]).toMatchObject({ text: "Gym", start: 1110, duration: 45, tag: "health", priority: "high" });
+    expect(loadDailyTasks()[0]).toMatchObject({ text: "Gym" });
+  });
+
+  it("warns that a length needs a time, and keeps a title made only of shorthand", () => {
+    render(<TodosPage />);
+    fireEvent.change(input(), { target: { value: "Read 30m" } });
+    expect(screen.getByText("⏱ 30m (add a time to schedule it)")).toBeTruthy();
+    fireEvent.change(input(), { target: { value: "Plain words" } });
+    expect(screen.queryByTestId("quick-add-preview")).toBeNull();
+    expect(screen.queryByText(/Shorthand:/)).toBeNull();
+    fireEvent.change(input(), { target: { value: "!high" } });
+    fireEvent.click(screen.getByText("Add"));
+    expect(loadTodos(T)[0]).toMatchObject({ text: "!high", priority: "high" });
+  });
+
+  it("shows progress in the ring and an encouraging line", () => {
+    saveTodos([todo("a", { completed: true }), todo("bb"), todo("ccc")], T);
+    render(<TodosPage />);
+    expect(screen.getByRole("img", { name: "33% done" })).toBeTruthy();
+    expect(screen.getByText("Good start. 2 to go, one at a time.")).toBeTruthy();
+    fireEvent.click(inItem("bb").getByLabelText("Mark as complete"));
+    expect(screen.getByText("Over halfway there. 1 to go.")).toBeTruthy();
+  });
+
+  it("celebrates a finished day and offers to plan the next one", async () => {
+    saveTodos([todo("a", { completed: true })], T);
+    render(<TodosPage />);
+    expect(screen.getByText("All done for Today 🎉")).toBeTruthy();
+    expect(screen.getByText("Everything's done. Nicely handled.")).toBeTruthy();
+    fireEvent.click(screen.getByText("Plan tomorrow →"));
+    await waitFor(() => expect(screen.getByText("Nothing planned for Tomorrow")).toBeTruthy());
+    expect(screen.getByText("A blank page. What matters most today?")).toBeTruthy();
+  });
+
+  it("opens a day from the week strip, which shows how each day went", async () => {
+    const monday = weekStart(T);
+    const other = monday === T ? shiftDate(T, 1) : monday; // another day in this week
+    saveTodos([todo("w1", { completed: true }), todo("w2")], other);
+    render(<TodosPage />);
+    expect(screen.getByRole("button", { current: "date" }).getAttribute("aria-label")).toMatch(/nothing planned$/);
+    fireEvent.click(screen.getByLabelText(/: 1 of 2 done$/));
+    expect(await screen.findByText("w2", { selector: "p" })).toBeTruthy();
+    expect(screen.getByRole("button", { current: "date" }).getAttribute("aria-label")).toMatch(/1 of 2 done$/);
+  });
+
+  it("has keyboard shortcuts for adding, changing day, today and the week view", async () => {
+    render(<TodosPage />);
+    input().blur();
+    fireEvent.keyDown(document.body, { key: "ArrowRight" });
+    expect(await screen.findByText("Nothing planned for Tomorrow")).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+    fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+    expect(await screen.findByText("Nothing planned for Yesterday")).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: "t" });
+    expect(await screen.findByText("Nothing planned for Today")).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: "w" });
+    expect(screen.getByText("This week at a glance")).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: "ArrowRight" });
+    fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+    fireEvent.keyDown(document.body, { key: "n" });
+    await waitFor(() => expect(document.activeElement).toBe(input()));
+    // Typing in a field or holding a modifier doesn't trigger them.
+    fireEvent.keyDown(input(), { key: "t" });
+    fireEvent.keyDown(document.body, { key: "ArrowRight", ctrlKey: true });
+    expect(screen.getByText("Nothing planned for Today")).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: "/" });
+    fireEvent.keyDown(document.body, { key: "x" });
   });
 });
 

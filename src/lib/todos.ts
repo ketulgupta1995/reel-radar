@@ -209,16 +209,20 @@ export function sortTodos(todos: Todo[]): Todo[] {
   });
 }
 
-// Drag `id` into `targetId`'s place in the day's list. Every task then keeps the place it has on
-// screen, so the arrangement sticks. Done tasks always stay below unfinished ones.
-export function reorderTodo(id: string, targetId: string, date?: string): Todo[] {
+// Move `id` to just before `beforeId` in the day's list (null = after the last unfinished task).
+// Every task then keeps the place it has on screen, so the arrangement sticks. Done tasks always
+// stay below unfinished ones, so they can't be moved or moved before.
+export function reorderTodo(id: string, beforeId: string | null, date?: string): Todo[] {
   const todos = loadTodos(date);
   const list = sortTodos(todos);
-  const from = list.findIndex((t) => t.id === id);
-  const to = list.findIndex((t) => t.id === targetId);
-  if (from < 0 || to < 0 || from === to || list[from].completed || list[to].completed) return todos;
-  list.splice(to, 0, ...list.splice(from, 1));
-  const place = new Map(list.map((t, i) => [t.id, i]));
+  const moving = list.find((t) => t.id === id);
+  const before = beforeId === null ? null : list.find((t) => t.id === beforeId);
+  if (!moving || moving.completed || before === undefined || before?.completed || id === beforeId) return todos;
+  const rest = list.filter((t) => t.id !== id);
+  const at = before ? rest.indexOf(before) : rest.filter((t) => !t.completed).length;
+  rest.splice(at, 0, moving);
+  if (rest.every((t, i) => t.id === list[i].id)) return todos;
+  const place = new Map(rest.map((t, i) => [t.id, i]));
   const updated = todos.map((t) => ({ ...t, order: place.get(t.id)! }));
   saveTodos(updated, date);
   return updated;
@@ -342,7 +346,8 @@ export function carryOverFromYesterday(date: string, ids?: string[]): Todo[] {
 // ---------------- Day log (wake, sleep, water, review) ----------------
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
-export const WATER_STEP = 250;
+export const WATER_STEP = 250; // one glass
+export const WATER_GOAL = 2500; // the daily target the progress bar fills toward
 
 export function loadDayLog(date: string): DayLog {
   if (typeof window === "undefined") return {};

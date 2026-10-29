@@ -312,17 +312,21 @@ describe("task order", () => {
     expect(names(sortTodos(list))).toEqual(["b", "a", "new", "c"]);
   });
 
-  it("reorderTodo moves a task into another's place and the arrangement sticks", () => {
+  it("reorderTodo moves a task before another, or to the end, and the arrangement sticks", () => {
     saveTodos([t("daily!", { dailyId: "d" }), t("high", { priority: "high" }), t("plain"), t("done", { completed: true })], D1);
     reorderTodo("plain", "daily!", D1);
     expect(names(sortTodos(loadTodos(D1)))).toEqual(["plain", "daily!", "high", "done"]);
     reorderTodo("plain", "high", D1);
-    expect(names(sortTodos(loadTodos(D1)))).toEqual(["daily!", "high", "plain", "done"]);
+    expect(names(sortTodos(loadTodos(D1)))).toEqual(["daily!", "plain", "high", "done"]);
+    reorderTodo("daily!", null, D1);
+    expect(names(sortTodos(loadTodos(D1)))).toEqual(["plain", "high", "daily!", "done"]);
     const before = loadTodos(D1);
     expect(reorderTodo("plain", "plain", D1)).toEqual(before);
+    expect(reorderTodo("plain", "high", D1)).toEqual(before); // already there
     expect(reorderTodo("plain", "done", D1)).toEqual(before);
     expect(reorderTodo("done", "plain", D1)).toEqual(before);
     expect(reorderTodo("nope", "plain", D1)).toEqual(before);
+    expect(reorderTodo("plain", "nope", D1)).toEqual(before);
   });
 
   it("forgets the arrangement when a task moves to another day", () => {

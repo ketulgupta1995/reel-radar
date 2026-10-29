@@ -99,6 +99,7 @@ Import through the `@/` alias (maps to `src/`).
 - Coverage is enforced: `npm run coverage` fails below 97% lines/statements, 95% functions and 90% branches (`vitest.config.ts`). Don't lower the thresholds to get a change through; add the missing tests.
 - Page tests run against the real `lib/` code and `localStorage`; only `fetch` is faked. Use `src/test/pages.ts`: `routeFetch({ "/api/x": body | (url, init) => body })` answers by path (`/api/sync` defaults to an empty server), `requests(fetch, path)` lists calls, `seed()`/`stored()` read and write Reel Radar state, and `stubLocation()` replaces `window.location`. Mock `next/navigation` (`usePathname`, `useSearchParams`, `useParams`) in each page test.
 - jsdom gaps: there's no `DragEvent`/`PointerEvent`, so set `clientY` and modifier keys on the event yourself (see `drag()` in `todos/page.test.tsx`), and dispatch pointer moves as `MouseEvent`s. `Element.scrollTo` and `Notification` need stubs.
+- The task list is reordered by a pointer-driven drag handle (`useListReorder` in `todos/page.tsx`), not HTML5 drag and drop. Tests press the handle with a `pointerdown` `MouseEvent`, move with `pointermove` on `window`, and stub each row's `getBoundingClientRect` because jsdom has no layout (see `arranging tasks` in `todos/page.test.tsx`).
 - Tests run in Node by default. Anything that touches the DOM or `localStorage` starts with `// @vitest-environment jsdom`.
 - Shared helpers: `src/test/fixtures.ts` (`mk()` builds a `Title`, `jsonResponse()` builds a fetch response), `src/test/pages.ts` (above), and `src/test/setup.ts` (React cleanup, lets pending sync work settle, then resets `localStorage`).
 - Never hit the network: stub `fetch` with `vi.stubGlobal`, and mock `@/lib/tmdb` with `vi.mock`. Sync tests use an in-memory libSQL database in place of `@libsql/client/web`.
@@ -114,6 +115,11 @@ Import through the `@/` alias (maps to `src/`).
 - Don't run the dev server or scripts against the live Turso database to test changes. Start with `TURSO_DATABASE_URL=` (empty) so they use `data/`.
 - Don't add dependencies without a clear need. The dependency list is deliberately small.
 - Don't send TMDB requests or the API key from client components.
+
+## Finishing a change
+
+- Always end by giving a ready-to-use commit message for the changes made: a short imperative subject line (about 50–72 characters), a blank line, then a few bullet points on what changed and why. Give it even when you weren't asked to commit. Don't commit or push unless asked.
+- Anything that depends on the browser (`localStorage`, `Date.now()`/today, `window`) must not change the first render, or hydration fails. Read it in an effect (or after a `mounted` flag) instead.
 
 ## Docs
 
