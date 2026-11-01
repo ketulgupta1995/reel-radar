@@ -57,17 +57,23 @@ describe("formatting", () => {
 });
 
 describe("layoutBlocks", () => {
-  it("puts overlapping blocks side by side and the rest in one lane", () => {
+  it("draws overlapping blocks one after another and leaves the rest in place", () => {
     const lanes = layoutBlocks([
       todo("a", { start: 540, duration: 60 }),
       todo("b", { start: 570, duration: 60 }),
       todo("c", { start: 600, duration: undefined }), // default length
       todo("d", { start: 720, duration: 30 }),
     ]);
-    expect(lanes.get("a")).toEqual({ lane: 0, lanes: 2 });
-    expect(lanes.get("b")).toEqual({ lane: 1, lanes: 2 });
-    expect(lanes.get("c")).toEqual({ lane: 0, lanes: 2 });
-    expect(lanes.get("d")).toEqual({ lane: 0, lanes: 1 });
+    expect(lanes.get("a")).toEqual({ lane: 0, lanes: 1, shift: 0 });
+    expect(lanes.get("b")).toEqual({ lane: 0, lanes: 1, shift: 30 }); // 10:00
+    expect(lanes.get("c")).toEqual({ lane: 0, lanes: 1, shift: 60 }); // 11:00
+    expect(lanes.get("d")).toEqual({ lane: 0, lanes: 1, shift: 0 });
+  });
+
+  it("treats a short block as taking the height it is drawn at", () => {
+    // A 15-minute block is drawn ~21 minutes tall, so one starting right after is pushed below it.
+    const lanes = layoutBlocks([todo("a", { start: 540, duration: 15 }), todo("b", { start: 555, duration: 15 })]);
+    expect(lanes.get("b")?.shift).toBeCloseTo(5.625);
   });
 });
 

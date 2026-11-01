@@ -258,7 +258,7 @@ export default function WeekView({
                     />
                   )}
                   {blocks.map((t) => {
-                    const { lane, lanes: count } = lanes.get(t.id) ?? { lane: 0, lanes: 1 };
+                    const { lane, lanes: count, shift } = lanes.get(t.id) ?? { lane: 0, lanes: 1, shift: 0 };
                     return (
                       <TimeBlock
                         key={t.id}
@@ -266,6 +266,7 @@ export default function WeekView({
                         date={d}
                         lane={lane}
                         lanes={count}
+                        shift={shift}
                         compact
                         resize={resize}
                         onSelect={() => onOpenDay(d)}

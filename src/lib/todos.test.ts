@@ -346,6 +346,13 @@ describe("day log", () => {
     addWater(D1, 250);
     addWater(D1, 500);
     expect(loadDayLog(D1)).toEqual({ wake: "06:30", sleep: "23:10", water: 750 });
+    addWater(D1, 250, 600);
+    addWater(D1, 250, 780);
+    expect(loadDayLog(D1).drinks).toEqual([{ at: 600, ml: 250 }, { at: 780, ml: 250 }]);
+    addWater(D1, -250);
+    expect(loadDayLog(D1).drinks).toEqual([{ at: 600, ml: 250 }]);
+    addWater(D1, -5000);
+    expect(loadDayLog(D1).drinks).toBeUndefined();
     expect(loadDayLog(D2)).toEqual({});
   });
 
@@ -793,5 +800,27 @@ describe("focus timer", () => {
   it("ignores sessions under a minute", () => {
     saveTodos([todo("a")], D1);
     expect(addSpentTime("a", 0, D1)[0]).not.toHaveProperty("spent");
+  });
+});
+
+describe("done times", () => {
+  it("records when a task or checklist item is ticked, clears it when undone, and starts copies fresh", () => {
+    const t = addTodo("Report", D1);
+    const [todo] = addSubtask(t[t.length - 1].id, "Draft", D1).slice(-1);
+    expect(todo.completed).toBe(false);
+    const id = todo.id;
+    const after = toggleTodo(id, D1).find((x) => x.id === id)!;
+    expect(after.completed).toBe(true);
+    expect(after.doneAt).toBeGreaterThan(0);
+    expect(toggleTodo(id, D1).find((x) => x.id === id)!.doneAt).toBeUndefined();
+    const sub = loadTodos(D1).find((x) => x.id === id)!.subtasks![0];
+    const ticked = toggleSubtask(id, sub.id, D1).find((x) => x.id === id)!.subtasks![0];
+    expect(ticked.done).toBe(true);
+    expect(ticked.doneAt).toBeGreaterThan(0);
+    expect(toggleSubtask(id, sub.id, D1).find((x) => x.id === id)!.subtasks![0].doneAt).toBeUndefined();
+    toggleTodo(id, D1);
+    const copy = copyTodoToDate(id, D1, D2).find((x) => x.text === "Report")!;
+    expect(copy.completed).toBe(false);
+    expect(copy.doneAt).toBeUndefined();
   });
 });

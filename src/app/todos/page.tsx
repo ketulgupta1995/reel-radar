@@ -55,6 +55,7 @@ import {
   startFocus,
   stopFocus,
   getTodayDate,
+  toDateString,
   shiftDate,
   loadDayLog,
   sortTodos,
@@ -171,6 +172,7 @@ export default function TodosPage() {
   const [quickAdd, setQuickAdd] = useState<{ start: number; text: string } | null>(null);
   const [now, setNow] = useState<number | null>(null);
   const [logVersion, setLogVersion] = useState(0);
+  const [dayLog, setDayLog] = useState<DayLog>({});
   const [dragOver, setDragOver] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -270,6 +272,21 @@ export default function TodosPage() {
     if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, (target / 60 - 1) * HOUR_PX);
     // Re-run on mobile view switch: a hidden planner can't be scrolled.
   }, [selectedDate, mobileView, view]);
+
+  // A drink just logged is marked at the current time, which may be off-screen: bring it into view.
+  const drinkCount = useRef(0);
+  useEffect(() => {
+    const drinks = dayLog.drinks ?? [];
+    const added = drinks.length > drinkCount.current;
+    drinkCount.current = drinks.length;
+    const box = scrollRef.current;
+    const last = drinks[drinks.length - 1];
+    const d = new Date();
+    if (!added || !box || !last || last.at < d.getHours() * 60 + d.getMinutes() - 1) return;
+    const y = (last.at / 60) * HOUR_PX;
+    if (y < box.scrollTop + 24 || y > box.scrollTop + box.clientHeight - 24)
+      box.scrollTo({ top: Math.max(0, y - box.clientHeight / 2), behavior: "smooth" });
+  }, [dayLog]);
 
   // Focus timer clock.
   useEffect(() => {
@@ -765,7 +782,7 @@ export default function TodosPage() {
         <div className="grid items-start gap-6 lg:grid-cols-2 xl:grid-cols-[minmax(0,6fr)_minmax(0,5fr)]">
           {/* ---------------- Tasks column ---------------- */}
           <section className={mobileView === "tasks" ? "" : "hidden lg:block"}>
-            <DayLogCard date={selectedDate} version={logVersion} />
+            <DayLogCard date={selectedDate} version={logVersion} onChange={setDayLog} />
             <form
               onSubmit={handleAddTodo}
               className="sticky top-[4.25rem] z-30 mb-4 flex flex-wrap gap-2 rounded-3xl border border-white/15 bg-white/[.07] p-3 shadow-xl shadow-black/30 backdrop-blur-xl transition focus-within:border-gold/50 focus-within:shadow-gold/10"
@@ -1170,9 +1187,12 @@ export default function TodosPage() {
                   </div>
                 )}
 
+                {/* wake, sleep and water markers */}
+                <DayMarkers log={dayLog} todos={todos} date={selectedDate} />
+
                 {/* blocks */}
                 {scheduled.map((t) => {
-                  const { lane, lanes: count } = lanes.get(t.id) ?? { lane: 0, lanes: 1 };
+                  const { lane, lanes: count, shift } = lanes.get(t.id) ?? { lane: 0, lanes: 1, shift: 0 };
                   return (
                     <TimeBlock
                       key={t.id}
@@ -1180,6 +1200,7 @@ export default function TodosPage() {
                       date={selectedDate}
                       lane={lane}
                       lanes={count}
+                      shift={shift}
                       selected={selectedBlock === t.id}
                       resize={resize}
                       onSelect={(b) => {
@@ -1796,8 +1817,72 @@ function FocusBar({
   );
 }
 
+const MARK_PX = 22; // height of one mark pill plus a little air
+
+// Wake, sleep and water marks on the schedule. Drinks within the same quarter hour are added together.
+function DayMarkers({ log, todos, date }: { log: DayLog; todos: Todo[]; date: string }) {
+  const marks: { key: string; at: number; text: string; tone: string; title?: string }[] = [];
+  const clock = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3));
+  if (log.wake) marks.push({ key: "wake", at: clock(log.wake), text: `🌅 Woke ${fmtTime(clock(log.wake))}`, tone: "amber" });
+  if (log.sleep) marks.push({ key: "sleep", at: clock(log.sleep), text: `😴 Sleep ${fmtTime(clock(log.sleep))}`, tone: "violet" });
+  const slots = new Map<number, number>();
+  for (const d of log.drinks ?? []) slots.set(snap(d.at), (slots.get(snap(d.at)) ?? 0) + d.ml);
+  slots.forEach((ml, at) => marks.push({ key: `water-${at}`, at, text: `💧 ${ml} ml · ${fmtTime(at)}`, tone: "sky" }));
+  // Tasks and checklist items ticked off on this day, at the time they were ticked.
+  const doneToday = (ms?: number) => ms !== undefined && toDateString(new Date(ms)) === date;
+  const minuteOf = (ms: number) => new Date(ms).getHours() * 60 + new Date(ms).getMinutes();
+  for (const t of todos) {
+    if (t.completed && doneToday(t.doneAt))
+      marks.push({ key: `done-${t.id}`, at: minuteOf(t.doneAt!), text: `✓ ${t.text}`, tone: "emerald", title: `${t.text} · done ${fmtTime(minuteOf(t.doneAt!))}` });
+    for (const st of t.subtasks ?? [])
+      if (st.done && doneToday(st.doneAt))
+        marks.push({ key: `done-${t.id}-${st.id}`, at: minuteOf(st.doneAt!), text: `✓ ${st.text}`, tone: "emerald", title: `${st.text} (${t.text}) · done ${fmtTime(minuteOf(st.doneAt!))}` });
+  }
+  const tones: Record<string, string> = {
+    emerald: "border-emerald-300/60 bg-emerald-400/20 text-emerald-100",
+    amber: "border-amber-300/60 bg-amber-400/20 text-amber-100",
+    violet: "border-violet-300/60 bg-violet-400/20 text-violet-100",
+    sky: "border-sky-300/60 bg-sky-400/20 text-sky-100",
+  };
+  // Pills on the same side never share space: one that would land on the one above it is drawn just below it.
+  const shifts = new Map<string, number>();
+  for (const left of [true, false]) {
+    let bottom = -Infinity;
+    for (const m of marks.filter((m) => (m.tone === "emerald") === left).sort((a, b) => a.at - b.at)) {
+      const y = Math.max((m.at / 60) * HOUR_PX, bottom + MARK_PX);
+      shifts.set(m.key, y - (m.at / 60) * HOUR_PX);
+      bottom = y;
+    }
+  }
+  return (
+    <>
+      {marks.map((m) => (
+        <div
+          key={m.key}
+          data-testid="day-mark"
+          className="pointer-events-none absolute inset-x-0 z-[15]"
+          style={{ top: (m.at / 60) * HOUR_PX }}
+        >
+          {m.tone !== "emerald" && (
+            <div className={`border-t border-dashed ${m.tone === "sky" ? "border-sky-300/40" : m.tone === "amber" ? "border-amber-300/60" : "border-violet-300/60"}`} />
+          )}
+          <span
+            title={m.title}
+            style={{ top: shifts.get(m.key) }}
+            className={`absolute -translate-y-1/2 truncate rounded-full border px-2 py-0.5 text-[10px] font-medium backdrop-blur ${
+              m.tone === "emerald" ? "left-1 max-w-[45%]" : "right-0 whitespace-nowrap"
+            } ${tones[m.tone]}`}
+          >
+            {m.text}
+          </span>
+        </div>
+      ))}
+    </>
+  );
+}
+
 // How the day went: wake and sleep times on a clock, body weight, water against a daily goal, and a short review.
-function DayLogCard({ date, version }: { date: string; version: number }) {
+function DayLogCard({ date, version, onChange }: { date: string; version: number; onChange?: (log: DayLog) => void }) {
   const [log, setLog] = useState<DayLog>({});
   const [notesOpen, setNotesOpen] = useState(false);
   const [weightText, setWeightText] = useState("");
@@ -1807,6 +1892,7 @@ function DayLogCard({ date, version }: { date: string; version: number }) {
     setWeightText(loaded.weight !== undefined ? String(loaded.weight) : "");
     setNotesOpen(Boolean(loaded.well || loaded.bad || loaded.improve));
   }, [date, version]);
+  useEffect(() => onChange?.(log), [log, onChange]);
   const water = log.water ?? 0;
   const litres = (ml: number) => `${(ml / 1000).toFixed(2).replace(/\.?0+$/, "")} L`;
   const hasNotes = Boolean(log.well || log.bad || log.improve);
@@ -1814,7 +1900,10 @@ function DayLogCard({ date, version }: { date: string; version: number }) {
     <button
       type="button"
       aria-label={label}
-      onClick={() => setLog(addWater(date, ml))}
+      onClick={() => {
+        const d = new Date();
+        setLog(addWater(date, ml, date === getTodayDate() ? d.getHours() * 60 + d.getMinutes() : undefined));
+      }}
       className="flex-1 whitespace-nowrap rounded-lg border border-white/10 px-1.5 py-1 text-[11px] text-white/80 transition hover:border-gold/50 hover:text-white"
     >
       {text}

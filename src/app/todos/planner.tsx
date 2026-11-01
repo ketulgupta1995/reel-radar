@@ -7,6 +7,8 @@ import { DEFAULT_DURATION, getTodayDate, shiftDate, type Priority, type TagId, t
 
 export const HOUR_PX = 64;
 export const SNAP = 15; // minutes
+const MIN_BLOCK_PX = 22; // shortest a block is drawn, so its text stays readable
+const MIN_BLOCK_MINUTES = (MIN_BLOCK_PX / HOUR_PX) * 60;
 
 export const PRIORITY_STYLE: Record<Priority, { dot: string; label: string; block: string }> = {
   high: { dot: "bg-red-500", label: "High", block: "border-red-400/60 bg-red-500/20" },
@@ -14,6 +16,7 @@ export const PRIORITY_STYLE: Record<Priority, { dot: string; label: string; bloc
   low: { dot: "bg-sky-400", label: "Low", block: "border-sky-400/60 bg-sky-400/15" },
 };
 export const NO_PRIORITY_BLOCK = "border-white/25 bg-white/10";
+const DONE_BLOCK = "border-white/15 bg-[#1b1b27]";
 
 // Categorical colours in a fixed order, checked for colour-blind separation and 3:1 contrast on `panel`.
 export const TAG_COLORS: Record<TagId, string> = {
@@ -55,29 +58,18 @@ export const fmtDuration = (mins: number): string =>
 export const snap = (mins: number) => Math.round(mins / SNAP) * SNAP;
 export const clampStart = (start: number, duration: number) => Math.max(0, Math.min(start, 24 * 60 - duration));
 
-// Side-by-side lanes for overlapping blocks.
-export function layoutBlocks(blocks: Todo[]): Map<string, { lane: number; lanes: number }> {
+// Blocks never share space: one that would overlap the block before it is drawn right below it
+// (`shift` minutes later than its start) so they read one after another. `lane`/`lanes` stay 0/1.
+export function layoutBlocks(blocks: Todo[]): Map<string, { lane: number; lanes: number; shift: number }> {
   const sorted = [...blocks].sort((a, b) => a.start! - b.start! || (b.duration ?? 0) - (a.duration ?? 0));
-  const result = new Map<string, { lane: number; lanes: number }>();
-  let cluster: { id: string; lane: number }[] = [];
-  let clusterEnd = -1;
-  const laneEnds: number[] = [];
-  const flush = () => {
-    cluster.forEach((c) => result.set(c.id, { lane: c.lane, lanes: laneEnds.length }));
-    cluster = [];
-    laneEnds.length = 0;
-  };
+  const result = new Map<string, { lane: number; lanes: number; shift: number }>();
+  let bottom = 0; // where the previous block ends, as drawn
   for (const b of sorted) {
-    const start = b.start!;
-    const end = start + (b.duration ?? DEFAULT_DURATION);
-    if (start >= clusterEnd) flush();
-    let lane = laneEnds.findIndex((e) => e <= start);
-    if (lane === -1) lane = laneEnds.length;
-    laneEnds[lane] = end;
-    cluster.push({ id: b.id, lane });
-    clusterEnd = cluster.length === 1 ? end : Math.max(clusterEnd, end);
+    const top = Math.max(b.start!, bottom);
+    // A short block is drawn taller than its duration.
+    bottom = top + Math.max(b.duration ?? DEFAULT_DURATION, MIN_BLOCK_MINUTES);
+    result.set(b.id, { lane: 0, lanes: 1, shift: top - b.start! });
   }
-  flush();
   return result;
 }
 
@@ -123,6 +115,7 @@ export function TimeBlock({
   date,
   lane,
   lanes,
+  shift = 0,
   selected,
   compact,
   resize,
@@ -133,6 +126,7 @@ export function TimeBlock({
   date: string;
   lane: number;
   lanes: number;
+  shift?: number; // minutes the block is drawn below its start, to clear the block before it
   selected?: boolean;
   compact?: boolean; // week view: narrower columns
   resize: BlockResize;
@@ -141,7 +135,12 @@ export function TimeBlock({
 }) {
   const resizing = resize.preview?.id === todo.id;
   const duration = resizing ? resize.preview!.duration : todo.duration ?? DEFAULT_DURATION;
-  const style = todo.priority ? PRIORITY_STYLE[todo.priority].block : NO_PRIORITY_BLOCK;
+  // Done blocks use an opaque fill: a faded translucent one lets the grid lines and neighbours show through.
+  const style = todo.completed
+    ? DONE_BLOCK
+    : todo.priority
+    ? PRIORITY_STYLE[todo.priority].block
+    : NO_PRIORITY_BLOCK;
   const start = todo.start!;
   return (
     <div
@@ -158,10 +157,10 @@ export function TimeBlock({
       }}
       className={`group absolute z-10 cursor-grab overflow-hidden rounded-lg border text-xs transition-[box-shadow,opacity] active:cursor-grabbing ${style} ${
         compact ? "px-1.5 py-0.5" : "px-2 py-1"
-      } ${selected || resizing ? "z-20 ring-2 ring-gold" : ""} ${todo.completed ? "opacity-50" : ""}`}
+      } ${selected || resizing ? "z-20 ring-2 ring-gold" : ""} ${todo.completed ? "text-white/50" : ""}`}
       style={{
-        top: (start / 60) * HOUR_PX + 1,
-        height: Math.max((duration / 60) * HOUR_PX - 2, 22),
+        top: ((start + shift) / 60) * HOUR_PX + 1,
+        height: Math.max((duration / 60) * HOUR_PX - 2, MIN_BLOCK_PX),
         left: `${(lane / lanes) * 100}%`,
         width: `calc(${100 / lanes}% - 3px)`,
         ...(todo.tag ? { borderLeftColor: TAG_COLORS[todo.tag], borderLeftWidth: 4 } : {}),

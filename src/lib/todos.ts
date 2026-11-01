@@ -6,7 +6,7 @@ import { SYNC_EVENT, markDirty, registerDocs, syncKeys, watchKeys } from "@/lib/
 
 export type Priority = "high" | "medium" | "low";
 
-export type Subtask = { id: string; text: string; done: boolean };
+export type Subtask = { id: string; text: string; done: boolean; doneAt?: number }; // doneAt: when it was ticked (ms since epoch)
 
 export type TagId = "work" | "home" | "health" | "personal" | "learning" | "errands";
 export const TAGS: { id: TagId; label: string }[] = [
@@ -23,6 +23,7 @@ export type Todo = {
   text: string; // the task's title
   note?: string; // optional longer description
   completed: boolean;
+  doneAt?: number; // when it was marked done (ms since epoch); the schedule marks that time
   createdAt: string; // ISO string
   priority?: Priority;
   carriedFrom?: string; // YYYY-MM-DD the task was moved from
@@ -87,8 +88,9 @@ type DailyDoc = { items: DailyItem[] };
 type LogItem = { date: string; log: DayLog; updatedAt: number };
 type LogDoc = { items: LogItem[] };
 
-// A day's log: when you woke and slept (HH:MM), the water you drank (millilitres), and a short review.
-export type DayLog = { wake?: string; sleep?: string; water?: number; weight?: number; well?: string; bad?: string; improve?: string };
+// A day's log: when you woke and slept (HH:MM), the water you drank (millilitres, and when each drink was
+// logged as minutes after midnight), and a short review.
+export type DayLog = { wake?: string; sleep?: string; water?: number; drinks?: { at: number; ml: number }[]; weight?: number; well?: string; bad?: string; improve?: string };
 
 const DAILY_DOC = "planner-daily";
 const LOG_DOC = "planner-log";
@@ -145,7 +147,7 @@ if (typeof window !== "undefined") {
   }
 }
 
-const toDateString = (d: Date): string =>
+export const toDateString = (d: Date): string =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 // Local date, not UTC: toISOString() would roll over at 5:30 AM in IST.
@@ -260,9 +262,11 @@ export function addTodo(
 
 export function toggleTodo(id: string, date?: string): Todo[] {
   const todos = loadTodos(date);
-  const updated = todos.map((t) =>
-    t.id === id ? { ...t, completed: !t.completed } : t
-  );
+  const updated = todos.map((t) => {
+    if (t.id !== id) return t;
+    const { doneAt: _d, ...rest } = t;
+    return t.completed ? { ...rest, completed: false } : { ...rest, completed: true, doneAt: Date.now() };
+  });
   saveTodos(updated, date);
   return updated;
 }
@@ -363,6 +367,7 @@ export function updateDayLog(date: string, change: { [K in keyof DayLog]?: DayLo
   if (log.wake !== undefined && !TIME_RE.test(log.wake)) delete log.wake;
   if (log.sleep !== undefined && !TIME_RE.test(log.sleep)) delete log.sleep;
   if (log.water !== undefined && !(log.water > 0)) delete log.water;
+  if (log.drinks && !log.drinks.length) delete log.drinks;
   if (log.weight !== undefined && !(log.weight > 0 && log.weight < 1000)) delete log.weight;
   for (const k of ["well", "bad", "improve"] as const) if (!log[k]?.trim()) delete log[k];
   (Object.keys(log) as (keyof DayLog)[]).forEach((k) => log[k] === undefined && delete log[k]);
@@ -373,9 +378,15 @@ export function updateDayLog(date: string, change: { [K in keyof DayLog]?: DayLo
   return log;
 }
 
-// Add (or, with a negative amount, remove) water; never below zero.
-export function addWater(date: string, ml: number): DayLog {
-  return updateDayLog(date, { water: Math.max(0, (loadDayLog(date).water ?? 0) + ml) });
+// Add (or, with a negative amount, remove) water; never below zero. `at` (minutes after midnight) records
+// when the drink happened so the schedule can mark it; removing water drops the latest recorded drink.
+export function addWater(date: string, ml: number, at?: number): DayLog {
+  const old = loadDayLog(date);
+  const water = Math.max(0, (old.water ?? 0) + ml);
+  let drinks = old.drinks;
+  if (ml > 0 && at !== undefined) drinks = [...(drinks ?? []), { at, ml }];
+  else if (ml < 0 && drinks) drinks = drinks.slice(0, -1);
+  return updateDayLog(date, { water, drinks: water > 0 ? drinks : undefined });
 }
 
 // ---------------- Daily tasks ----------------
@@ -560,7 +571,13 @@ export function addSubtask(id: string, text: string, date?: string): Todo[] {
 }
 
 export function toggleSubtask(id: string, subtaskId: string, date?: string): Todo[] {
-  return updateSubtasks(id, date, (s) => s.map((st) => (st.id === subtaskId ? { ...st, done: !st.done } : st)));
+  return updateSubtasks(id, date, (s) =>
+    s.map((st) => {
+      if (st.id !== subtaskId) return st;
+      const { doneAt: _d, ...rest } = st;
+      return st.done ? { ...rest, done: false } : { ...rest, done: true, doneAt: Date.now() };
+    })
+  );
 }
 
 export function deleteSubtask(id: string, subtaskId: string, date?: string): Todo[] {
@@ -593,7 +610,7 @@ export function moveTodoToDate(id: string, from: string, to: string, schedule?: 
 export function copyTodoToDate(id: string, from: string, to: string, schedule?: Schedule): Todo[] {
   const todo = loadTodos(from).find((t) => t.id === id);
   if (!todo) return loadTodos(to);
-  const { start: _s, duration: _d, dailyId: _id, carriedFrom: _c, spent: _sp, order: _o, subtasks, ...rest } = todo;
+  const { start: _s, duration: _d, dailyId: _id, carriedFrom: _c, spent: _sp, order: _o, doneAt: _da, subtasks, ...rest } = todo;
   const copy: Todo = {
     ...rest,
     id: crypto.randomUUID(),

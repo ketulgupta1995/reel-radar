@@ -38,6 +38,16 @@ const drag = (kind: "dragOver" | "drop", el: HTMLElement, id: string, clientY: n
   fireEvent(el, event);
 };
 
+// Pick a time on the clock face: hour, then minute, then AM/PM, then Done.
+const setClock = (label: string, hour: number, minute: number, period: "AM" | "PM") => {
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${label}:`) }));
+  fireEvent.click(screen.getByLabelText(`${hour} o'clock`));
+  fireEvent.click(screen.getByLabelText(`${minute} minutes`));
+  const clock = within(screen.getByRole("dialog"));
+  fireEvent.click(clock.getByText(period));
+  fireEvent.click(clock.getByText("Done"));
+};
+
 class FakeNotification {
   static permission: NotificationPermission = "granted";
   static requestPermission = vi.fn(async () => FakeNotification.permission);
@@ -147,15 +157,6 @@ describe("arranging tasks", () => {
 });
 
 describe("day log", () => {
-  // Pick a time on the clock face: hour, then minute, then AM/PM, then Done.
-  const setClock = (label: string, hour: number, minute: number, period: "AM" | "PM") => {
-    fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${label}:`) }));
-    fireEvent.click(screen.getByLabelText(`${hour} o'clock`));
-    fireEvent.click(screen.getByLabelText(`${minute} minutes`));
-    const clock = within(screen.getByRole("dialog"));
-    fireEvent.click(clock.getByText(period));
-    fireEvent.click(clock.getByText("Done"));
-  };
 
   it("records wake time, sleep time and water for the day shown", async () => {
     render(<TodosPage />);
@@ -169,19 +170,20 @@ describe("day log", () => {
     fireEvent.click(screen.getByLabelText("Less water"));
     fireEvent.click(screen.getByLabelText("Add a bottle"));
     expect(screen.getByTestId("water-total").textContent).toBe("1 L");
-    expect(loadDayLog(T)).toEqual({ wake: "06:45", sleep: "23:15", water: 1000 });
+    expect(loadDayLog(T)).toMatchObject({ wake: "06:45", sleep: "23:15", water: 1000 });
+    expect(loadDayLog(T).drinks).toHaveLength(3); // each logged with its time; "Less" dropped the latest
     expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("1000");
     // Clearing a time removes it.
     fireEvent.click(screen.getByRole("button", { name: /^Woke up:/ }));
     fireEvent.click(screen.getByText("Clear"));
-    expect(loadDayLog(T)).toEqual({ sleep: "23:15", water: 1000 });
+    expect(loadDayLog(T)).toMatchObject({ sleep: "23:15", water: 1000 });
     // The notes stay closed until asked for, and keep what you type.
     expect(screen.queryByLabelText("What went well")).toBeNull();
     fireEvent.click(screen.getByText("How did the day go?"));
     fireEvent.change(screen.getByLabelText("What went well"), { target: { value: "Shipped it" } });
     fireEvent.change(screen.getByLabelText("What went badly"), { target: { value: "Skipped lunch" } });
     fireEvent.change(screen.getByLabelText("What to improve"), { target: { value: "Plan breaks" } });
-    expect(loadDayLog(T)).toEqual({ sleep: "23:15", water: 1000, well: "Shipped it", bad: "Skipped lunch", improve: "Plan breaks" });
+    expect(loadDayLog(T)).toMatchObject({ sleep: "23:15", water: 1000, well: "Shipped it", bad: "Skipped lunch", improve: "Plan breaks" });
     fireEvent.click(screen.getByText("How did the day go?"));
     expect(screen.queryByLabelText("What went well")).toBeNull();
     expect(screen.getByLabelText("has notes")).toBeTruthy();
@@ -856,5 +858,75 @@ describe("task creator options", () => {
     expect(panel().className).toContain("hidden");
     fireEvent.change(screen.getByLabelText("Priority"), { target: { value: "high" } }); // set, so it stays open
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  });
+});
+
+describe("schedule day marks", () => {
+  it("marks wake, sleep and each drink on the schedule at the time it was logged", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    vi.setSystemTime(new Date(`${T}T00:00:00`).setHours(14, 7));
+    try {
+      render(<TodosPage />);
+      expect(screen.queryAllByTestId("day-mark")).toHaveLength(0);
+      setClock("Woke up", 6, 30, "AM");
+      setClock("Went to sleep", 10, 30, "PM");
+      fireEvent.click(screen.getByLabelText("More water"));
+      fireEvent.click(screen.getByLabelText("Add a bottle")); // same quarter hour: added together
+      const marks = screen.getAllByTestId("day-mark").map((m) => m.textContent);
+      expect(marks).toEqual(["🌅 Woke 6:30 AM", "😴 Sleep 10:30 PM", "💧 750 ml · 2 PM"]);
+      expect(Element.prototype.scrollTo).toHaveBeenCalledWith({ top: ((14 * 60 + 7) / 60) * 64, behavior: "smooth" });
+      fireEvent.click(screen.getByLabelText("Less water")); // takes off the latest drink
+      expect(screen.getAllByTestId("day-mark").map((m) => m.textContent)[2]).toBe("💧 250 ml · 2 PM");
+      fireEvent.click(screen.getByLabelText("Less water"));
+      expect(screen.getAllByTestId("day-mark")).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("schedule done marks", () => {
+  it("marks when a task and a checklist item were ticked off, and drops the mark when undone", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    vi.setSystemTime(new Date(`${T}T00:00:00`).setHours(15, 5));
+    try {
+      saveTodos([todo("Report", { subtasks: [{ id: "s1", text: "Draft", done: false }] }), todo("Milk")], T);
+      render(<TodosPage />);
+      const marks = () => screen.queryAllByTestId("day-mark").map((m) => m.textContent);
+      expect(marks()).toEqual([]);
+      fireEvent.click(inItem("Report").getByLabelText('Mark "Draft" as done'));
+      expect(marks()).toEqual(["✓ Draft"]);
+      fireEvent.click(inItem("Milk").getByLabelText("Mark as complete"));
+      expect(marks()).toEqual(["✓ Draft", "✓ Milk"]);
+      expect(screen.getByTitle("Milk · done 3:05 PM")).toBeTruthy();
+      expect(screen.getByTitle("Draft (Report) · done 3:05 PM")).toBeTruthy();
+      fireEvent.click(inItem("Milk").getByLabelText("Mark as incomplete"));
+      expect(marks()).toEqual(["✓ Draft"]);
+      fireEvent.click(inItem("Report").getByLabelText('Mark "Draft" as not done'));
+      expect(marks()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stacks marks ticked at the same time instead of drawing them on top of each other", () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    vi.setSystemTime(new Date(`${T}T00:00:00`).setHours(15, 5));
+    try {
+      saveTodos([todo("Brush"), todo("Bath"), todo("Lunch")], T);
+      render(<TodosPage />);
+      for (const name of ["Brush", "Bath", "Lunch"]) fireEvent.click(inItem(name).getByLabelText("Mark as complete"));
+      const tops = screen.getAllByTestId("day-mark").map((m) => Number((m.querySelector("span") as HTMLElement).style.top.replace("px", "")));
+      expect(tops).toEqual([0, 22, 44]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows no mark for a task that was finished on another day", () => {
+    const yesterdayNoon = new Date(`${Y}T12:00:00`).getTime();
+    saveTodos([todo("Old", { completed: true, doneAt: yesterdayNoon })], T);
+    render(<TodosPage />);
+    expect(screen.queryAllByTestId("day-mark")).toHaveLength(0);
   });
 });
