@@ -28,6 +28,8 @@ npm run dev                  # http://localhost:3000, then sign in
 
 If any of the three login variables is missing, nobody can sign in.
 
+After 10 failed logins within an hour, login is locked for everyone (even with the right password) until the oldest failure is an hour old. Devices that are already signed in keep working. Attempts are recorded in Turso's `login_attempts` table, or `data/login-attempts.json` locally.
+
 ### Scripts
 
 | Command | Purpose |
@@ -211,6 +213,7 @@ Without a Turso database, sync on Vercel won't persist, because its filesystem i
 |---|---|
 | `SyntaxError: Unexpected token '?'` when running `npx tsc` or `npm test` | Your Node is too old. Use Node 18.17+ (e.g. `nvm use 20`). |
 | Every page redirects to `/login` | Set `APP_USERNAME`, `APP_PASSWORD`, and `AUTH_SECRET` in `.env.local`, then restart the dev server. |
+| Login says "Too many failed logins" | Wait the minutes it shows, or use a device that's still signed in. To unlock right away, clear the `login_attempts` table in Turso (or delete `data/login-attempts.json` locally). |
 | `TMDB_API_KEY is not configured` / empty feeds | Add the key to `.env.local` and restart. |
 | TMDB requests time out (common on WSL) | Requests already retry once. Check your network or DNS. |
 

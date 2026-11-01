@@ -1,5 +1,5 @@
 import { createClient, type Client } from "@libsql/client/web";
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
 
@@ -33,6 +33,7 @@ function client(): Promise<Client> {
       [
         "CREATE TABLE IF NOT EXISTS docs (key TEXT PRIMARY KEY, data TEXT NOT NULL, etag TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS usage (bucket TEXT PRIMARY KEY, reads INTEGER NOT NULL, writes INTEGER NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS login_attempts (id INTEGER PRIMARY KEY, at INTEGER NOT NULL)",
       ],
       "write"
     );
@@ -182,6 +183,76 @@ export async function writeDoc(key: string, data: unknown, ifMatch?: string): Pr
     });
   }
   return etag;
+}
+
+// ---------------- Login attempts ----------------
+// Failed logins in the last hour, counted for everyone together (an attacker can switch IPs), so
+// password guessing stops after LOGIN_LIMIT failures. Each attempt is recorded before its password
+// is checked, so guesses sent in parallel count too, and a successful one removes its record.
+// While locked, even the right password is refused; signed-in devices keep their sessions.
+
+export const LOGIN_LIMIT = 10;
+export const LOGIN_WINDOW = 60 * 60 * 1000; // ms
+
+export type LoginAttempt = { allowed: true; id: string } | { allowed: false; retryAfter: number };
+type LocalAttempt = { id: string; at: number };
+
+// Local attempts are read and rewritten as one file; this queue keeps parallel requests in order.
+let localQueue: Promise<unknown> = Promise.resolve();
+function withLocalAttempts<T>(fn: (attempts: LocalAttempt[]) => { attempts: LocalAttempt[]; result: T }): Promise<T> {
+  const run = localQueue.then(async () => {
+    const file = localPath("login-attempts.json");
+    const saved: LocalAttempt[] = JSON.parse(await fs.readFile(file, "utf-8").catch(() => "[]"));
+    const { attempts, result } = fn(saved);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, JSON.stringify(attempts), "utf-8");
+    return result;
+  });
+  localQueue = run.catch(() => {});
+  return run;
+}
+
+// Record an attempt and say whether it may go ahead. When locked, the attempt isn't kept, and
+// `retryAfter` is the seconds until the oldest counted failure expires.
+export async function beginLoginAttempt(): Promise<LoginAttempt> {
+  const now = Date.now();
+  const since = now - LOGIN_WINDOW;
+  const verdict = (count: number, oldest: number, id: string): LoginAttempt =>
+    count <= LOGIN_LIMIT ? { allowed: true, id } : { allowed: false, retryAfter: Math.max(1, Math.ceil((oldest + LOGIN_WINDOW - now) / 1000)) };
+
+  count("writes");
+  if (!isStoreConfigured()) {
+    return withLocalAttempts((saved) => {
+      const recent = saved.filter((a) => a.at >= since);
+      const id = randomBytes(8).toString("hex");
+      const result = verdict(recent.length + 1, recent.length ? Math.min(...recent.map((a) => a.at)) : now, id);
+      return { attempts: result.allowed ? [...recent, { id, at: now }] : recent, result };
+    });
+  }
+  // One transaction: concurrent attempts each see the ones recorded before them.
+  const c = await client();
+  const [, inserted, counted] = await c.batch(
+    [
+      { sql: "DELETE FROM login_attempts WHERE at < ?", args: [since] },
+      { sql: "INSERT INTO login_attempts (at) VALUES (?)", args: [now] },
+      { sql: "SELECT COUNT(*) AS n, MIN(at) AS oldest FROM login_attempts WHERE at >= ?", args: [since] },
+    ],
+    "write"
+  );
+  const id = String(inserted.lastInsertRowid);
+  const result = verdict(Number(counted.rows[0].n), Number(counted.rows[0].oldest), id);
+  if (!result.allowed) await forgetLoginAttempt(id);
+  return result;
+}
+
+// Remove an attempt's record, after it succeeded.
+export async function forgetLoginAttempt(id: string): Promise<void> {
+  count("writes");
+  if (!isStoreConfigured()) {
+    await withLocalAttempts((saved) => ({ attempts: saved.filter((a) => a.id !== id), result: undefined }));
+    return;
+  }
+  await (await client()).execute({ sql: "DELETE FROM login_attempts WHERE id = ?", args: [Number(id)] });
 }
 
 // The single-file storage.json used before docs were split. Only the local fallback still has
