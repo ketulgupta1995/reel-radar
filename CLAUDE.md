@@ -1,12 +1,12 @@
-# AGENTS.md
+# CLAUDE.md
 
-Guidance for AI coding agents working in this repo. Read this before making changes.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. Read it before making changes.
 
 ## What this is
 
 Reel Radar: a single-user Next.js 16 (App Router) app for movie/TV discovery, watch tracking, recommendations, taste analytics, a daily todo planner, and a money tracker. Data comes from the TMDB v3 API. State lives in the browser (`localStorage`) and syncs to Turso (libSQL), or to `data/*.json` locally when Turso isn't configured.
 
-Stack: Next.js 16, React 19, TypeScript (strict), Tailwind 3, Vitest 2, `@libsql/client`.
+Stack: Next.js 16, React 19, TypeScript (strict), Tailwind 3, Vitest 4, `@libsql/client`.
 
 ## Commands
 
@@ -17,11 +17,19 @@ npm test         # vitest run
 npm run coverage # tests + coverage report (fails below the thresholds in vitest.config.mts)
 npm run build    # production build; also the full typecheck
 npx tsc --noEmit # quick typecheck
+
+npx vitest run src/lib/recommend.test.ts         # one file
+npx vitest run src/lib/sync.test.ts -t "409"     # tests whose name matches
+npx vitest run src/app/todos                     # everything under a folder
 ```
 
 Before calling a change done, run `npm run coverage` and `npx tsc --noEmit` (or `npm run build`).
 
-Node 20.9+ is required. On this machine the system `node` is v12, which fails with `SyntaxError: Unexpected token '?'`. Use nvm's Node 20 (`nvm use 20`, or put `~/.nvm/versions/node/v20.16.0/bin` first on PATH).
+Node 20.9+ is required. On this machine the system `node` is v12, which fails with `SyntaxError: Unexpected token '?'`. Shell state doesn't carry between Bash calls, so put nvm's Node 20 first on PATH in every command:
+
+```bash
+export PATH="$HOME/.nvm/versions/node/v20.16.0/bin:$PATH" && npm test
+```
 
 ## Environment
 
@@ -35,6 +43,15 @@ Copy `.env.example` to `.env.local`. Never commit `.env.local` or print its valu
 | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | no | Turns on Turso storage; without the URL, storage falls back to `data/` |
 | `MONEY_ENCRYPTION_KEY` | for Money | 32 bytes, base64. `docStore` encrypts `money-*` docs with it; money reads and writes fail without it |
 | `MONEY_MY_NAMES`, `MONEY_FAMILY` | no | Starter family for Money (`lib/moneyFamily.ts`), served by `api/money/family` and added once by `seedFamily()`. Keeps real names out of the public repo; never make them `NEXT_PUBLIC_` (static bundles aren't behind the login) |
+
+## Keep away from live data
+
+`.env.local` holds the real Turso credentials, and the owner often has their own `next dev` running from this repo against the live database.
+
+- Start any dev server or script you run with the store turned off, on a different port: `TURSO_DATABASE_URL= npx next dev -p 3001`. An empty shell variable takes precedence over `.env.local`, and `docStore` then falls back to `data/`.
+- Remember that edits to sync, storage or `docStore` code hot-reload into the owner's running server and their open tabs, so they can reach live data before any deploy.
+- Ask before running `scripts/*.ts` without `--dry-run` or listing mode, or before anything else that writes to or deletes from Turso.
+- Vercel Hobby limits matter. When changing sync or storage, count the database reads and writes and the function calls the change adds.
 
 ## Layout
 
@@ -73,6 +90,8 @@ scripts/migrate-blob-to-turso.ts  One-off copy of the old Vercel Blob docs into 
 ```
 
 Import through the `@/` alias (maps to `src/`).
+
+The repo is indexed by CodeGraph (`.codegraph/`). Use `codegraph explore "<symbol or question>"` (or the MCP tool) before grep when following call paths, for example `markDirty` → `/api/sync` → `docStore.writeDoc`.
 
 ## Conventions and invariants
 
@@ -119,7 +138,7 @@ Import through the `@/` alias (maps to `src/`).
 
 - Don't commit secrets, `.env.local`, or `.next/`.
 - `data/storage.json` is intentionally tracked in git (it holds the owner's viewing history). Don't delete it, reset it, or overwrite it with test data. The other `data/*.json` files are local dev docs and stay gitignored.
-- Don't run the dev server or scripts against the live Turso database to test changes. Start with `TURSO_DATABASE_URL=` (empty) so they use `data/`.
+- Don't run the dev server or scripts against the live Turso database to test changes (see "Keep away from live data").
 - Don't add dependencies without a clear need. The dependency list is deliberately small.
 - Don't send TMDB requests or the API key from client components.
 

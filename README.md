@@ -8,7 +8,7 @@ Built with **Next.js 16 (App Router)**, **TypeScript**, and **Tailwind CSS**, wi
 
 ## Quick start
 
-**You need:** Node.js **18.17+** and a free [TMDB v3 API key](https://www.themoviedb.org/settings/api).
+**You need:** Node.js **20.9+** and a free [TMDB v3 API key](https://www.themoviedb.org/settings/api).
 
 ```bash
 npm install

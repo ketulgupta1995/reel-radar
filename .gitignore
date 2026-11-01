@@ -12,3 +12,6 @@ coverage
 *.tsbuildinfo
 data/*gpay*
 data/*.pdf
+
+# CodeGraph index (generated locally)
+.codegraph/
