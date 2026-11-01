@@ -1,9 +1,8 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { jsonResponse } from "@/test/fixtures";
 import { requests, routeFetch } from "@/test/pages";
-import { weekStart } from "@/lib/plannerStats";
 import { Todo, addTodo, getTodayDate, loadDayLog, loadDailyTasks, loadTodos, saveTodos, shiftDate } from "@/lib/todos";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/todos" }));
@@ -19,6 +18,8 @@ const todo = (id: string, extra: Partial<Todo> = {}): Todo => ({
   createdAt: `2026-01-01T00:00:0${id.length % 10}.000Z`,
   ...extra,
 });
+const longDate = (d: string) =>
+  new Date(d + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
 const nowMinutes = () => {
   const d = new Date();
   return d.getHours() * 60 + d.getMinutes();
@@ -263,12 +264,14 @@ describe("friendlier planner", () => {
     expect(screen.getByText("A blank page. What matters most today?")).toBeTruthy();
   });
 
-  it("opens a day from the week strip, which shows how each day went", async () => {
-    const monday = weekStart(T);
-    const other = monday === T ? shiftDate(T, 1) : monday; // another day in this week
+  it("opens a day from the strip around today, which shows how each day went", async () => {
+    const other = shiftDate(T, 1);
     saveTodos([todo("w1", { completed: true }), todo("w2")], other);
     render(<TodosPage />);
-    expect(screen.getByRole("button", { current: "date" }).getAttribute("aria-label")).toMatch(/nothing planned$/);
+    const days = screen.getAllByLabelText(/: (nothing planned|\d+ of \d+ done)$/);
+    expect(days).toHaveLength(7);
+    expect(days[3].getAttribute("aria-current")).toBe("date"); // today in the middle
+    expect(days[3].getAttribute("aria-label")).toMatch(/nothing planned$/);
     fireEvent.click(screen.getByLabelText(/: 1 of 2 done$/));
     expect(await screen.findByText("w2", { selector: "p" })).toBeTruthy();
     expect(screen.getByRole("button", { current: "date" }).getAttribute("aria-label")).toMatch(/1 of 2 done$/);
@@ -396,7 +399,6 @@ describe("the task list", () => {
 
     fireEvent.click(screen.getByText("Clear completed"));
     expect(loadTodos(T).map((t) => t.id).sort()).toEqual(["Low", "Urgent"]);
-    expect(screen.getByText("2 items left")).toBeTruthy();
   });
 
   it("edits a title and note, cancels with Escape, and deletes an emptied task", () => {
@@ -607,12 +609,12 @@ describe("days", () => {
   it("navigates by day, date picker and week, and opens a day from the week view", () => {
     render(<TodosPage />);
     fireEvent.click(screen.getByLabelText("Previous day"));
-    expect(screen.getByText(/^Yesterday ·/)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(longDate(Y));
     fireEvent.click(screen.getByText("Today"));
     fireEvent.click(screen.getByLabelText("Next day"));
-    expect(screen.getByText(/^Tomorrow ·/)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(longDate(shiftDate(T, 1)));
     fireEvent.change(screen.getByLabelText("Pick a date"), { target: { value: "2026-03-02" } });
-    expect(screen.getByText("Mon, Mar 2, 2026 · Mon, Mar 2, 2026")).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Mon, Mar 2, 2026");
     fireEvent.change(screen.getByLabelText("Pick a date"), { target: { value: "" } }); // ignored
 
     fireEvent.click(screen.getByText("week"));
@@ -621,7 +623,7 @@ describe("days", () => {
     expect(screen.getByText("Week of Mar 9 – Mar 15")).toBeTruthy();
     fireEvent.click(screen.getByLabelText("Previous week"));
     fireEvent.click(screen.getByTitle(/^Open Wed, Mar 4/));
-    expect(screen.getByText("Wed, Mar 4, 2026 · Wed, Mar 4, 2026")).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Wed, Mar 4, 2026");
     fireEvent.click(screen.getByText("week"));
     fireEvent.click(screen.getByText("day"));
   });
@@ -646,13 +648,6 @@ describe("days", () => {
     expect(screen.getByText("Hide")).toBeTruthy();
     fireEvent.click(screen.getByText("Hide"));
     expect(screen.getByText("Choose")).toBeTruthy();
-  });
-
-  it("lists other days and opens one", () => {
-    saveTodos([todo("Past", { completed: true }), todo("Open")], "2026-02-01");
-    render(<TodosPage />);
-    fireEvent.click(screen.getByText("1/2 done").closest("button")!);
-    expect(screen.getByText("Past", { selector: "p" })).toBeTruthy();
   });
 
   it("moves or copies a task to another day", async () => {
@@ -826,5 +821,40 @@ describe("backup and sync", () => {
     saveTodos([todo("From phone")], T);
     act(() => void window.dispatchEvent(new CustomEvent("reel-radar-sync", { detail: { keys: [`planner-${T.slice(0, 7)}`] } })));
     expect(await screen.findByText("From phone", { selector: "p" })).toBeTruthy();
+  });
+});
+
+describe("task groups", () => {
+  const at = (h: number, m = 0) => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    vi.setSystemTime(new Date(`${T}T00:00:00`).setHours(h, m));
+  };
+  afterEach(() => vi.useRealTimers());
+
+  it("labels the to-do and completed groups", async () => {
+    at(9, 0);
+    saveTodos([todo("Milk", { completed: true })], T);
+    render(<TodosPage />);
+    expect(await screen.findByText("Completed · 1")).toBeTruthy();
+    saveTodos([todo("Milk", { completed: true }), todo("Eggs")], T);
+    act(() => void window.dispatchEvent(new CustomEvent("reel-radar-sync", { detail: { keys: [`planner-${T.slice(0, 7)}`] } })));
+    expect(await screen.findByText("To do · 1")).toBeTruthy();
+  });
+});
+
+describe("task creator options", () => {
+  it("keeps priority, tag, time, note and repeat behind Options until asked for or in use", () => {
+    render(<TodosPage />);
+    const toggle = screen.getByText("⋯ Options");
+    const panel = () => screen.getByLabelText("Priority").parentElement!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(panel().className).toContain("hidden");
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(panel().className).not.toContain("hidden");
+    fireEvent.click(toggle);
+    expect(panel().className).toContain("hidden");
+    fireEvent.change(screen.getByLabelText("Priority"), { target: { value: "high" } }); // set, so it stays open
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
   });
 });

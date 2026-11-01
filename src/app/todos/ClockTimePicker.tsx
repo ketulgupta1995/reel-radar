@@ -25,11 +25,13 @@ export function ClockTimePicker({
   value,
   onChange,
   fallback,
+  popoverRight,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   fallback: string; // where the clock starts when no time is set yet
+  popoverRight?: boolean; // open the clock against the right edge, for a tile in the right-hand column
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(parse(fallback)!);
@@ -86,7 +88,7 @@ export function ClockTimePicker({
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={value ? `${label}: ${formatClock(value)}` : `${label}: not set`}
-        className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${
+        className={`flex h-full w-full flex-col items-start gap-0.5 rounded-xl border px-3 py-2 text-left transition ${
           open ? "border-gold/60 bg-white/10" : "border-white/10 bg-white/5 hover:border-white/25"
         }`}
       >
@@ -100,7 +102,9 @@ export function ClockTimePicker({
         <div
           role="dialog"
           aria-label={`Set ${label.toLowerCase()} time`}
-          className="absolute left-0 z-50 mt-2 w-[17rem] max-w-[calc(100vw-2rem)] rounded-2xl border border-white/15 bg-ink p-4 shadow-2xl"
+          className={`absolute z-50 mt-2 w-[17rem] max-w-[calc(100vw-2rem)] rounded-2xl border border-white/15 bg-ink p-4 shadow-2xl ${
+            popoverRight ? "right-0 lg:left-0 lg:right-auto" : "left-0"
+          }`}
         >
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-baseline text-3xl font-semibold tabular-nums">

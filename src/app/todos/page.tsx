@@ -36,7 +36,6 @@ import {
   scheduleTodo,
   updateTodo,
   clearCompletedTodos,
-  getAllStoredDates,
   getUnfinishedFromYesterday,
   carryOverFromYesterday,
   loadTodosWithDaily,
@@ -156,12 +155,12 @@ export default function TodosPage() {
   const [reminderLead, setReminderLead] = useState<number | null>(null);
   const [newNote, setNewNote] = useState("");
   const [showNewNote, setShowNewNote] = useState(false);
+  const [showOptions, setShowOptions] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [editNote, setEditNote] = useState("");
-  const [availableDates, setAvailableDates] = useState<string[]>([]);
   const [yesterdayTodos, setYesterdayTodos] = useState<Todo[]>([]);
   const [showYesterday, setShowYesterday] = useState(false);
   const [mobileView, setMobileView] = useState<MobileView>("tasks");
@@ -184,7 +183,6 @@ export default function TodosPage() {
   const resize = useBlockResize((t, date, duration) => apply(scheduleTodo(t.id, { start: t.start!, duration }, date)));
 
   const refreshMeta = (date = selectedDate) => {
-    setAvailableDates(getAllStoredDates());
     setYesterdayTodos(getUnfinishedFromYesterday(date));
     setDailyTasks(loadDailyTasks());
   };
@@ -528,6 +526,8 @@ export default function TodosPage() {
     );
   }, [todos, filter, query, tagFilter]);
 
+  const hasOptions = Boolean(newPriority || newTag || newTime || newNote.trim() || newDaily);
+  const optionsOpen = showOptions || hasOptions;
   const quickPreview = useMemo(() => parseQuickAdd(newTodoText), [newTodoText]);
 
   const reorder = useListReorder((id, before) => apply(reorderTodo(id, before, selectedDate)));
@@ -542,43 +542,79 @@ export default function TodosPage() {
 
   const usedTags = TAGS.map((t) => t.id).filter((id) => id === tagFilter || todos.some((t) => t.tag === id));
 
-  const otherDays = availableDates.filter((d) => d !== selectedDate && loadTodos(d).length > 0);
   const isToday = selectedDate === getTodayDate();
   const prevLabel = getRelativeDateLabel(shiftDate(selectedDate, -1));
 
   return (
-    <main className="min-h-screen bg-[#090910] bg-[radial-gradient(ellipse_at_top,rgba(246,196,83,0.06),transparent_60%)] text-white">
+    <main className="relative min-h-screen overflow-x-clip bg-[#090910] text-white">
+      <div aria-hidden className="pointer-events-none fixed inset-0 -z-0 bg-[radial-gradient(ellipse_at_top_left,rgba(246,196,83,0.10),transparent_55%),radial-gradient(ellipse_at_bottom_right,rgba(139,92,246,0.14),transparent_55%),radial-gradient(ellipse_at_top_right,rgba(56,189,248,0.07),transparent_50%)]" />
       {/* Header */}
-      <header className="border-b border-white/5 bg-black/20 backdrop-blur-md sticky top-0 z-40">
-        <nav className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-4 py-3 sm:px-6 sm:py-4">
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-white/[.03] backdrop-blur-xl">
+        <nav className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 sm:px-6 sm:py-4">
           <AppSwitcher current="planner" />
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            {view === "day" && completedCount > 0 && (
+              <button
+                onClick={() => apply(clearCompletedTodos(selectedDate))}
+                className="text-red-400 transition hover:text-red-300"
+              >
+                Clear completed
+              </button>
+            )}
+            <Link
+              href="/todos/stats"
+              className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-white/80 hover:border-gold/40 hover:text-gold"
+            >
+              Stats →
+            </Link>
+            <button
+              onClick={exportPlanner}
+              title="Download a backup of every day and daily task"
+              className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-white/80 hover:border-gold/40 hover:text-gold"
+            >
+              Export
+            </button>
+            <input type="file" accept=".json" onChange={handleImport} className="hidden" id="import-file" />
+            <label
+              htmlFor="import-file"
+              title="Add todos from a planner backup; nothing here is deleted"
+              className="cursor-pointer rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-white/80 hover:border-gold/40 hover:text-gold"
+            >
+              Import
+            </label>
+            <button
+              onClick={handleSync}
+              disabled={syncStatus === "syncing"}
+              title="Sync with your other devices now"
+              className={`rounded-full border px-3 py-1.5 transition ${
+                syncStatus === "synced"
+                  ? "border-green-400/50 bg-green-500/10 text-green-300"
+                  : syncStatus === "error"
+                  ? "border-red-400/50 bg-red-500/10 text-red-300"
+                  : "border-white/20 bg-white/5 text-white/80 hover:border-gold/40 hover:text-gold"
+              }`}
+            >
+              {syncStatus === "syncing" ? "Syncing..." : syncStatus === "synced" ? "Synced" : syncStatus === "error" ? "Failed" : "Sync now"}
+            </button>
+          </div>
         </nav>
       </header>
 
-      <div className="mx-auto max-w-[1600px] px-4 pb-24 pt-5 sm:px-6 sm:py-8">
+      <div className="relative mx-auto max-w-6xl px-4 pb-24 pt-5 sm:px-6 sm:py-8">
         {/* Hero: greeting, progress, day navigation */}
-        <section className="relative mb-6 overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-white/[.07] via-white/[.03] to-transparent p-4 sm:p-6">
-          <div aria-hidden className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-gold/10 blur-3xl" />
-          <div aria-hidden className="pointer-events-none absolute -bottom-32 left-1/3 h-64 w-64 rounded-full bg-violet-500/10 blur-3xl" />
+        <section className="relative mb-6 overflow-hidden rounded-[2rem] border border-white/15 bg-gradient-to-br from-white/[.12] via-white/[.05] to-white/[.02] p-5 shadow-2xl shadow-black/40 backdrop-blur-xl sm:p-8">
+          <div aria-hidden className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-gold/20 blur-3xl" />
+          <div aria-hidden className="pointer-events-none absolute -bottom-32 left-1/3 h-64 w-64 rounded-full bg-violet-500/20 blur-3xl" />
           <div className="relative flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs uppercase tracking-[0.2em] text-white/45">
-                <h1>Daily Planner</h1>
-                <Link
-                  href="/todos/stats"
-                  className="rounded-full border border-white/15 px-2.5 py-0.5 normal-case tracking-normal text-white/70 hover:border-gold/40 hover:text-gold"
-                >
-                  Stats →
-                </Link>
-              </div>
-              <p className="mt-2 text-2xl font-bold sm:text-4xl">
-                {view === "week" ? "This week at a glance" : greeting(isToday, now, selectedDate)}
-              </p>
-              <p className="mt-1 text-white/60">
-                {view === "week"
-                  ? `Week of ${formatShortDate(weekStart(selectedDate))} – ${formatShortDate(shiftDate(weekStart(selectedDate), 6))}`
-                  : `${getRelativeDateLabel(selectedDate)} · ${formatDate(selectedDate)}`}
-              </p>
+            <div className="min-w-0 flex-1">
+              <h1 className="bg-gradient-to-r from-white via-white to-gold/80 bg-clip-text text-3xl font-bold text-transparent sm:text-5xl">
+                {view === "week" ? "This week at a glance" : formatDate(selectedDate)}
+              </h1>
+              {view === "week" && (
+                <p className="mt-1 text-white/60">
+                  {`Week of ${formatShortDate(weekStart(selectedDate))} – ${formatShortDate(shiftDate(weekStart(selectedDate), 6))}`}
+                </p>
+              )}
               {view === "day" && <p className="mt-3 text-sm text-white/75">{moodLine(todos.length, activeCount, percent)}</p>}
             </div>
             {view === "day" && (
@@ -726,13 +762,13 @@ export default function TodosPage() {
           ))}
         </div>
 
-        <div className="grid items-start gap-6 lg:grid-cols-2 xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+        <div className="grid items-start gap-6 lg:grid-cols-2 xl:grid-cols-[minmax(0,6fr)_minmax(0,5fr)]">
           {/* ---------------- Tasks column ---------------- */}
           <section className={mobileView === "tasks" ? "" : "hidden lg:block"}>
             <DayLogCard date={selectedDate} version={logVersion} />
             <form
               onSubmit={handleAddTodo}
-              className="mb-4 flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-panel/70 p-3 shadow-lg shadow-black/30 transition focus-within:border-gold/40"
+              className="sticky top-[4.25rem] z-30 mb-4 flex flex-wrap gap-2 rounded-3xl border border-white/15 bg-white/[.07] p-3 shadow-xl shadow-black/30 backdrop-blur-xl transition focus-within:border-gold/50 focus-within:shadow-gold/10"
             >
               <div className="flex basis-full items-center gap-2">
                 <span aria-hidden className="pl-1 text-xl text-gold">+</span>
@@ -748,87 +784,100 @@ export default function TodosPage() {
                 <kbd className="hidden rounded border border-white/15 px-1.5 text-[10px] text-white/40 sm:block" title="Press N anywhere to jump here">
                   N
                 </kbd>
+                <button
+                  type="button"
+                  onClick={() => setShowOptions((v) => !v)}
+                  aria-expanded={optionsOpen}
+                  title="Priority, tag, time, note, repeat"
+                  className={`shrink-0 rounded-full border px-3 py-1.5 text-xs transition ${
+                    optionsOpen || hasOptions ? "border-gold/60 bg-gold/15 text-gold" : "border-white/15 text-white/60 hover:text-white"
+                  }`}
+                >
+                  ⋯ Options
+                </button>
+                <button
+                  type="submit"
+                  disabled={!newTodoText.trim()}
+                  className="shrink-0 rounded-full bg-gold px-5 py-1.5 text-sm font-semibold text-black transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Add
+                </button>
               </div>
               <QuickAddHint quick={quickPreview} typed={newTodoText.trim() !== ""} />
-              <select
-                value={newPriority}
-                onChange={(e) => setNewPriority(e.target.value as Priority | "")}
-                className="min-w-0 flex-1 rounded-lg border border-white/10 bg-ink px-2.5 py-1.5 text-xs text-white focus:border-gold/50 focus:outline-none sm:flex-none"
-                aria-label="Priority"
-              >
-                <option value="">No priority</option>
-                <option value="high">High</option>
-                <option value="medium">Medium</option>
-                <option value="low">Low</option>
-              </select>
-              <select
-                value={newTag}
-                onChange={(e) => setNewTag(e.target.value as TagId | "")}
-                className="min-w-0 flex-1 rounded-lg border border-white/10 bg-ink px-2.5 py-1.5 text-xs text-white focus:border-gold/50 focus:outline-none sm:flex-none"
-                aria-label="Tag"
-              >
-                <option value="">No tag</option>
-                {TAGS.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="time"
-                value={newTime}
-                onChange={(e) => setNewTime(e.target.value)}
-                className="min-w-0 flex-1 rounded-lg border border-white/10 bg-ink px-2.5 py-1.5 text-xs text-white [color-scheme:dark] focus:border-gold/50 focus:outline-none sm:flex-none"
-                aria-label="Start time (optional)"
-                title="Start time (optional) - places it in the planner"
-              />
-              {newTime && (
+              <div className={`basis-full flex-wrap items-center gap-2 ${optionsOpen ? "flex" : "hidden"}`}>
                 <select
-                  value={newDuration}
-                  onChange={(e) => setNewDuration(Number(e.target.value))}
-                  className="rounded-lg border border-white/10 bg-ink px-2.5 py-1.5 text-xs text-white focus:border-gold/50 focus:outline-none"
-                  aria-label="Duration"
+                  value={newPriority}
+                  onChange={(e) => setNewPriority(e.target.value as Priority | "")}
+                  className="min-w-0 flex-1 rounded-lg border border-white/10 bg-ink px-2.5 py-1.5 text-xs text-white focus:border-gold/50 focus:outline-none sm:flex-none"
+                  aria-label="Priority"
                 >
-                  {DURATIONS.map((d) => (
-                    <option key={d} value={d}>
-                      {fmtDuration(d)}
+                  <option value="">No priority</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+                <select
+                  value={newTag}
+                  onChange={(e) => setNewTag(e.target.value as TagId | "")}
+                  className="min-w-0 flex-1 rounded-lg border border-white/10 bg-ink px-2.5 py-1.5 text-xs text-white focus:border-gold/50 focus:outline-none sm:flex-none"
+                  aria-label="Tag"
+                >
+                  <option value="">No tag</option>
+                  {TAGS.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
                     </option>
                   ))}
                 </select>
-              )}
-              <button
-                type="button"
-                onClick={() => setShowNewNote((v) => !v)}
-                aria-pressed={showNewNote}
-                title="Add a description"
-                className={`rounded-lg border px-2.5 py-1.5 text-xs transition ${
-                  showNewNote || newNote.trim()
-                    ? "border-gold/60 bg-gold/15 text-gold"
-                    : "border-white/10 bg-ink text-white/60 hover:text-white"
-                }`}
-              >
-                ✎ Note
-              </button>
-              <button
-                type="button"
-                onClick={() => setNewDaily((v) => !v)}
-                aria-pressed={newDaily}
-                title="Repeat this task every day"
-                className={`rounded-lg border px-2.5 py-1.5 text-xs transition ${
-                  newDaily
-                    ? "border-gold/60 bg-gold/15 text-gold"
-                    : "border-white/10 bg-ink text-white/60 hover:text-white"
-                }`}
-              >
-                ↻ {newDaily ? repeatLabel(newRepeatDays.length === 7 ? undefined : newRepeatDays) : "Daily"}
-              </button>
-              <button
-                type="submit"
-                disabled={!newTodoText.trim()}
-                className="ml-auto rounded-lg bg-gold px-5 py-1.5 text-sm font-semibold text-black transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Add
-              </button>
+                <input
+                  type="time"
+                  value={newTime}
+                  onChange={(e) => setNewTime(e.target.value)}
+                  className="min-w-0 flex-1 rounded-lg border border-white/10 bg-ink px-2.5 py-1.5 text-xs text-white [color-scheme:dark] focus:border-gold/50 focus:outline-none sm:flex-none"
+                  aria-label="Start time (optional)"
+                  title="Start time (optional) - places it in the planner"
+                />
+                {newTime && (
+                  <select
+                    value={newDuration}
+                    onChange={(e) => setNewDuration(Number(e.target.value))}
+                    className="rounded-lg border border-white/10 bg-ink px-2.5 py-1.5 text-xs text-white focus:border-gold/50 focus:outline-none"
+                    aria-label="Duration"
+                  >
+                    {DURATIONS.map((d) => (
+                      <option key={d} value={d}>
+                        {fmtDuration(d)}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowNewNote((v) => !v)}
+                  aria-pressed={showNewNote}
+                  title="Add a description"
+                  className={`rounded-lg border px-2.5 py-1.5 text-xs transition ${
+                    showNewNote || newNote.trim()
+                      ? "border-gold/60 bg-gold/15 text-gold"
+                      : "border-white/10 bg-ink text-white/60 hover:text-white"
+                  }`}
+                >
+                  ✎ Note
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewDaily((v) => !v)}
+                  aria-pressed={newDaily}
+                  title="Repeat this task every day"
+                  className={`rounded-lg border px-2.5 py-1.5 text-xs transition ${
+                    newDaily
+                      ? "border-gold/60 bg-gold/15 text-gold"
+                      : "border-white/10 bg-ink text-white/60 hover:text-white"
+                  }`}
+                >
+                  ↻ {newDaily ? repeatLabel(newRepeatDays.length === 7 ? undefined : newRepeatDays) : "Daily"}
+                </button>
+              </div>
               {newDaily && (
                 <div className="flex basis-full items-center gap-3 text-xs text-white/55">
                   Repeats on
@@ -910,7 +959,7 @@ export default function TodosPage() {
             )}
 
             {todos.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-white/15 bg-panel/40 p-10 text-center">
+              <div className="rounded-3xl border border-dashed border-white/20 bg-white/[.03] p-10 text-center backdrop-blur-xl">
                 <div aria-hidden className="mb-3 text-4xl">🗒️</div>
                 <h3 className="text-lg font-semibold text-white/80">Nothing planned for {getRelativeDateLabel(selectedDate)}</h3>
                 <p className="mt-1 text-white/50">Add a task above, or click a time slot in the planner.</p>
@@ -919,13 +968,19 @@ export default function TodosPage() {
                 </p>
               </div>
             ) : visible.length === 0 ? (
-              <p className="rounded-xl border border-white/10 bg-panel/60 p-6 text-center text-sm text-white/50">
+              <p className="rounded-2xl border border-white/10 bg-white/[.04] p-6 text-center text-sm text-white/50">
                 No tasks match this filter.
               </p>
             ) : (
               <div ref={reorder.listRef} className="space-y-2">
-                {visible.map((todo) => (
+                {visible.map((todo, i) => (
                   <Fragment key={todo.id}>
+                  {filter === "all" && (i === 0 || visible[i - 1].completed !== todo.completed) && (
+                    <div className={`flex items-center gap-3 px-1 text-[11px] uppercase tracking-[0.2em] text-white/40 ${i > 0 ? "pt-3" : ""}`}>
+                      <span>{todo.completed ? `Completed · ${completedCount}` : `To do · ${activeCount}`}</span>
+                      <span aria-hidden className="h-px flex-1 bg-gradient-to-r from-white/15 to-transparent" />
+                    </div>
+                  )}
                   {reorder.drag?.before === todo.id && <DropLine />}
                   <TodoItem
                     todo={todo}
@@ -982,86 +1037,11 @@ export default function TodosPage() {
                 {reorder.drag && reorder.drag.before === null && <DropLine />}
               </div>
             )}
-
-            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-panel/60 p-4 text-sm">
-              <span className="text-white/60">
-                {activeCount} {activeCount === 1 ? "item" : "items"} left
-              </span>
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                {completedCount > 0 && (
-                  <button
-                    onClick={() => apply(clearCompletedTodos(selectedDate))}
-                    className="text-red-400 transition hover:text-red-300"
-                  >
-                    Clear completed
-                  </button>
-                )}
-                <button
-                  onClick={exportPlanner}
-                  title="Download a backup of every day and daily task"
-                  className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-white/80 hover:border-gold/40 hover:text-gold"
-                >
-                  Export
-                </button>
-                <input type="file" accept=".json" onChange={handleImport} className="hidden" id="import-file" />
-                <label
-                  htmlFor="import-file"
-                  title="Add todos from a planner backup; nothing here is deleted"
-                  className="cursor-pointer rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-white/80 hover:border-gold/40 hover:text-gold"
-                >
-                  Import
-                </label>
-                <button
-                  onClick={handleSync}
-                  disabled={syncStatus === "syncing"}
-                  title="Sync with your other devices now"
-                  className={`rounded-full border px-3 py-1.5 transition ${
-                    syncStatus === "synced"
-                      ? "border-green-400/50 bg-green-500/10 text-green-300"
-                      : syncStatus === "error"
-                      ? "border-red-400/50 bg-red-500/10 text-red-300"
-                      : "border-white/20 bg-white/5 text-white/80 hover:border-gold/40 hover:text-gold"
-                  }`}
-                >
-                  {syncStatus === "syncing" ? "Syncing..." : syncStatus === "synced" ? "Synced" : syncStatus === "error" ? "Failed" : "Sync now"}
-                </button>
-              </div>
-            </div>
-
-            {otherDays.length > 0 && (
-              <div className="mt-8">
-                <h2 className="mb-3 text-lg font-semibold">Other days</h2>
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {otherDays
-                    .slice(0, 6)
-                    .map((date) => {
-                      const day = loadTodos(date);
-                      const done = day.filter((t) => t.completed).length;
-                      return (
-                        <button
-                          key={date}
-                          onClick={() => setSelectedDate(date)}
-                          className="rounded-xl border border-white/10 bg-panel/60 p-4 text-left transition hover:-translate-y-0.5 hover:border-gold/40"
-                        >
-                          <div className="mb-2 flex items-center justify-between gap-2">
-                            <span className="font-medium">{getRelativeDateLabel(date)}</span>
-                            <span className="text-xs text-white/50">{formatDate(date)}</span>
-                          </div>
-                          <div className="text-sm text-white/60">
-                            {day.length === 0 ? "No todos" : `${done}/${day.length} done`}
-                            {day.length > done && <span className="text-yellow-400"> · {day.length - done} pending</span>}
-                          </div>
-                        </button>
-                      );
-                    })}
-                </div>
-              </div>
-            )}
           </section>
 
           {/* ---------------- Planner column ---------------- */}
           <section
-            className={`rounded-2xl border border-white/10 bg-panel/60 lg:sticky lg:top-20 ${
+            className={`overflow-hidden rounded-3xl border border-white/15 bg-white/[.05] shadow-xl shadow-black/30 backdrop-blur-xl lg:sticky lg:top-20 ${
               mobileView === "schedule" ? "" : "hidden lg:block"
             }`}
           >
@@ -1393,10 +1373,12 @@ function TodoItem({
         ...(lifted ? { transform: `translateY(${reorder.drag!.dy}px)` } : {}),
         ...(todo.tag && !todo.completed ? { borderLeftColor: TAG_COLORS[todo.tag], borderLeftWidth: 3 } : {}),
       }}
-      className={`relative rounded-xl border bg-panel/60 p-3 pr-2 sm:pr-3 ${
+      className={`relative rounded-2xl border p-3.5 pr-2 backdrop-blur-xl sm:pr-3.5 ${
         lifted
-          ? "z-20 border-gold/60 opacity-90 shadow-2xl shadow-black/60"
-          : "border-white/10 transition hover:border-white/20"
+          ? "z-20 border-gold/60 bg-white/[.12] opacity-90 shadow-2xl shadow-black/60"
+          : todo.completed
+          ? "border-emerald-400/15 bg-emerald-400/[.04] transition"
+          : "border-white/10 bg-white/[.06] transition hover:border-white/25 hover:bg-white/[.09]"
       }`}
     >
       <div className="flex items-start gap-2">
@@ -1833,7 +1815,7 @@ function DayLogCard({ date, version }: { date: string; version: number }) {
       type="button"
       aria-label={label}
       onClick={() => setLog(addWater(date, ml))}
-      className="rounded-lg border border-white/10 px-2.5 py-1 text-xs text-white/80 transition hover:border-gold/50 hover:text-white"
+      className="flex-1 whitespace-nowrap rounded-lg border border-white/10 px-1.5 py-1 text-[11px] text-white/80 transition hover:border-gold/50 hover:text-white"
     >
       {text}
     </button>
@@ -1852,8 +1834,8 @@ function DayLogCard({ date, version }: { date: string; version: number }) {
     </label>
   );
   return (
-    <div className="mb-4 space-y-3 rounded-xl border border-white/10 bg-white/5 p-3 sm:p-4">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="relative z-[35] mb-4 space-y-3 rounded-3xl border border-white/15 bg-white/[.05] p-3 backdrop-blur-xl sm:p-4">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         <ClockTimePicker
           label="Woke up"
           value={log.wake ?? ""}
@@ -1864,56 +1846,58 @@ function DayLogCard({ date, version }: { date: string; version: number }) {
           label="Went to sleep"
           value={log.sleep ?? ""}
           fallback="22:30"
+          popoverRight
           onChange={(v) => setLog(updateDayLog(date, { sleep: v || undefined }))}
         />
-        <label className="flex items-center gap-2 text-sm text-white/70">
-          Weight
-          <input
-            type="number"
-            inputMode="decimal"
-            min="0"
-            step="0.1"
-            aria-label="Weight in kg"
-            placeholder="0.0"
-            value={weightText}
-            onChange={(e) => {
-              setWeightText(e.target.value);
-              const kg = parseFloat(e.target.value);
-              setLog(updateDayLog(date, { weight: Number.isFinite(kg) ? kg : undefined }));
-            }}
-            className="w-20 rounded-lg border border-white/10 bg-panel px-2.5 py-1 text-white placeholder-white/30 focus:border-gold/50 focus:outline-none"
-          />
-          kg
-        </label>
-      </div>
-
-      <div>
-        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-          <span className="text-sm text-white/70">
-            Water{" "}
-            <span className="font-semibold text-white" data-testid="water-total">
-              {litres(water)}
-            </span>
-            <span className="text-white/40"> of {litres(WATER_GOAL)}</span>
+        <label className="flex flex-col gap-0.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 transition focus-within:border-gold/60 hover:border-white/25">
+          <span className="text-xs uppercase tracking-wide text-white/50">Weight</span>
+          <span className="flex items-baseline gap-1.5 text-sm font-semibold tabular-nums">
+            <input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="0.1"
+              aria-label="Weight in kg"
+              placeholder="0.0"
+              value={weightText}
+              onChange={(e) => {
+                setWeightText(e.target.value);
+                const kg = parseFloat(e.target.value);
+                setLog(updateDayLog(date, { weight: Number.isFinite(kg) ? kg : undefined }));
+              }}
+              className="w-full min-w-0 bg-transparent text-white placeholder-white/30 focus:outline-none"
+            />
+            <span className="font-normal text-white/50">kg</span>
           </span>
-          <div className="flex items-center gap-1.5">
+        </label>
+        <div className="flex flex-col gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs uppercase tracking-wide text-white/50">Water</span>
+            <span className="text-sm tabular-nums">
+              <span className="font-semibold text-white" data-testid="water-total">
+                {litres(water)}
+              </span>
+              <span className="text-white/40"> / {litres(WATER_GOAL)}</span>
+            </span>
+          </div>
+          <div
+            className="h-1.5 overflow-hidden rounded-full bg-white/10"
+            role="progressbar"
+            aria-label="Water goal"
+            aria-valuemin={0}
+            aria-valuemax={WATER_GOAL}
+            aria-valuenow={Math.min(water, WATER_GOAL)}
+          >
+            <div
+              className={`h-full rounded-full transition-all ${water >= WATER_GOAL ? "bg-emerald-400" : "bg-sky-400"}`}
+              style={{ width: `${Math.min(100, (water / WATER_GOAL) * 100)}%` }}
+            />
+          </div>
+          <div className="flex gap-1.5">
             {waterButton("Less water", -WATER_STEP, "− Glass")}
             {waterButton("More water", WATER_STEP, "+ Glass")}
             {waterButton("Add a bottle", WATER_STEP * 2, "+ Bottle")}
           </div>
-        </div>
-        <div
-          className="h-2 overflow-hidden rounded-full bg-white/10"
-          role="progressbar"
-          aria-label="Water goal"
-          aria-valuemin={0}
-          aria-valuemax={WATER_GOAL}
-          aria-valuenow={Math.min(water, WATER_GOAL)}
-        >
-          <div
-            className={`h-full rounded-full transition-all ${water >= WATER_GOAL ? "bg-emerald-400" : "bg-sky-400"}`}
-            style={{ width: `${Math.min(100, (water / WATER_GOAL) * 100)}%` }}
-          />
         </div>
       </div>
 
@@ -1990,15 +1974,6 @@ function DropLine() {
   return <div className="-my-1 h-0.5 rounded-full bg-gold" aria-hidden data-testid="drop-line" />;
 }
 
-function greeting(isToday: boolean, now: number | null, date: string): string {
-  if (!isToday) return getRelativeDateLabel(date);
-  if (now === null) return "Hello";
-  if (now < 5 * 60) return "Up late? 🌙";
-  if (now < 12 * 60) return "Good morning ☀️";
-  if (now < 17 * 60) return "Good afternoon";
-  return "Good evening 🌆";
-}
-
 function moodLine(total: number, active: number, percent: number): string {
   if (total === 0) return "A blank page. What matters most today?";
   if (active === 0) return "Everything's done. Nicely handled.";
@@ -2011,7 +1986,7 @@ function ProgressRing({ percent, label }: { percent: number; label: string }) {
   const r = 34;
   const c = 2 * Math.PI * r;
   return (
-    <div className="relative h-24 w-24 shrink-0" role="img" aria-label={`${percent}% done`}>
+    <div className="relative h-28 w-28 shrink-0 drop-shadow-[0_0_18px_rgba(246,196,83,0.25)]" role="img" aria-label={`${percent}% done`}>
       <svg viewBox="0 0 80 80" className="h-full w-full -rotate-90">
         <circle cx="40" cy="40" r={r} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="7" />
         <circle
@@ -2035,16 +2010,16 @@ function ProgressRing({ percent, label }: { percent: number; label: string }) {
   );
 }
 
-// The selected day's week as tappable days, each with a bar for how much of it got done.
+// The days around the selected one as tappable days, each with a bar for how much of it got done.
 // Counts and "today" come from this browser (localStorage, local clock), so they're filled in after
 // mount: the server render can't know them, and rendering them there breaks hydration.
 function WeekStrip({ selectedDate, todos, onPick }: { selectedDate: string; todos: Todo[]; onPick: (date: string) => void }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   const today = mounted ? getTodayDate() : "";
-  const start = weekStart(selectedDate);
+  // Three days either side, so the selected day (today, to begin with) sits in the middle.
   const days = Array.from({ length: 7 }, (_, i) => {
-    const date = shiftDate(start, i);
+    const date = shiftDate(selectedDate, i - 3);
     const list = !mounted ? [] : date === selectedDate ? todos : loadTodos(date);
     return { date, total: list.length, done: list.filter((t) => t.completed).length };
   });
