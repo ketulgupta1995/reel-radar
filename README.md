@@ -1,6 +1,6 @@
 # Reel Radar 🎬
 
-A personal movie & TV tracker for one user. Log what you've watched (down to the season), keep a watchlist, get recommendations and analytics based on your own taste, and plan your day. It covers both Indian and global cinema.
+A personal movie & TV tracker for one user. Log what you've watched (down to the season), keep a watchlist, get recommendations and analytics based on your own taste, plan your day, and track spending. It covers both Indian and global cinema.
 
 Built with **Next.js 14 (App Router)**, **TypeScript**, and **Tailwind CSS**, with live metadata from **TMDB**. Your data is kept in the browser and synced to **Turso** (or to local JSON files during development).
 
@@ -25,6 +25,8 @@ npm run dev                  # http://localhost:3000, then sign in
 | `APP_PASSWORD` | ✅ | Login password. |
 | `AUTH_SECRET` | ✅ | Signs the session cookie. Generate one with `openssl rand -hex 32`. |
 | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | optional | Enables cloud sync via Turso. Without the URL, data is saved under `data/`. |
+| `MONEY_ENCRYPTION_KEY` | for Money | Encrypts the Money docs where they're stored (`openssl rand -base64 32`). Without it the Money app can't sync. Use the same key locally and on Vercel, and keep a copy somewhere safe. |
+| `MONEY_MY_NAMES`, `MONEY_FAMILY` | no | The family the Money app starts with, so real names stay out of the repo: your statement names comma-separated, and family members split by `;` with each one's names by `,` (see `.env.example`). Server-only; served to signed-in users by `/api/money/family`. |
 
 If any of the three login variables is missing, nobody can sign in.
 
@@ -48,7 +50,7 @@ After 10 failed logins within an hour, login is locked for everyone (even with t
 
 | Page | What you can do |
 |---|---|
-| `/` | **Home**: one card per app (Reel Radar, Daily Planner). Inside an app, the header shows a ⌂ Home button and a ▾ menu to switch to another app; it doesn't link to the other apps' pages directly. |
+| `/` | **Home**: one card per app (Reel Radar, Daily Planner, Money). Inside an app, the header shows a ⌂ Home button and a ▾ menu to switch to another app; it doesn't link to the other apps' pages directly. |
 | `/reel-radar` | Reel Radar landing page with a live spotlight of trending Indian and global titles |
 | `/discover` | Endless feed you can filter by region (All / Indian / Global). Each card has **Mark seen**, **+ Watchlist**, **Not interested**, and **Trailer & details** buttons. |
 | `/recommendations` | Unlocks after **10 logged titles**. Results come in four groups: Indian Movies, Global Movies, Indian Series, Global Series. You can tune them by discovery style (balanced / popular / deep cuts) and mood (dark, adrenaline, feel-good, mind-bending), and each pick says why it was recommended. |
@@ -60,6 +62,9 @@ After 10 failed logins within an hour, login is locked for everyone (even with t
 | `/person/[id]` | An actor's or director's filmography, with quick watch and watchlist buttons |
 | `/todos` | **Daily Planner**: tasks with a title, an optional note, a checklist, a priority and a colour tag (Work, Home, Health…), on a drag-to-schedule timeline where you resize blocks by dragging their bottom edge. A **week view** shows seven days side by side; drag tasks between days to move them, or hold Ctrl/Alt while dropping to copy. Each task also has a ⇄ button to move or copy it to any date. A **focus timer** on any task counts down its planned time and records the time actually spent. Tasks can repeat every day or on chosen weekdays (with a 🔥 streak count), the planner can send browser reminders before each block while the page is open, and you can bring over unfinished tasks from yesterday. Type shorthand in the add box (`Gym 6pm 45m #health !high daily`) to set time, length, tag, priority and repeat in one go. Drag the ⋮⋮ handle (or use ↑/↓) to reorder tasks. A day log records wake and sleep times on a clock, your weight in kg, water against a 2.5 L goal, and a short review. Keyboard: N or / to add, ← → to change day, T for today, W for the week view. |
 | `/todos/stats` | Planner stats: completion rate by weekday, planned vs. done hours, tasks by tag, focus time, the most postponed tasks, and database reads and writes per day for the whole app, over 7/30/90 days or all time. Pulls every month from the server first, so it covers all your devices. |
+| `/money` | **Money**: a hero card with the month's spending (change vs last month, the monthly limit and about how much a day is left), a bar per day with the daily average, income, what you saved against your goal, and what you owe family; spending by category (share of the month, per-category limits); and a card per family member with what you owe them (what they've spent since you last paid them, as each payment covers what they'd spent up to then; everything they've spent if you never have), what they spent and you paid them that month, a **Paid ✓** button, and **Show transactions**: every payment to them, their spending and money between you, each marked You paid, Owed (after your last payment), Covered (before it) or Not counted. Transactions are grouped by day with the day's total, searchable (payee, note, category) and filterable by person; tap one to change its category, type (spent, refund, income, paid back, ignored), whose it is, its note, or delete it. The **+** button opens a sheet to add one (the category is guessed from the name; "Paid back" picks a family member). The **💵** button logs cash spending: type the amount, tap a category, and it's saved (marked "💵 Cash"; the hero shows how much of the month's spending was cash). **Sort your spending** shows imported spending nobody has confirmed a category for (still Other, or matching more than one category's keywords), one payee at a time with the likely categories first: a tap files all that payee's payments under it and learns it for later imports; **Keep as Other** also stops it being asked again; **Skip for now** hides it until the page reloads. On first use, after a sync shows no family yet, the family from `MONEY_FAMILY` is filled in and your own statement names from `MONEY_MY_NAMES` are set (nothing is added while they're unset). |
+| `/money/import` | Import a **Google Pay or Paytm statement PDF**, yours or a family member's: drop or pick the file, and whose it is is picked from the email (or, for Paytm, the account holder's name) at its top (with a warning if the chosen owner appears in it as a payee). Rows already imported under someone else are moved to the right person. It's read in the browser (no upload, no PDF library), checked against the statement's printed total, and shown for review with totals by type: untick rows (or select all / none), show only rows that still need a category, fix a category or type, then import. Afterwards, **Sort your spending** asks about that import's rows that still need a category. Rows are keyed by UPI transaction id (Paytm's "UPI Ref No"), so importing the same statement twice, or the same payment from both sides, even one side from Paytm, keeps one copy. |
+| `/money/settings` | Your name(s) as statements show them, family members and their names, monthly income, savings goal, and spending limits (overall and per category). **Backup & export**: download a JSON backup (transactions, people, limits, learned categories), download every transaction as a CSV for Excel or Google Sheets (with a Spending column: refunds negative, money that isn't spending 0), or restore a backup, which adds to what's here (same id: the backup's copy wins; settings merge by newest) and deletes nothing. **Delete all money data** (after a second click) empties every month and the settings on all devices; it syncs first, and refuses while offline. |
 | `/login` | Single-user sign-in. Every other page and API route requires it. |
 
 **Season tracking.** Series are tracked per season (S1, S2, …). The more seasons you finish, the more weight a series carries in your taste profile.
@@ -86,6 +91,10 @@ Data is synced as separate docs, so a change only moves the doc it touches:
 | `planner-YYYY-MM` | One month of todos |
 | `planner-daily` | Repeating daily tasks |
 | `planner-log` | Per-day wake time, sleep time, weight (kg), water (ml) and review notes |
+| `money-YYYY-MM` | One month of Money transactions |
+| `money-settings` | Money people, limits/income/goal, learned payee categories, and the list of months with data |
+
+- **Money docs are encrypted at rest.** The server seals them with AES-256-GCM (key from `MONEY_ENCRYPTION_KEY`) before writing to Turso or `data/`, and opens them when reading, so the database only ever holds `enc:v1:…` ciphertext. Each one is bound to its doc key. Without a valid key, money docs are neither written nor read, and nothing falls back to plain text. A plain doc saved before encryption was added is sealed the first time it's read. Your browser's own copy (`localStorage`) and exports are plain, as the UI needs them.
 
 - **Writes are batched.** A change saves to `localStorage` at once and is pushed a few seconds later (5 s for the library, 3 s for the planner), or when the tab is hidden. History changes ride along with the next push.
 - **Reads are cheap.** A page syncs on open, at most every 2 minutes, and again when the tab comes back into view after that. The client sends the etags it holds, so an unchanged doc comes back as `unchanged` with no body.
@@ -136,6 +145,7 @@ src/
 │   ├── discover/  recommendations/  similar/  analysis/
 │   ├── watched/   watchlist/        search/   person/[id]/
 │   ├── todos/                    # Daily planner (page, WeekView, shared planner.tsx), stats/
+│   ├── money/                    # Money: overview page, import/, settings/, shared.tsx, ReviewQueue.tsx
 │   ├── login/
 │   └── api/
 │       ├── discover/        GET   TMDB discover feed (region filters)
@@ -164,6 +174,9 @@ src/
 │   ├── syncDocs.ts               # Doc shapes and merges shared by client, server and script
 │   ├── docStore.ts               # Server: docs as Turso rows, or data/ locally
 │   ├── http.ts                   # cachedJson(): browser-cacheable API responses
+│   ├── money.ts                  # Money model: transactions, people, limits, categories, import plan, sync
+│   ├── gpayStatement.ts          # Reads a statement PDF (inflate, ToUnicode, hex/literal strings), Google Pay rows
+│   ├── paytmStatement.ts         # Paytm statement rows
 │   ├── plannerStats.ts           # Planner stats aggregation
 │   ├── usageStats.ts             # Database reads/writes totalled per local day
 │   ├── auth.ts                   # HMAC session cookie (Web Crypto, edge-safe)
@@ -201,7 +214,8 @@ Imports use the `@/` alias for `src/`. Tailwind theme tokens: `ink` `#07070c` (b
 1. Import the repo into Vercel.
 2. Add `TMDB_API_KEY`, `APP_USERNAME`, `APP_PASSWORD`, and `AUTH_SECRET` as environment variables.
 3. Create a Turso database (`turso db create reel-radar`, `turso db show reel-radar --url`, `turso db tokens create reel-radar`) and add `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`.
-4. Deploy.
+4. Add `MONEY_ENCRYPTION_KEY` (`openssl rand -base64 32`), the same value as in `.env.local`.
+5. Deploy.
 
 Without a Turso database, sync on Vercel won't persist, because its filesystem is read-only and temporary.
 

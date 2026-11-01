@@ -1,14 +1,15 @@
 import { createClient, type Client } from "@libsql/client/web";
-import { createHash, randomBytes } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
 
 // Server-only storage for synced docs: one row per doc in a Turso (libSQL) table, or plain JSON
 // files in data/ when TURSO_DATABASE_URL isn't set (local dev). A doc's etag is a hash of its
-// JSON, kept in its own column so an unchanged doc is answered without reading its body.
+// JSON as stored, kept in its own column so an unchanged doc is answered without reading its body.
 
-// Reel Radar's library and history, one doc per planner month, and the daily tasks.
-export const DOC_KEY = /^(library|history|planner-daily|planner-log|planner-\d{4}-\d{2})$/;
+// Reel Radar's library and history, one doc per planner month, the daily tasks, and the Money
+// app's settings and months.
+export const DOC_KEY = /^(library|history|planner-daily|planner-log|planner-\d{4}-\d{2}|money-settings|money-\d{4}-\d{2})$/;
 
 export type ReadResult = { etag: string; data: unknown } | { etag: string; unchanged: true } | null;
 
@@ -44,6 +45,44 @@ function client(): Promise<Client> {
   });
   return db;
 }
+
+// ---------------- Encryption ----------------
+// The Money docs are stored encrypted (AES-256-GCM with the key in MONEY_ENCRYPTION_KEY), in Turso
+// and in data/ alike: "enc:v1:<iv>:<ciphertext + tag>", base64, bound to the doc's key so one
+// month can't be swapped for another. Without a valid key they can't be read or written, so they
+// are never stored as plain text. Plain ones saved before encryption are sealed when next read.
+
+const ENCRYPTED = /^money-/;
+const SEALED = "enc:v1:";
+const TAG_BYTES = 16;
+
+function moneyKey(): Buffer {
+  const key = Buffer.from(process.env.MONEY_ENCRYPTION_KEY ?? "", "base64");
+  if (key.length !== 32) throw new Error("MONEY_ENCRYPTION_KEY must be 32 random bytes, base64 (openssl rand -base64 32)");
+  return key;
+}
+
+export const isSealed = (stored: string) => stored.startsWith(SEALED);
+
+// What to store for a doc's JSON.
+function seal(key: string, text: string): string {
+  if (!ENCRYPTED.test(key)) return text;
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", moneyKey(), iv).setAAD(Buffer.from(key));
+  const body = Buffer.concat([cipher.update(text, "utf8"), cipher.final(), cipher.getAuthTag()]);
+  return `${SEALED}${iv.toString("base64")}:${body.toString("base64")}`;
+}
+
+// A stored doc's JSON. A wrong key or tampered text throws.
+function unseal(key: string, stored: string): string {
+  if (!isSealed(stored)) return stored;
+  const [iv, body] = stored.slice(SEALED.length).split(":").map((part) => Buffer.from(part, "base64"));
+  const decipher = createDecipheriv("aes-256-gcm", moneyKey(), iv).setAAD(Buffer.from(key));
+  decipher.setAuthTag(body.subarray(body.length - TAG_BYTES));
+  return Buffer.concat([decipher.update(body.subarray(0, body.length - TAG_BYTES)), decipher.final()]).toString("utf8");
+}
+
+const needsSealing = (key: string, stored: string) => ENCRYPTED.test(key) && !isSealed(stored);
 
 // ---------------- Usage ----------------
 // How many database reads and writes the app makes, kept per half hour (UTC) so the stats page can
@@ -137,27 +176,42 @@ export async function readUsage(since: string): Promise<Usage> {
 
 export async function readDoc(key: string, ifNoneMatch?: string): Promise<ReadResult> {
   count("reads");
+  let stored: string;
+  let etag: string;
   if (!isStoreConfigured()) {
     const text = await fs.readFile(localPath(`${key}.json`), "utf-8").catch(() => null);
     if (text === null) return null;
-    const etag = etagOf(text);
-    return etag === ifNoneMatch ? { etag, unchanged: true } : { etag, data: JSON.parse(text) };
+    stored = text;
+    etag = etagOf(text);
+    if (etag === ifNoneMatch && !needsSealing(key, stored)) return { etag, unchanged: true };
+  } else {
+    // A failed query throws; it must never read as "missing", or the client would push over the doc.
+    // A Money doc still stored as plain text comes back with its body even when unchanged, to be sealed.
+    const { rows } = await (await client()).execute({
+      sql: `SELECT etag, CASE WHEN etag = ? AND (key NOT LIKE 'money-%' OR data LIKE '${SEALED}%') THEN NULL ELSE data END AS data FROM docs WHERE key = ?`,
+      args: [ifNoneMatch ?? "", key],
+    });
+    if (!rows.length) return null;
+    etag = String(rows[0].etag);
+    if (rows[0].data === null) return { etag, unchanged: true };
+    stored = String(rows[0].data);
   }
-  // A failed query throws; it must never read as "missing", or the client would push over the doc.
-  const { rows } = await (await client()).execute({
-    sql: "SELECT etag, CASE WHEN etag = ? THEN NULL ELSE data END AS data FROM docs WHERE key = ?",
-    args: [ifNoneMatch ?? "", key],
-  });
-  if (!rows.length) return null;
-  const etag = String(rows[0].etag);
-  return rows[0].data === null ? { etag, unchanged: true } : { etag, data: JSON.parse(String(rows[0].data)) };
+  const text = unseal(key, stored);
+  if (needsSealing(key, stored)) {
+    // Seal it in place, unless it changed meanwhile; then the next read tries again.
+    etag = await writeDoc(key, JSON.parse(text), etag).catch((err) => {
+      if (err instanceof ConflictError) return etag;
+      throw err;
+    });
+  }
+  return { etag, data: JSON.parse(text) };
 }
 
 // Write a doc and return its new etag. With `ifMatch`, only if the stored copy still has that
 // etag; otherwise this throws ConflictError and the caller merges.
 export async function writeDoc(key: string, data: unknown, ifMatch?: string): Promise<string> {
   count("writes");
-  const text = JSON.stringify(data);
+  const text = seal(key, JSON.stringify(data));
   const etag = etagOf(text);
   if (!isStoreConfigured()) {
     const file = localPath(`${key}.json`);

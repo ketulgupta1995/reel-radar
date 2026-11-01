@@ -9,3 +9,5 @@ data/*.json
 coverage
 
 *.tsbuildinfo
+data/*gpay*
+data/*.pdf
