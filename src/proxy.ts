@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE, verifySession } from "@/lib/auth";
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (pathname === "/login" || pathname.startsWith("/api/auth/")) return NextResponse.next();
 
@@ -16,7 +16,7 @@ export async function middleware(req: NextRequest) {
   return NextResponse.redirect(url);
 }
 
-// Static files skip the middleware: they hold nothing private, and each run is a billed invocation.
+// Static files skip the proxy: they hold nothing private, and each run is a billed invocation.
 export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|svg|ico|webp|txt|xml|webmanifest)$).*)"],
 };

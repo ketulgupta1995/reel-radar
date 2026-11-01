@@ -1,6 +1,6 @@
 // Copy the synced docs from Vercel Blob (v2/<doc>.json.gz) into Turso.
 //
-//   npx vite-node --config vitest.config.ts scripts/migrate-blob-to-turso.ts -- [--apply] [--overwrite]
+//   npx tsx scripts/migrate-blob-to-turso.ts [--apply] [--overwrite]
 //
 // Without --apply it only lists what it found and what it would write. Docs already in Turso are
 // left alone unless --overwrite. Needs BLOB_READ_WRITE_TOKEN, TURSO_DATABASE_URL and

@@ -3,9 +3,9 @@ import { DAY, cachedJson } from "@/lib/http";
 
 export const maxDuration = 10;
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const id = Number(params.id);
+    const id = Number((await params).id);
     if (!id) return Response.json({ error: "Invalid person ID" }, { status: 400 });
     return cachedJson(await personCredits(id), DAY);
   } catch (e) {

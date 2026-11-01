@@ -2,7 +2,7 @@
 
 A personal movie & TV tracker for one user. Log what you've watched (down to the season), keep a watchlist, get recommendations and analytics based on your own taste, plan your day, and track spending. It covers both Indian and global cinema.
 
-Built with **Next.js 14 (App Router)**, **TypeScript**, and **Tailwind CSS**, with live metadata from **TMDB**. Your data is kept in the browser and synced to **Turso** (or to local JSON files during development).
+Built with **Next.js 16 (App Router)**, **TypeScript**, and **Tailwind CSS**, with live metadata from **TMDB**. Your data is kept in the browser and synced to **Turso** (or to local JSON files during development).
 
 ---
 
@@ -42,7 +42,6 @@ After 10 failed logins within an hour, login is locked for everyone (even with t
 | `npx vitest` | Run tests in watch mode |
 | `npm run build` | Production build (also does a full typecheck) |
 | `npm start` | Serve the production build |
-| `npm run lint` | Run the Next.js linter |
 
 ---
 
@@ -106,7 +105,7 @@ Data is synced as separate docs, so a change only moves the doc it touches:
 ### Keeping Vercel usage low
 
 - TMDB-backed GET routes send `Cache-Control: private` (1 day for titles and people, 1 hour for lists), so the browser answers repeat requests itself. TMDB responses stay in Next's data cache for 6 hours (lists) or 7 days (details).
-- The middleware skips static files, and every route sets `maxDuration`.
+- The proxy skips static files, and every route sets `maxDuration`.
 - `vercel.json` skips the build when a push only changes docs, tests or `data/`.
 - Trailers are YouTube embeds and posters load straight from TMDB, so neither touches Vercel.
 
@@ -137,7 +136,7 @@ Watched, watchlisted, and dismissed titles are never recommended. The top-scorin
 
 ```
 src/
-├── middleware.ts                 # Auth gate: pages redirect to /login, APIs return 401
+├── proxy.ts                      # Auth gate: pages redirect to /login, APIs return 401
 ├── app/
 │   ├── layout.tsx, globals.css   # Root layout + Tailwind base
 │   ├── page.tsx                  # Home: app launcher (cards from lib/apps.ts)
@@ -202,7 +201,7 @@ Imports use the `@/` alias for `src/`. Tailwind theme tokens: `ink` `#07070c` (b
 | `lib/tmdb` | Normalisation, request retry and errors, discover/search/credits/detail, similar-title scoring |
 | `lib/sync`, `lib/syncDocs` | Three-way merge, batching, refocus sync, conflict retry, mid-push edits |
 | `lib/storage`, `lib/todos`, `lib/plannerStats` | Merge, sync, import/export, daily tasks, repeat days, streaks, subtasks, tags, moving between days, focus timer, reminders, carry-over, skip/undo, planner stats |
-| `lib/auth`, `middleware` | Session signing and expiry, redirects, 401s |
+| `lib/auth`, `proxy` | Session signing and expiry, redirects, 401s |
 | API routes | Validation, responses, cache headers, conditional reads and writes, migration, private → public |
 | Components, `/login` | Title card, details modal, backup controls, logout, sign-in flow and safe redirects |
 | Every page | Rendered and driven through the UI against the real `lib/` code: discover feed and batches, season tracking, recommendations filters, analysis sections and graph, watched/watchlist sorting and filters, search, similar, person; the planner's add/edit/delete/undo, checklist, repeats, scheduling, drag and drop, resize, quick add, carry-over, move/copy, focus timer, reminders, backup, sync, week view and stats |
@@ -225,7 +224,7 @@ Without a Turso database, sync on Vercel won't persist, because its filesystem i
 
 | Symptom | Fix |
 |---|---|
-| `SyntaxError: Unexpected token '?'` when running `npx tsc` or `npm test` | Your Node is too old. Use Node 18.17+ (e.g. `nvm use 20`). |
+| `SyntaxError: Unexpected token '?'` when running `npx tsc` or `npm test` | Your Node is too old. Use Node 20.9+ (e.g. `nvm use 20`). |
 | Every page redirects to `/login` | Set `APP_USERNAME`, `APP_PASSWORD`, and `AUTH_SECRET` in `.env.local`, then restart the dev server. |
 | Login says "Too many failed logins" | Wait the minutes it shows, or use a device that's still signed in. To unlock right away, clear the `login_attempts` table in Turso (or delete `data/login-attempts.json` locally). |
 | `TMDB_API_KEY is not configured` / empty feeds | Add the key to `.env.local` and restart. |
@@ -240,8 +239,8 @@ Use **Clear Displayed & Shown** on the Discover page. It clears `shown` and `dis
 One time, with `BLOB_READ_WRITE_TOKEN`, `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` in `.env.local`. The script only reads Blob and skips docs Turso already has:
 
 ```bash
-npx vite-node --config vitest.config.ts scripts/migrate-blob-to-turso.ts            # list what would be copied
-npx vite-node --config vitest.config.ts scripts/migrate-blob-to-turso.ts -- --apply # copy it
+npx tsx scripts/migrate-blob-to-turso.ts          # list what would be copied
+npx tsx scripts/migrate-blob-to-turso.ts --apply  # copy it
 ```
 
 ### Upload a backup to Turso
@@ -249,8 +248,8 @@ npx vite-node --config vitest.config.ts scripts/migrate-blob-to-turso.ts -- --ap
 `data/storage.json` (a Reel Radar export) can be uploaded as the synced docs. The script merges it with what the store already holds, so nothing is lost:
 
 ```bash
-npx vite-node --config vitest.config.ts scripts/upload-storage.ts -- --dry-run   # show what would be written
-npx vite-node --config vitest.config.ts scripts/upload-storage.ts                # write it
+npx tsx scripts/upload-storage.ts --dry-run  # show what would be written
+npx tsx scripts/upload-storage.ts            # write it
 # add --purge-old-planner to also delete the old per-day planner blobs under todos/ in Blob
 ```
 

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { config, middleware } from "./middleware";
+import { config, proxy } from "./proxy";
 import { SESSION_COOKIE, createSession } from "@/lib/auth";
 
 const SECRET = "mw-secret";
@@ -10,26 +10,26 @@ const passedThrough = (res: Response) => res.headers.get("x-middleware-next") ==
 
 beforeEach(() => vi.stubEnv("AUTH_SECRET", SECRET));
 
-describe("middleware", () => {
+describe("proxy", () => {
   it("lets the login page and auth API through without a session", async () => {
-    expect(passedThrough(await middleware(req("/login")))).toBe(true);
-    expect(passedThrough(await middleware(req("/api/auth/login")))).toBe(true);
+    expect(passedThrough(await proxy(req("/login")))).toBe(true);
+    expect(passedThrough(await proxy(req("/api/auth/login")))).toBe(true);
   });
 
   it("lets requests with a valid session through", async () => {
     const token = await createSession(SECRET);
-    expect(passedThrough(await middleware(req("/discover", token)))).toBe(true);
-    expect(passedThrough(await middleware(req("/api/storage", token)))).toBe(true);
+    expect(passedThrough(await proxy(req("/discover", token)))).toBe(true);
+    expect(passedThrough(await proxy(req("/api/storage", token)))).toBe(true);
   });
 
   it("returns 401 JSON for unauthenticated API calls", async () => {
-    const res = await middleware(req("/api/storage", "forged.token"));
+    const res = await proxy(req("/api/storage", "forged.token"));
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: "Unauthorized" });
   });
 
   it("redirects pages to /login, remembering where the user was going", async () => {
-    const res = await middleware(req("/watched?tab=tv"));
+    const res = await proxy(req("/watched?tab=tv"));
     expect(res.status).toBe(307);
     const location = new URL(res.headers.get("location")!);
     expect(location.pathname).toBe("/login");
@@ -37,7 +37,7 @@ describe("middleware", () => {
   });
 
   it("redirects the home page without a next param", async () => {
-    const location = new URL((await middleware(req("/"))).headers.get("location")!);
+    const location = new URL((await proxy(req("/"))).headers.get("location")!);
     expect(location.pathname).toBe("/login");
     expect(location.search).toBe("");
   });
@@ -45,7 +45,7 @@ describe("middleware", () => {
   it("rejects every session when AUTH_SECRET is missing", async () => {
     const token = await createSession(SECRET);
     vi.stubEnv("AUTH_SECRET", "");
-    expect((await middleware(req("/api/storage", token))).status).toBe(401);
+    expect((await proxy(req("/api/storage", token))).status).toBe(401);
   });
 });
 

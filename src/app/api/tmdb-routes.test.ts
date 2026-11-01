@@ -105,19 +105,19 @@ describe("GET /api/title", () => {
 
 describe("GET /api/person/[id]", () => {
   it("validates the id", async () => {
-    expect((await personRoute(get("/api/person/x"), { params: { id: "x" } })).status).toBe(400);
+    expect((await personRoute(get("/api/person/x"), { params: Promise.resolve({ id: "x" }) })).status).toBe(400);
   });
 
   it("returns credits", async () => {
     m.personCredits.mockResolvedValue({ name: "Actor", titles: [mk(1)] });
-    const body = await (await personRoute(get("/api/person/7"), { params: { id: "7" } })).json();
+    const body = await (await personRoute(get("/api/person/7"), { params: Promise.resolve({ id: "7" }) })).json();
     expect(m.personCredits).toHaveBeenCalledWith(7);
     expect(body.name).toBe("Actor");
   });
 
   it("returns 500 on failure", async () => {
     m.personCredits.mockRejectedValue(new Error("x"));
-    expect((await personRoute(get("/api/person/7"), { params: { id: "7" } })).status).toBe(500);
+    expect((await personRoute(get("/api/person/7"), { params: Promise.resolve({ id: "7" }) })).status).toBe(500);
   });
 });
 
@@ -159,7 +159,7 @@ describe("browser caching", () => {
     m.discover.mockResolvedValue([]);
     const cache = async (res: Response | Promise<Response>) => (await res).headers.get("Cache-Control");
     expect(await cache(titleRoute(get("/api/title?type=movie&id=1")))).toBe("private, max-age=86400");
-    expect(await cache(personRoute(get("/api/person/1"), { params: { id: "1" } }))).toBe("private, max-age=86400");
+    expect(await cache(personRoute(get("/api/person/1"), { params: Promise.resolve({ id: "1" }) }))).toBe("private, max-age=86400");
     expect(await cache(searchRoute(get("/api/search?query=x")))).toBe("private, max-age=3600");
     expect(await cache(similarRoute(get("/api/similar?type=movie&id=1")))).toBe("private, max-age=3600");
     expect(await cache(discoverRoute(get("/api/discover")))).toBe("private, max-age=3600");

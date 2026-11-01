@@ -1,4 +1,4 @@
-// Single-user session auth. Uses Web Crypto so it runs in both middleware (edge) and route handlers.
+// Single-user session auth. Uses Web Crypto so it runs in both the proxy and route handlers.
 export const SESSION_COOKIE = "rr_session";
 export const SESSION_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 

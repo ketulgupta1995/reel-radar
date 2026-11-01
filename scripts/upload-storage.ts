@@ -1,6 +1,6 @@
 // Upload data/storage.json to the doc store (Turso) as the synced library and history docs.
 //
-//   npx vite-node --config vitest.config.ts scripts/upload-storage.ts -- [--dry-run] [--purge-old-planner]
+//   npx tsx scripts/upload-storage.ts [--dry-run] [--purge-old-planner]
 //
 // Merges the file with whatever the store already holds, so nothing added in the app after the
 // file was exported is lost. --purge-old-planner also deletes the old per-day planner blobs under

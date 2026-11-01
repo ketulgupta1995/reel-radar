@@ -175,7 +175,7 @@ export default function TodosPage() {
   const [dayLog, setDayLog] = useState<DayLog>({});
   const [dragOver, setDragOver] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const undoTimer = useRef<ReturnType<typeof setTimeout>>();
+  const undoTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const quickRef = useRef(quickAdd);
   quickRef.current = quickAdd;
   const gridRef = useRef<HTMLDivElement>(null);

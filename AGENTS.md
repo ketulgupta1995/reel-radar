@@ -4,9 +4,9 @@ Guidance for AI coding agents working in this repo. Read this before making chan
 
 ## What this is
 
-Reel Radar: a single-user Next.js 14 (App Router) app for movie/TV discovery, watch tracking, recommendations, taste analytics, a daily todo planner, and a money tracker. Data comes from the TMDB v3 API. State lives in the browser (`localStorage`) and syncs to Turso (libSQL), or to `data/*.json` locally when Turso isn't configured.
+Reel Radar: a single-user Next.js 16 (App Router) app for movie/TV discovery, watch tracking, recommendations, taste analytics, a daily todo planner, and a money tracker. Data comes from the TMDB v3 API. State lives in the browser (`localStorage`) and syncs to Turso (libSQL), or to `data/*.json` locally when Turso isn't configured.
 
-Stack: Next.js 14.2, React 18, TypeScript (strict), Tailwind 3, Vitest 2, `@libsql/client`.
+Stack: Next.js 16, React 19, TypeScript (strict), Tailwind 3, Vitest 2, `@libsql/client`.
 
 ## Commands
 
@@ -14,15 +14,14 @@ Stack: Next.js 14.2, React 18, TypeScript (strict), Tailwind 3, Vitest 2, `@libs
 npm install
 npm run dev      # http://localhost:3000
 npm test         # vitest run
-npm run coverage # tests + coverage report (fails below the thresholds in vitest.config.ts)
+npm run coverage # tests + coverage report (fails below the thresholds in vitest.config.mts)
 npm run build    # production build; also the full typecheck
-npm run lint
 npx tsc --noEmit # quick typecheck
 ```
 
 Before calling a change done, run `npm run coverage` and `npx tsc --noEmit` (or `npm run build`).
 
-Node 18.17+ is required. On this machine the system `node` is v12, which fails with `SyntaxError: Unexpected token '?'`. Use nvm's Node 20 (`nvm use 20`, or put `~/.nvm/versions/node/v20.16.0/bin` first on PATH).
+Node 20.9+ is required. On this machine the system `node` is v12, which fails with `SyntaxError: Unexpected token '?'`. Use nvm's Node 20 (`nvm use 20`, or put `~/.nvm/versions/node/v20.16.0/bin` first on PATH).
 
 ## Environment
 
@@ -41,7 +40,7 @@ Copy `.env.example` to `.env.local`. Never commit `.env.local` or print its valu
 
 ```
 src/
-  middleware.ts          Auth gate for every route except /login and /api/auth/*
+  proxy.ts               Auth gate for every route except /login and /api/auth/*
   app/                   Pages: / (app launcher), reel-radar (Reel Radar landing), discover,
                          recommendations, analysis, watched, watchlist, search, similar,
                          person/[id], todos, todos/stats, money, money/import, money/settings, login
@@ -69,7 +68,7 @@ src/
     auth.ts              Session signing/verification via Web Crypto
   types/title.ts         Title / MediaType types and keyOf()
 data/                    storage.json (tracked backup of the watch history) + local fallback docs (<doc>.json, gitignored)
-scripts/upload-storage.ts  Upload data/storage.json to the doc store (run with vite-node; see README)
+scripts/upload-storage.ts  Upload data/storage.json to the doc store (run with tsx; see README)
 scripts/migrate-blob-to-turso.ts  One-off copy of the old Vercel Blob docs into Turso
 ```
 
@@ -91,7 +90,7 @@ Import through the `@/` alias (maps to `src/`).
   - `readDoc`/`writeDoc` count every call per half hour (`flushUsage()` saves the counts to the `usage` table, or `data/usage.json`; `/api/usage` serves them to the stats page). Any new code path that queries the `docs` table must go through them so it is counted.
 - **Vercel usage**: TMDB GET routes answer through `cachedJson()` and every route sets `maxDuration`. Keep new routes the same.
 - **Todos** are stored one doc per month (`planner-YYYY-MM`), plus `planner-daily` for repeating tasks. `loadTodos`/`saveTodos` keep the per-day API on top of that.
-- **Auth**: `lib/auth.ts` must stay Web Crypto–only (no Node `crypto`) because middleware runs on the edge. New API routes are protected automatically by the middleware matcher. Unauthenticated `/api/*` requests get a 401 JSON response, and unauthenticated pages redirect to `/login?next=...`. Login guesses are capped (`beginLoginAttempt()`/`forgetLoginAttempt()` in `docStore`, `login_attempts` table or `data/login-attempts.json`): 10 failures an hour across all clients, then 429 even for the right password. Each attempt is recorded before the password is checked so parallel guesses count; if it can't be recorded, login answers 503 rather than skipping the cap.
+- **Auth**: `lib/auth.ts` must stay Web Crypto–only (no Node `crypto`) so it stays portable between the proxy and route handlers. New API routes are protected automatically by the proxy matcher. Unauthenticated `/api/*` requests get a 401 JSON response, and unauthenticated pages redirect to `/login?next=...`. Login guesses are capped (`beginLoginAttempt()`/`forgetLoginAttempt()` in `docStore`, `login_attempts` table or `data/login-attempts.json`): 10 failures an hour across all clients, then 429 even for the right password. Each attempt is recorded before the password is checked so parallel guesses count; if it can't be recorded, login answers 503 rather than skipping the cap.
 - **Recommendations**: ranking in `lib/recommend.ts` must stay deterministic and must exclude watched, watchlisted, and dismissed titles. If you change scoring weights, update the formula in the README and add or adjust a test.
 - **Indian vs Global**: defined once in `lib/region.ts` (origin country `IN` or an Indian original language). Always call `isIndianTitle` / `isSouthIndianTitle`. Never write language lists inline. (`originCountry: "IN"` passed to `discover()` is a TMDB query filter, which is a separate thing.)
 - **TMDB**: call it only from server code via `lib/tmdb.ts` (it has the timeout, retry, and data-cache TTLs: 6 h for lists, 7 days for details). Posters load from `image.tmdb.org`, the only allowed remote image host in `next.config.mjs`.
@@ -102,9 +101,9 @@ Import through the `@/` alias (maps to `src/`).
 
 ## Testing
 
-- Tests live next to their source as `*.test.ts(x)`. Everything is covered: `lib/`, `types/`, `middleware.ts`, all API routes, the shared components, and **every page** (each `app/**/page.tsx`, `todos/WeekView.tsx` and `todos/planner.tsx` has a render test; the home, layout, search, person and watchlist pages share `app/simple-pages.test.tsx`).
+- Tests live next to their source as `*.test.ts(x)`. Everything is covered: `lib/`, `types/`, `proxy.ts`, all API routes, the shared components, and **every page** (each `app/**/page.tsx`, `todos/WeekView.tsx` and `todos/planner.tsx` has a render test; the home, layout, search, person and watchlist pages share `app/simple-pages.test.tsx`).
 - **Pages need render tests.** A new page, or a new button, filter, form or state on one, gets a test that renders the page and drives it through the UI (click, type, drop) and checks both what's shown and what's saved. Logic in `lib/` still gets its own unit tests.
-- Coverage is enforced: `npm run coverage` fails below 97% lines/statements, 95% functions and 90% branches (`vitest.config.ts`). Don't lower the thresholds to get a change through; add the missing tests.
+- Coverage is enforced: `npm run coverage` fails below 97% lines/statements, 95% functions and 90% branches (`vitest.config.mts`). Don't lower the thresholds to get a change through; add the missing tests.
 - Page tests run against the real `lib/` code and `localStorage`; only `fetch` is faked. Use `src/test/pages.ts`: `routeFetch({ "/api/x": body | (url, init) => body })` answers by path (`/api/sync` defaults to an empty server), `requests(fetch, path)` lists calls, `seed()`/`stored()` read and write Reel Radar state, and `stubLocation()` replaces `window.location`. Mock `next/navigation` (`usePathname`, `useSearchParams`, `useParams`) in each page test.
 - jsdom gaps: there's no `DragEvent`/`PointerEvent`, so set `clientY` and modifier keys on the event yourself (see `drag()` in `todos/page.test.tsx`), and dispatch pointer moves as `MouseEvent`s. `Element.scrollTo` and `Notification` need stubs.
 - The task list is reordered by a pointer-driven drag handle (`useListReorder` in `todos/page.tsx`), not HTML5 drag and drop. Tests press the handle with a `pointerdown` `MouseEvent`, move with `pointermove` on `window`, and stub each row's `getBoundingClientRect` because jsdom has no layout (see `arranging tasks` in `todos/page.test.tsx`).
@@ -126,9 +125,9 @@ Import through the `@/` alias (maps to `src/`).
 
 ## Money security review
 
-The Money app holds personal financial data and the GitHub repo is public. Whenever you change the Money app or anything its data passes through (`app/money/`, `lib/money.ts`, the statement readers, `api/sync`, `lib/docStore.ts`, `lib/sync.ts`, `middleware.ts`, `lib/auth.ts`, `api/auth/*`, `next.config.mjs`), or propose such a change, check it for security concerns and report the result, even when there are none ("Security: no concerns, because ..."). Check at least:
+The Money app holds personal financial data and the GitHub repo is public. Whenever you change the Money app or anything its data passes through (`app/money/`, `lib/money.ts`, the statement readers, `api/sync`, `lib/docStore.ts`, `lib/sync.ts`, `proxy.ts`, `lib/auth.ts`, `api/auth/*`, `next.config.mjs`), or propose such a change, check it for security concerns and report the result, even when there are none ("Security: no concerns, because ..."). Check at least:
 
-- **Login gate**: money data is reachable only with a valid session. Every new route or page stays behind `middleware.ts` (watch its `matcher` exclusions and the `/login`, `/api/auth/` bypass), and no server component or route reads money docs without going through it.
+- **Login gate**: money data is reachable only with a valid session. Every new route or page stays behind `proxy.ts` (watch its `matcher` exclusions and the `/login`, `/api/auth/` bypass), and no server component or route reads money docs without going through it.
 - **Encryption at rest**: `money-*` docs are always sealed in `docStore`, with no plain-text path or missing-key fallback (see Sync above). A new money doc key must match the `/^money-/` encryption rule and the `DOC_KEY` allowlist.
 - **No leaks**: money data, statement text, UPI ids, names, or amounts never go into logs, error responses, URLs/query strings, analytics, or third-party requests (TMDB included), and never into git: real statements stay in gitignored `data/`, and tests use fake data from `src/test/gpayPdf.ts`.
 - **No real data in the repo**: personal names, emails, phone numbers, account numbers and statement rows don't go into code, tests, fixtures or docs. Real names come from `MONEY_MY_NAMES`/`MONEY_FAMILY`; tests use made-up ones.

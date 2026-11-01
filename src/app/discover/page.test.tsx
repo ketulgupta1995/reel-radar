@@ -143,6 +143,7 @@ describe("Discover", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<Discover />);
     await screen.findByText("movie 1-0");
+    await screen.findByText("tv 1-0");
     fireEvent.click(screen.getByText("Clear Displayed & Shown"));
     fireEvent.click(screen.getByText("Reset All"));
     expect(stored().shown).toEqual(["movie:8"]);
@@ -150,6 +151,8 @@ describe("Discover", () => {
     fireEvent.click(screen.getByText("Clear Displayed & Shown"));
     await waitFor(() => expect(stored().shown).toEqual([]));
     expect(stored().dismissed).toEqual(["movie:7"]);
+    // Let the reloaded batches land first: one landing after the reset would save the old state back.
+    await waitFor(() => expect(["movie:", "tv:"].every((t) => stored().displayed.some((k) => k.startsWith(t)))).toBe(true));
     fireEvent.click(screen.getByText("Reset All"));
     await waitFor(() => expect(loc.reload).toHaveBeenCalled());
     expect(stored().watched).toEqual([]);

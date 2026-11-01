@@ -191,6 +191,22 @@ describe("AppSwitcher", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByText("Switch to")).toBeNull();
   });
+
+  it("closes on an outside click or when an app is picked, but not on a click inside", () => {
+    render(<AppSwitcher current="reel-radar" />);
+    const toggle = screen.getByLabelText("Switch app");
+    fireEvent.click(toggle);
+    fireEvent.mouseDown(screen.getByText("Switch to"));
+    expect(screen.queryByText("Switch to")).toBeTruthy();
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByText("Switch to")).toBeNull();
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole("link", { name: "🗓️ Daily Planner" }));
+    expect(screen.queryByText("Switch to")).toBeNull();
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole("link", { name: "All apps →" }));
+    expect(screen.queryByText("Switch to")).toBeNull();
+  });
 });
 
 describe("APPS", () => {

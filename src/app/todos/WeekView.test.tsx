@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { act, createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { routeFetch } from "@/test/pages";
 import { Todo, addTodo, loadTodos, saveTodos } from "@/lib/todos";
@@ -34,8 +34,8 @@ const gridColumn = (container: HTMLElement, dayIndex: number) =>
   container.querySelectorAll<HTMLElement>("[style*='height: 1536px'] > div")[dayIndex + 1];
 const todoStrip = (dayIndex: number) => screen.getAllByText("To do")[0].parentElement!.children[dayIndex + 1] as HTMLElement;
 
-let onOpenDay: ReturnType<typeof vi.fn>;
-let flash: ReturnType<typeof vi.fn>;
+let onOpenDay: Mock<(date: string) => void>;
+let flash: Mock<(message: string) => void>;
 beforeEach(() => {
   routeFetch();
   onOpenDay = vi.fn();

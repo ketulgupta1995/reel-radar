@@ -18,6 +18,16 @@ const rows: FakeRow[] = [
 const upload = (bytes: Uint8Array, name = "statement.pdf") =>
   fireEvent.change(screen.getByLabelText("Statement PDF"), { target: { files: [new File([bytes], name, { type: "application/pdf" })] } });
 
+// The rows are planned in an effect after the statement renders, so wait for them, not just the section.
+const findReview = async () =>
+  within(
+    await waitFor(() => {
+      const region = screen.getByRole("region", { name: "Review" });
+      expect(within(region).queryAllByLabelText(/^Include /).length).toBeGreaterThan(0);
+      return region;
+    })
+  );
+
 describe("MoneyImportPage", () => {
   it("imports a sister's statement as her spending", async () => {
     routeFetch();
@@ -32,7 +42,7 @@ describe("MoneyImportPage", () => {
     expect(screen.getByText("Drop Priya's statement PDF, or tap to pick")).toBeTruthy();
 
     upload(gpayPdf(rows));
-    const review = within(await screen.findByRole("region", { name: "Review" }));
+    const review = await findReview();
     expect(review.getByText(/3 transactions for Priya/)).toBeTruthy();
     expect(review.getByText("Oct 1 – Oct 31")).toBeTruthy();
     expect(review.getByText("✓ Matches the statement's total")).toBeTruthy();
@@ -64,7 +74,7 @@ describe("MoneyImportPage", () => {
     expect(screen.getByText(/Add your own name in/)).toBeTruthy();
 
     upload(gpayPdf([rows[0]]));
-    const review = within(await screen.findByRole("region", { name: "Review" }));
+    const review = await findReview();
     expect(review.getByText("Already imported")).toBeTruthy();
     expect((review.getByLabelText("Include BLINKIT ₹158") as HTMLInputElement).checked).toBe(false);
     expect((review.getByText("Import 0 transactions") as HTMLButtonElement).disabled).toBe(true);
@@ -91,7 +101,7 @@ describe("MoneyImportPage", () => {
     render(<MoneyImportPage />);
 
     upload(gpayPdf([{ day: "12 Oct, 2026", time: "10:00 AM", name: "Desai Anita", upi: "201", amount: "500" }, rows[0]]));
-    const review = within(await screen.findByRole("region", { name: "Review" }));
+    const review = await findReview();
     expect((review.getByLabelText("Type for Desai Anita") as HTMLSelectElement).value).toBe("spend");
     expect(review.queryByLabelText("Paid to for Desai Anita")).toBeNull();
     fireEvent.click(review.getByText("📦 Needs a category (1)")); // only the uncategorized one
@@ -150,7 +160,7 @@ describe("MoneyImportPage", () => {
       ])
     );
     expect(await screen.findByText("This is Meera Sharma's statement (MEERA VIKRAM SHARMA).")).toBeTruthy();
-    const review = within(screen.getByRole("region", { name: "Review" }));
+    const review = await findReview();
     expect(review.getByText(/2 transactions for Meera Sharma/)).toBeTruthy();
     expect(review.getByText("✓ Matches the statement's total")).toBeTruthy();
     expect(review.getByText("Already imported")).toBeTruthy();
@@ -204,7 +214,7 @@ describe("MoneyImportPage", () => {
         { day: "10 Oct, 2026", time: "09:02 AM", name: "Canteen", upi: "202", amount: "30" },
       ])
     );
-    const review = within(await screen.findByRole("region", { name: "Review" }));
+    const review = await findReview();
     fireEvent.click(review.getByText("Import 2 transactions"));
 
     // Only this import's unsorted rows; the earlier one waits on the overview.
