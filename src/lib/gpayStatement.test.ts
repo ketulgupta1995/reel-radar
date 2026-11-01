@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseStatementPdf, parseStatementText, readPdfText } from "./gpayStatement";
+import { deflateSync } from "zlib";
+import { MAX_INFLATED_BYTES, MAX_PDF_BYTES, parseStatementPdf, parseStatementText, readPdfText } from "./gpayStatement";
 import { FakeRow, gpayPdf, makePdf, pageHeader, rowText } from "@/test/gpayPdf";
 
 const rows: FakeRow[] = [
@@ -56,6 +57,23 @@ cont) Tj (\n) Tj ET`;
     await expect(parseStatementPdf(new TextEncoder().encode("hello"))).rejects.toThrow("isn't a PDF");
     await expect(parseStatementPdf(makePdf(["Nothing to see"]))).rejects.toThrow("No transactions found");
     await expect(parseStatementPdf(gpayPdf(rows, 10, { encrypt: true }))).rejects.toThrow("password protected");
+  });
+
+  it("refuses files too large to be a statement, including ones that only inflate that large", async () => {
+    const big = new Uint8Array(MAX_PDF_BYTES + 1);
+    big.set(new TextEncoder().encode("%PDF-1.4"));
+    await expect(parseStatementPdf(big)).rejects.toThrow("too large");
+
+    // A small file whose page stream inflates past the limit.
+    const bomb = deflateSync(Buffer.alloc(MAX_INFLATED_BYTES + 1));
+    const head = Buffer.from(
+      "%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n" +
+        "3 0 obj << /Type /Page /Parent 2 0 R /Contents 4 0 R >> endobj\n" +
+        `4 0 obj << /Length ${bomb.length} /Filter /FlateDecode >>\nstream\n`
+    );
+    const pdf = new Uint8Array(Buffer.concat([head, bomb, Buffer.from("\nendstream\nendobj\ntrailer << /Root 1 0 R >>\n%%EOF")]));
+    expect(pdf.length).toBeLessThan(1024 * 1024);
+    await expect(parseStatementPdf(pdf)).rejects.toThrow("too large");
   });
 
   it("skips streams that don't inflate and objects without an end", async () => {

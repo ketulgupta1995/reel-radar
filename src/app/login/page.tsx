@@ -2,6 +2,20 @@
 
 import { FormEvent, useState } from "react";
 
+// Where to go after signing in: ?next= only if it stays on this site. It's resolved the way the
+// browser will resolve it, so tricks like "/\\evil.com" or "/%09/evil.com" (both read as
+// "//evil.com") land on the home page instead.
+const SAME_SITE = "http://same-site.invalid";
+function nextPath(next: string | null): string {
+  if (!next?.startsWith("/")) return "/";
+  try {
+    const url = new URL(next, SAME_SITE);
+    return url.origin === SAME_SITE ? url.pathname + url.search + url.hash : "/";
+  } catch {
+    return "/";
+  }
+}
+
 export default function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -19,9 +33,7 @@ export default function LoginPage() {
     }).catch(() => null);
 
     if (res?.ok) {
-      // Only follow same-site relative paths to avoid open redirects.
-      const next = new URLSearchParams(window.location.search).get("next") || "/";
-      window.location.href = next.startsWith("/") && !next.startsWith("//") ? next : "/";
+      window.location.href = nextPath(new URLSearchParams(window.location.search).get("next"));
       return;
     }
     setError(res ? (await res.json().catch(() => ({}))).error || "Login failed" : "Network error");

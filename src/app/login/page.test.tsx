@@ -46,7 +46,7 @@ describe("LoginPage", () => {
     await waitFor(() => expect(loc.href).toBe("/watched?tab=tv"));
   });
 
-  it.each(["//evil.example", "https://evil.example"])("ignores off-site ?next=%s", async (next) => {
+  it.each(["//evil.example", "https://evil.example", "/\\evil.example", "/\t/evil.example", "\\\\evil.example"])("ignores off-site ?next=%s", async (next) => {
     loc.search = `?next=${encodeURIComponent(next)}`;
     signIn();
     await waitFor(() => expect(loc.href).toBe("/"));

@@ -40,9 +40,39 @@ function latin1(bytes: Uint8Array): string {
   return out;
 }
 
-async function inflate(data: Uint8Array): Promise<Uint8Array> {
-  const stream = new Response(data).body!.pipeThrough(new DecompressionStream("deflate"));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+// Real statements are well under these; a crafted file could otherwise inflate until the tab runs out of memory.
+export const MAX_PDF_BYTES = 20 * 1024 * 1024;
+export const MAX_INFLATED_BYTES = 100 * 1024 * 1024; // all of a PDF's streams together
+
+class TooLargeError extends Error {
+  constructor() {
+    super("That PDF is too large to be a statement.");
+  }
+}
+
+// `budget.left` is the bytes still allowed to come out of this PDF's streams.
+async function inflate(data: Uint8Array, budget: { left: number }): Promise<Uint8Array> {
+  const reader = new Response(data).body!.pipeThrough(new DecompressionStream("deflate")).getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    budget.left -= value.length;
+    if (budget.left < 0) {
+      await reader.cancel();
+      throw new TooLargeError();
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.length;
+  }
+  return out;
 }
 
 function parseObjects(bytes: Uint8Array): Map<number, PdfObject> {
@@ -158,13 +188,15 @@ export async function readPdfText(bytes: Uint8Array): Promise<string> {
   if ([...objs.values()].some((o) => /\/Encrypt\b/.test(o.dict))) {
     throw new Error("This PDF is password protected. Export the statement again without a password.");
   }
+  const budget = { left: MAX_INFLATED_BYTES };
   const streamText = async (id: number | undefined): Promise<string> => {
     const data = id === undefined ? undefined : objs.get(id)?.data;
     if (!data) return "";
     const filtered = /\/FlateDecode/.test(objs.get(id!)!.dict);
     try {
-      return latin1(filtered ? await inflate(data) : data);
-    } catch {
+      return latin1(filtered ? await inflate(data, budget) : data);
+    } catch (err) {
+      if (err instanceof TooLargeError) throw err;
       return "";
     }
   };
@@ -254,6 +286,7 @@ export const clock = (hh: string, mm: string, ampm: string) => `${String((Number
 
 // A Google Pay or Paytm statement, whichever it is.
 export async function parseStatementPdf(bytes: Uint8Array): Promise<Statement> {
+  if (bytes.length > MAX_PDF_BYTES) throw new TooLargeError();
   if (latin1(bytes.subarray(0, 5)) !== "%PDF-") throw new Error("That file isn't a PDF.");
   const text = await readPdfText(bytes);
   const statement = isPaytmText(text) ? parsePaytmText(text) : parseStatementText(text);

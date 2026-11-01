@@ -1,6 +1,7 @@
 node_modules
 .next
-.env.local
+.env*
+!.env.example
 .DS_Store
 
 # Local dev docs created at runtime; storage.json is the tracked backup of the watch history
