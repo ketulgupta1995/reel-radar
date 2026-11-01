@@ -88,7 +88,7 @@ type LogItem = { date: string; log: DayLog; updatedAt: number };
 type LogDoc = { items: LogItem[] };
 
 // A day's log: when you woke and slept (HH:MM), the water you drank (millilitres), and a short review.
-export type DayLog = { wake?: string; sleep?: string; water?: number; well?: string; bad?: string; improve?: string };
+export type DayLog = { wake?: string; sleep?: string; water?: number; weight?: number; well?: string; bad?: string; improve?: string };
 
 const DAILY_DOC = "planner-daily";
 const LOG_DOC = "planner-log";
@@ -343,7 +343,7 @@ export function carryOverFromYesterday(date: string, ids?: string[]): Todo[] {
   return updated;
 }
 
-// ---------------- Day log (wake, sleep, water, review) ----------------
+// ---------------- Day log (wake, sleep, weight, water, review) ----------------
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 export const WATER_STEP = 250; // one glass
@@ -363,6 +363,7 @@ export function updateDayLog(date: string, change: { [K in keyof DayLog]?: DayLo
   if (log.wake !== undefined && !TIME_RE.test(log.wake)) delete log.wake;
   if (log.sleep !== undefined && !TIME_RE.test(log.sleep)) delete log.sleep;
   if (log.water !== undefined && !(log.water > 0)) delete log.water;
+  if (log.weight !== undefined && !(log.weight > 0 && log.weight < 1000)) delete log.weight;
   for (const k of ["well", "bad", "improve"] as const) if (!log[k]?.trim()) delete log[k];
   (Object.keys(log) as (keyof DayLog)[]).forEach((k) => log[k] === undefined && delete log[k]);
   if (sameJson(old, log)) return old;

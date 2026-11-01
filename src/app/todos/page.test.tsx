@@ -191,6 +191,18 @@ describe("day log", () => {
     expect(screen.queryByLabelText("has notes")).toBeNull();
   });
 
+  it("records and clears body weight for the day shown", async () => {
+    render(<TodosPage />);
+    const input = screen.getByLabelText("Weight in kg") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "72.5" } });
+    expect(loadDayLog(T)).toEqual({ weight: 72.5 });
+    fireEvent.change(input, { target: { value: "" } });
+    expect(loadDayLog(T)).toEqual({});
+    fireEvent.change(input, { target: { value: "71" } });
+    fireEvent.click(screen.getByLabelText("Previous day"));
+    await waitFor(() => expect((screen.getByLabelText("Weight in kg") as HTMLInputElement).value).toBe(""));
+  });
+
   it("opens a day that already has notes with them showing, and caps the goal bar", () => {
     localStorage.setItem(
       "reel-radar-planner-log",

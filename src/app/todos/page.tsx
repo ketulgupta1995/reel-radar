@@ -1814,13 +1814,15 @@ function FocusBar({
   );
 }
 
-// How the day went: wake and sleep times on a clock, water against a daily goal, and a short review.
+// How the day went: wake and sleep times on a clock, body weight, water against a daily goal, and a short review.
 function DayLogCard({ date, version }: { date: string; version: number }) {
   const [log, setLog] = useState<DayLog>({});
   const [notesOpen, setNotesOpen] = useState(false);
+  const [weightText, setWeightText] = useState("");
   useEffect(() => {
     const loaded = loadDayLog(date);
     setLog(loaded);
+    setWeightText(loaded.weight !== undefined ? String(loaded.weight) : "");
     setNotesOpen(Boolean(loaded.well || loaded.bad || loaded.improve));
   }, [date, version]);
   const water = log.water ?? 0;
@@ -1864,6 +1866,25 @@ function DayLogCard({ date, version }: { date: string; version: number }) {
           fallback="22:30"
           onChange={(v) => setLog(updateDayLog(date, { sleep: v || undefined }))}
         />
+        <label className="flex items-center gap-2 text-sm text-white/70">
+          Weight
+          <input
+            type="number"
+            inputMode="decimal"
+            min="0"
+            step="0.1"
+            aria-label="Weight in kg"
+            placeholder="0.0"
+            value={weightText}
+            onChange={(e) => {
+              setWeightText(e.target.value);
+              const kg = parseFloat(e.target.value);
+              setLog(updateDayLog(date, { weight: Number.isFinite(kg) ? kg : undefined }));
+            }}
+            className="w-20 rounded-lg border border-white/10 bg-panel px-2.5 py-1 text-white placeholder-white/30 focus:border-gold/50 focus:outline-none"
+          />
+          kg
+        </label>
       </div>
 
       <div>

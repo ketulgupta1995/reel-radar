@@ -350,6 +350,10 @@ describe("day log", () => {
   });
 
   it("clears fields, ignores bad times, never goes below zero water, and drops an empty log", () => {
+    updateDayLog(D1, { weight: 72.4 });
+    expect(loadDayLog(D1).weight).toBe(72.4);
+    updateDayLog(D1, { weight: -3 });
+    expect(loadDayLog(D1).weight).toBeUndefined();
     updateDayLog(D1, { wake: "25:99", water: -5 });
     expect(loadDayLog(D1)).toEqual({});
     addWater(D1, -250);
