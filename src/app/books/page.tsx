@@ -1,14 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { AppSwitcher } from "@/components/AppSwitcher";
-import { BookEntry, addUpload, errorText, loadLibrary } from "@/lib/books";
+import { BookEntry, addBook, addUpload, errorText, loadLibrary } from "@/lib/books";
+import { Found, downloadEpub, searchStandardEbooks } from "@/lib/standardEbooks";
 
 export default function BooksPage() {
   const [books, setBooks] = useState<BookEntry[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState("");
+  const [searched, setSearched] = useState("");
+  const [results, setResults] = useState<Found[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [adding, setAdding] = useState("");
 
   // Read after mount, so the first render matches the prerendered page.
   useEffect(() => setBooks(loadLibrary()), []);
@@ -26,6 +32,37 @@ export default function BooksPage() {
     }
     setBusy(false);
   }
+
+  async function search(e: FormEvent) {
+    e.preventDefault();
+    const q = query.trim();
+    if (!q) return;
+    setSearching(true);
+    setMessage("");
+    setSearched(q);
+    try {
+      setResults(await searchStandardEbooks(q));
+    } catch (err) {
+      setResults(null);
+      setMessage(errorText(err));
+    }
+    setSearching(false);
+  }
+
+  async function add(found: Found) {
+    setAdding(found.sourceId);
+    setMessage("");
+    try {
+      const { entry, existing } = await addBook(await downloadEpub(found.epubUrl), "standard-ebooks", found.sourceId);
+      setBooks(loadLibrary());
+      setMessage(existing ? `“${entry.title}” is already in your library.` : `Added “${entry.title}”.`);
+    } catch (err) {
+      setMessage(errorText(err));
+    }
+    setAdding("");
+  }
+
+  const owned = new Set(books.map((b) => b.sourceId));
 
   return (
     <main className="min-h-screen bg-[radial-gradient(ellipse_at_top,#261e38_0%,#090910_55%,#050508_100%)] text-white">
@@ -56,10 +93,54 @@ export default function BooksPage() {
             }}
           />
         </div>
+        <form onSubmit={search} className="flex gap-2" role="search">
+          <label htmlFor="book-search" className="sr-only">
+            Search for a book
+          </label>
+          <input
+            id="book-search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Title or author"
+            className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[.06] px-3 py-2 text-sm text-white outline-none placeholder:text-white/35 focus:border-gold/50"
+          />
+          <button
+            disabled={searching || !query.trim()}
+            className="rounded-xl border border-white/15 px-4 py-2 text-sm font-semibold transition hover:border-gold/40 disabled:opacity-50"
+          >
+            {searching ? "Searching…" : "Search"}
+          </button>
+        </form>
         {message && (
           <p role="status" className="text-sm text-white/80">
             {message}
           </p>
+        )}
+        {results && (
+          <section aria-label="Search results" className="space-y-2">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-white/45">Results for “{searched}”</h2>
+            {results.length === 0 && <p className="text-sm text-white/65">No books found. Try another title or author.</p>}
+            {results.map((r) => (
+              <div key={r.sourceId} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[.04] px-4 py-3">
+                <div className="min-w-0">
+                  <span className="block font-semibold">{r.title}</span>
+                  <span className="block text-sm text-white/60">{r.author} · Standard Ebooks</span>
+                </div>
+                {owned.has(r.sourceId) ? (
+                  <span className="shrink-0 text-sm text-white/50">In your library</span>
+                ) : (
+                  <button
+                    onClick={() => add(r)}
+                    disabled={!!adding}
+                    aria-label={`Add ${r.title}`}
+                    className="shrink-0 rounded-full bg-gold px-4 py-1.5 text-sm font-semibold text-ink transition hover:bg-amber-300 disabled:opacity-50"
+                  >
+                    {adding === r.sourceId ? "Adding…" : "Add"}
+                  </button>
+                )}
+              </div>
+            ))}
+          </section>
         )}
 
         {books.length === 0 ? (

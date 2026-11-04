@@ -6,7 +6,15 @@
 import { EpubError, ParsedBook, parseEpub } from "./epub";
 
 export type BookSource = "upload" | "standard-ebooks" | "gutenberg";
-export type BookEntry = { id: string; title: string; author: string; source: BookSource; hash: string; addedAt: number };
+export type BookEntry = {
+  id: string;
+  title: string;
+  author: string;
+  source: BookSource;
+  sourceId?: string; // the catalogue's own id for a downloaded book, e.g. "standard-ebooks:jane-austen/emma"
+  hash: string;
+  addedAt: number;
+};
 
 export const MAX_EPUB_BYTES = 50_000_000;
 const LIBRARY_KEY = "books-library-v1";
@@ -50,11 +58,11 @@ const hex = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), (b) => b.t
 
 export type AddResult = { entry: BookEntry; existing: boolean };
 
-// Read an uploaded EPUB, keep the file on this device and add it to the library.
-// Throws EpubError for copy-protected or invalid files, and a plain Error for files that are too big.
-export async function addUpload(file: File): Promise<AddResult> {
-  if (file.size > MAX_EPUB_BYTES) throw new Error("That file is too big (max 50 MB).");
-  const bytes = await file.arrayBuffer();
+// Add EPUB bytes to the library: read them, keep the file on this device and list the book. The same
+// file is only added once. Throws EpubError for copy-protected or invalid files, and a plain Error for
+// files that are too big.
+export async function addBook(bytes: ArrayBuffer, source: BookSource, sourceId?: string): Promise<AddResult> {
+  if (bytes.byteLength > MAX_EPUB_BYTES) throw new Error("That file is too big (max 50 MB).");
   const parsed = await parseEpub(bytes);
   const hash = hex(await crypto.subtle.digest("SHA-256", bytes));
   const id = hash.slice(0, 16);
@@ -64,9 +72,14 @@ export async function addUpload(file: File): Promise<AddResult> {
   if (existing) return { entry: existing, existing: true };
 
   await files("readwrite", (s) => s.put(bytes, id));
-  const entry: BookEntry = { id, title: parsed.title, author: parsed.author, source: "upload", hash, addedAt: Date.now() };
+  const entry: BookEntry = { id, title: parsed.title, author: parsed.author, source, hash, addedAt: Date.now(), ...(sourceId && { sourceId }) };
   saveLibrary([entry, ...library]);
   return { entry, existing: false };
+}
+
+export async function addUpload(file: File): Promise<AddResult> {
+  if (file.size > MAX_EPUB_BYTES) throw new Error("That file is too big (max 50 MB).");
+  return addBook(await file.arrayBuffer(), "upload");
 }
 
 // The parsed text of a book kept on this device, or null when its file isn't here.
