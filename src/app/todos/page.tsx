@@ -579,6 +579,12 @@ export default function TodosPage() {
               </button>
             )}
             <Link
+              href="/todos/lists"
+              className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-white/80 hover:border-gold/40 hover:text-gold"
+            >
+              Lists →
+            </Link>
+            <Link
               href="/todos/stats"
               className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-white/80 hover:border-gold/40 hover:text-gold"
             >

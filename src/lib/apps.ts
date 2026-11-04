@@ -23,7 +23,7 @@ export const APPS: AppInfo[] = [
     name: "Daily Planner",
     href: "/todos",
     icon: "🗓️",
-    description: "Plan your day in time blocks, keep repeating tasks and streaks, and see weekly stats.",
+    description: "Plan your day in time blocks, keep repeating tasks and streaks, keep lists of things to remember, and see weekly stats.",
   },
   {
     id: "money",

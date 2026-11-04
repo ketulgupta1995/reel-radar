@@ -5,7 +5,8 @@ export const securityHeaders = [
   { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'same-origin' },
-  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+  // The planner's lists record voice notes; the microphone stays off for other origins and frames.
+  { key: 'Permissions-Policy', value: 'camera=(), microphone=(self), geolocation=()' },
 ];
 
 /** @type {import('next').NextConfig} */

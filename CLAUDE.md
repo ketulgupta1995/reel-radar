@@ -60,10 +60,10 @@ src/
   proxy.ts               Auth gate for every route except /login and /api/auth/*
   app/                   Pages: / (app launcher), reel-radar (Reel Radar landing), discover,
                          recommendations, analysis, watched, watchlist, search, similar,
-                         person/[id], todos, todos/stats, money, money/import, money/settings, login
+                         person/[id], todos, todos/stats, todos/lists, money, money/import, money/settings, login
                          (api/money/family: starter family from the env)
   app/api/               Route handlers: discover, recommendations, similar, search, title,
-                         person/[id], sync, usage, auth/login, auth/logout
+                         person/[id], sync, media/[id], usage, auth/login, auth/logout
   components/            TitleCard, TitleDetailsModal, StorageControls, LogoutButton, AppSwitcher
   lib/
     apps.ts              App registry (home page cards + AppSwitcher menu)
@@ -73,6 +73,8 @@ src/
     analysis.ts          Analytics aggregation
     storage.ts           Reel Radar state: load/save, merge, export/import, useStorageSync()
     todos.ts             Todo and daily-task model and logic, planner sync and backup ("use client")
+    lists.ts             Planner lists (wishlist, things to remember): items, quick-add parsing, sync ("use client")
+    media.ts             Photo/voice-note uploads to /api/media: shrinking, type and size limits
     money.ts             Money model: transactions, people, limits, categories, import plan, sync ("use client")
     gpayStatement.ts     Statement PDF reader (no PDF library), Google Pay rows, parseStatementPdf(); tested with src/test/gpayPdf.ts
     paytmStatement.ts    Paytm statement rows (year from the period, sign gives direction); same reader and test helper
@@ -99,7 +101,7 @@ The repo is indexed by CodeGraph (`.codegraph/`). Use `codegraph explore "<symbo
 - **State shape** (`State` in `lib/storage.ts`): `watched`, `watchlist` (full `Title` objects), and `displayed`, `shown`, `dismissed` (key strings). If you add a field, update all of these together in `lib/syncDocs.ts`: `empty()`, `libraryOf()`/`historyOf()` and `mergeLibrary()`/`mergeHistory()`, plus import/export.
 - **localStorage key** `reel-radar-v1` holds user data. Don't rename it or change the shape in ways that break existing saved data. Make migrations additive.
 - **Merging** (`mergeStates`) unions watched seasons. Keep it idempotent, because import and sync both depend on it.
-- **Sync** (`api/sync`, `lib/docStore.ts`, `lib/sync.ts`): data is split into docs (`library`, `history`, `planner-YYYY-MM`, `planner-daily`, `planner-log`, `money-YYYY-MM`, `money-settings`; the allowlist is `DOC_KEY`). Keep these properties:
+- **Sync** (`api/sync`, `lib/docStore.ts`, `lib/sync.ts`): data is split into docs (`library`, `history`, `planner-YYYY-MM`, `planner-daily`, `planner-log`, `planner-lists`, `money-YYYY-MM`, `money-settings`; the allowlist is `DOC_KEY`). Keep these properties:
   - Reads send the client's etag, and an unchanged doc comes back without its body. A failed read must surface as an error, never as "missing", or the client pushes over the doc.
   - Writes are conditional (`UPDATE ... WHERE etag = ?`). A 409 carries the server copy; the client merges and retries.
   - Pushes are batched through `markDirty()`; don't `fetch` the sync route from features directly. A sync must not write back what it just read.
@@ -107,6 +109,7 @@ The repo is indexed by CodeGraph (`.codegraph/`). Use `codegraph explore "<symbo
   - Without `TURSO_DATABASE_URL` everything falls back to `data/<doc>.json`.
   - `money-*` docs are encrypted at rest in `docStore` (`seal`/`unseal`: AES-256-GCM, `enc:v1:<iv>:<ciphertext+tag>`, the doc key as AAD), in Turso and `data/` alike. Etags hash the stored (encrypted) text. Never add a path that stores them unsealed or falls back to plain text when the key is missing. Plain legacy docs are sealed on read (the read query returns their body even for a matching etag). Tests set the key with `vi.stubEnv("MONEY_ENCRYPTION_KEY", ...)`.
   - `readDoc`/`writeDoc` count every call per half hour (`flushUsage()` saves the counts to the `usage` table, or `data/usage.json`; `/api/usage` serves them to the stats page). Any new code path that queries the `docs` table must go through them so it is counted.
+- **Media** (list photos and voice notes): one `media-<id>` doc each, through `readDoc`/`writeDoc`/`deleteDoc` in `api/media/[id]`, never `/api/sync` (they stay out of `DOC_KEY` and out of `localStorage`). Ids are random and files are never rewritten, so GET answers `private, immutable`. Only the types in `MEDIA_TYPES` are stored or served (no SVG or HTML), up to `MAX_MEDIA_BYTES`. List items keep `MediaRef`s; whoever drops an item, photo or list deletes its media. Links on items go through `cleanLink()` (http/https only) before they reach an `href`. `next.config.mjs` allows `microphone=(self)` for voice notes.
 - **Vercel usage**: TMDB GET routes answer through `cachedJson()` and every route sets `maxDuration`. Keep new routes the same.
 - **Todos** are stored one doc per month (`planner-YYYY-MM`), plus `planner-daily` for repeating tasks. `loadTodos`/`saveTodos` keep the per-day API on top of that.
 - **Auth**: `lib/auth.ts` must stay Web Crypto–only (no Node `crypto`) so it stays portable between the proxy and route handlers. New API routes are protected automatically by the proxy matcher. Unauthenticated `/api/*` requests get a 401 JSON response, and unauthenticated pages redirect to `/login?next=...`. Login guesses are capped (`beginLoginAttempt()`/`forgetLoginAttempt()` in `docStore`, `login_attempts` table or `data/login-attempts.json`): 10 failures an hour across all clients, then 429 even for the right password. Each attempt is recorded before the password is checked so parallel guesses count; if it can't be recorded, login answers 503 rather than skipping the cap.

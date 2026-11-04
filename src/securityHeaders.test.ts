@@ -11,5 +11,7 @@ describe("security headers", () => {
     expect(headers["X-Frame-Options"]).toBe("DENY");
     expect(headers["Content-Security-Policy"]).toContain("frame-ancestors 'none'");
     expect(headers["X-Content-Type-Options"]).toBe("nosniff");
+    // The microphone is for this site's voice notes only; the camera and location stay off.
+    expect(headers["Permissions-Policy"]).toBe("camera=(), microphone=(self), geolocation=()");
   });
 });

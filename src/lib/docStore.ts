@@ -7,9 +7,12 @@ import path from "path";
 // files in data/ when TURSO_DATABASE_URL isn't set (local dev). A doc's etag is a hash of its
 // JSON as stored, kept in its own column so an unchanged doc is answered without reading its body.
 
-// Reel Radar's library and history, one doc per planner month, the daily tasks, and the Money
+// Reel Radar's library and history, one doc per planner month, the daily tasks, the lists, and the Money
 // app's settings and months.
-export const DOC_KEY = /^(library|history|planner-daily|planner-log|planner-\d{4}-\d{2}|money-settings|money-\d{4}-\d{2})$/;
+export const DOC_KEY = /^(library|history|planner-daily|planner-log|planner-lists|planner-\d{4}-\d{2}|money-settings|money-\d{4}-\d{2})$/;
+
+// Photos and voice notes attached to list items are one doc each ("media-<id>"). They are written
+// once and served by /api/media, never through /api/sync, so DOC_KEY leaves them out.
 
 export type ReadResult = { etag: string; data: unknown } | { etag: string; unchanged: true } | null;
 
@@ -237,6 +240,16 @@ export async function writeDoc(key: string, data: unknown, ifMatch?: string): Pr
     });
   }
   return etag;
+}
+
+// Remove a doc. Deleting one that doesn't exist is fine.
+export async function deleteDoc(key: string): Promise<void> {
+  count("writes");
+  if (!isStoreConfigured()) {
+    await fs.rm(localPath(`${key}.json`), { force: true });
+    return;
+  }
+  await (await client()).execute({ sql: "DELETE FROM docs WHERE key = ?", args: [key] });
 }
 
 // ---------------- Login attempts ----------------

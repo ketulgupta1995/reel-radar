@@ -65,6 +65,14 @@ beforeEach(() => {
   FakeNotification.sent = [];
 });
 
+describe("header", () => {
+  it("links to the lists and the stats", () => {
+    render(<TodosPage />);
+    expect(screen.getByText("Lists →").getAttribute("href")).toBe("/todos/lists");
+    expect(screen.getByText("Stats →").getAttribute("href")).toBe("/todos/stats");
+  });
+});
+
 describe("arranging tasks", () => {
   const rows = () => screen.getAllByText(/^(alpha|beta|gamma|daily)$/, { selector: "p" }).map((p) => p.textContent);
   const aged = (id: string, n: number, extra: Partial<Todo> = {}) => todo(id, { createdAt: `2026-01-01T00:00:0${n}.000Z`, ...extra });
