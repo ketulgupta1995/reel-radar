@@ -2,7 +2,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { exportPlanner, importPlanner } from "./plannerBackup";
 import { addItem, addList, loadItems, loadLists } from "./lists";
-import { addTodo, getTodayDate, loadDailyTasks, loadDayLog, loadTodos, saveTodos, updateDayLog, type Todo } from "./todos";
+import { activeTags, addTag, loadTemplates, renameTag, tagLabel } from "./plannerSettings";
+import { addTodo, getTodayDate, loadDailyTasks, loadDayLog, loadTodos, saveDayAsTemplate, saveTodos, updateDayLog, type Todo } from "./todos";
 import { jsonResponse } from "@/test/fixtures";
 
 const D1 = "2026-03-01";
@@ -54,7 +55,7 @@ describe("export", () => {
     addTodo("Meditate", D2, undefined, undefined, true);
     const { name, backup } = await captureExport();
     expect(name).toBe(`planner-backup-${getTodayDate()}.json`);
-    expect(backup).toMatchObject({ app: "planner", version: 3 });
+    expect(backup).toMatchObject({ app: "planner", version: 4 });
     expect(Object.keys(backup.days).sort()).toEqual([D1, D2, "2026-04-10"]);
     expect(backup.days[D1]).toEqual([todo("a")]);
     expect(backup.daily).toEqual([expect.objectContaining({ text: "Meditate", startDate: D2 })]);
@@ -103,9 +104,24 @@ describe("import", () => {
     const { backup } = await captureExport();
     localStorage.clear();
     const r = await importPlanner(backupFile(backup));
-    expect(r).toEqual({ todos: 3, days: 2, daily: 1, logs: 1, lists: 1, items: 1 });
+    expect(r).toEqual({ todos: 3, days: 2, daily: 1, logs: 1, lists: 1, items: 1, tags: 0, templates: 0 });
     const { backup: again } = await captureExport();
     expect(again).toEqual(backup);
+  });
+
+  it("round-trips tags and day templates too", async () => {
+    addTag("Deep work");
+    renameTag("work", "Job");
+    saveTodos([todo("a", { start: 600, duration: 30 })], D1);
+    saveDayAsTemplate("Workday", D1);
+    const { backup } = await captureExport();
+    expect(backup.settings.templates[0]).toMatchObject({ name: "Workday" });
+    localStorage.clear();
+    const r = await importPlanner(backupFile(backup));
+    expect(r).toMatchObject({ tags: 2, templates: 1 });
+    expect(tagLabel("work")).toBe("Job");
+    expect(activeTags().map((t) => t.label)).toContain("Deep work");
+    expect(loadTemplates()[0].items).toEqual([{ text: "a", start: 600, duration: 30 }]);
   });
 
   it("merges a backup in without deleting anything", async () => {
@@ -113,7 +129,7 @@ describe("import", () => {
     const r = await importPlanner(
       backupFile({ app: "planner", version: 2, days: { [D1]: [todo("a", { text: "new" }), todo("b")], [D2]: [todo("x")] }, daily: [task] })
     );
-    expect(r).toEqual({ todos: 3, days: 2, daily: 1, logs: 0, lists: 0, items: 0 });
+    expect(r).toEqual({ todos: 3, days: 2, daily: 1, logs: 0, lists: 0, items: 0, tags: 0, templates: 0 });
     expect(loadTodos(D1).map((t) => t.text)).toEqual(["new", "keep", "b"]);
     expect(ids(D2)).toEqual(["x"]);
     expect(loadDailyTasks()).toEqual([task]);
@@ -199,7 +215,7 @@ describe("import", () => {
 
   it("ignores a log or lists of the wrong shape", async () => {
     const r = await importPlanner(backupFile({ app: "planner", days: {}, log: "nope", lists: "nope" }));
-    expect(r).toEqual({ todos: 0, days: 0, daily: 0, logs: 0, lists: 0, items: 0 });
+    expect(r).toEqual({ todos: 0, days: 0, daily: 0, logs: 0, lists: 0, items: 0, tags: 0, templates: 0 });
     expect(await importPlanner(backupFile({ app: "planner", days: {}, log: { [D1]: null }, lists: { lists: 1, items: 2 } }))).toMatchObject({ logs: 1 });
   });
 

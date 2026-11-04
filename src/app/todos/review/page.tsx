@@ -24,6 +24,8 @@ import {
   restoreTodo,
   shiftDate,
   syncAllPlanner,
+  syncPlanner,
+  timesDone,
   updateDayLog,
   type OverdueTodo,
   type Todo,
@@ -321,7 +323,7 @@ function PlanNext({ days, version, onAdd }: { days: string[]; version: number; o
     const daily = loadDailyTasks();
     return days.map((date) => {
       const todos = loadTodos(date);
-      const repeating = missingDailyTasks(daily, todos, date);
+      const repeating = missingDailyTasks(daily, todos, date, (d) => timesDone(d, date, date));
       const minutes = (list: { start?: number; duration?: number }[]) => list.reduce((n, t) => n + (t.start !== undefined ? t.duration ?? DEFAULT_DURATION : 0), 0);
       return { date, todos, repeating: repeating.length, minutes: minutes(todos) + minutes(repeating) };
     });
@@ -343,13 +345,15 @@ function PlanNext({ days, version, onAdd }: { days: string[]; version: number; o
 
 function DayPlan({ date, todos, repeating, minutes, onAdd }: { date: string; todos: Todo[]; repeating: number; minutes: number; onAdd: () => void }) {
   const [text, setText] = useState("");
-  const add = (e: React.FormEvent) => {
+  const add = async (e: React.FormEvent) => {
     e.preventDefault();
     const q = parseQuickAdd(text);
     if (!q.text) return;
     const schedule = q.start !== undefined ? { start: q.start, duration: q.duration } : undefined;
-    addTodo(q.text, date, q.priority, schedule, q.daily, undefined, q.tag);
     setText("");
+    // Typed for another day ("15 nov"), whose month this device may not have pulled yet.
+    if (q.date && q.date !== date) await syncPlanner([q.date]);
+    addTodo(q.text, q.date ?? date, q.priority, schedule, q.repeat ?? q.daily, undefined, q.tag);
     onAdd();
   };
   return (

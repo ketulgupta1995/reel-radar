@@ -9,8 +9,10 @@ import {
   HOUR_PX,
   SNAP,
   PRIORITY_STYLE,
-  TAG_COLORS,
-  DAY_LETTERS,
+  DURATIONS,
+  fromInputTime,
+  shiftMonth,
+  toInputTime,
   DAY_NAMES,
   TimeBlock,
   useBlockResize,
@@ -46,7 +48,6 @@ import {
   loadTodosWithDaily,
   makeTodoDaily,
   stopTodoDaily,
-  setTodoRepeatDays,
   loadDailyTasks,
   getDailyStreak,
   addSubtask,
@@ -73,8 +74,12 @@ import {
   syncPlanner,
   usePlannerSync,
   DEFAULT_DURATION,
-  ALL_DAYS,
-  TAGS,
+  loadAllDayLogs,
+  normalizeRepeat,
+  setTodoRepeat,
+  timesDone,
+  repeatsOn,
+  type RepeatRule,
   type DailyTask,
   type FocusSession,
   type TagId,
@@ -84,14 +89,19 @@ import {
 import { exportPlanner, importPlanner } from "@/lib/plannerBackup";
 import { computeTimeFit, suggestBlockLength } from "@/lib/plannerInsights";
 import { SlippingHint } from "./Slipping";
+import { AutoSchedulePanel } from "./AutoSchedule";
+import MonthView from "./MonthView";
+import { PlannerTools } from "./PlannerTools";
+import { RepeatPicker, repeatLabel } from "./RepeatPicker";
+import { canAutoSchedule, dayWindow, planDay, type DayPlan, type DayWindow, type PlannedBlock } from "@/lib/autoSchedule";
+import { activeTags, allTags, tagColor, tagLabel, useTags } from "@/lib/plannerSettings";
 import { REMINDER_LEADS, reminderBody, reminderKey } from "@/lib/reminders";
 import { disablePush, enablePush, notify } from "@/lib/push";
 
 type Filter = "all" | "active" | "done";
 type MobileView = "tasks" | "schedule";
-type View = "day" | "week";
+type View = "day" | "week" | "month";
 
-const TAG_LABEL = Object.fromEntries(TAGS.map((t) => [t.id, t.label])) as Record<TagId, string>;
 
 // 5:07 / 1:02:30
 function fmtClock(totalSeconds: number): string {
@@ -102,16 +112,13 @@ function fmtClock(totalSeconds: number): string {
   return h ? `${h}:${mm.padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
 }
 
-const DURATIONS = [15, 30, 45, 60, 90, 120, 180, 240];
+function stepDate(date: string, view: View, n: number): string {
+  return view === "month" ? shiftMonth(date, n) : shiftDate(date, view === "week" ? 7 * n : n);
+}
+const longDay = (date: string) => `${DAY_NAMES[weekday(date)]}, ${formatShortDate(date)}`;
+const formatMonth = (date: string) => new Date(date + "T00:00:00").toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
 const REMINDER_KEY = "reel-radar-reminder-lead"; // minutes before a block starts; unset = off
-
-function repeatLabel(days?: number[]): string {
-  if (!days) return "Daily";
-  if (days.join() === "1,2,3,4,5") return "Weekdays";
-  if (days.join() === "0,6") return "Weekends";
-  return days.map((d) => DAY_NAMES[d]).join(", ");
-}
 
 function loadReminderLead(): number | null {
   try {
@@ -138,12 +145,6 @@ const NEXT_PRIORITY: Record<string, Priority | undefined> = {
   low: undefined,
 };
 
-const toInputTime = (mins: number): string =>
-  `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
-const fromInputTime = (v: string): number | null => {
-  const m = /^(\d{2}):(\d{2})$/.exec(v);
-  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
-};
 
 export default function TodosPage() {
   const [selectedDate, setSelectedDate] = useState<string>(() => getTodayDate());
@@ -153,7 +154,9 @@ export default function TodosPage() {
   const [newTime, setNewTime] = useState("");
   const [newDuration, setNewDuration] = useState(DEFAULT_DURATION);
   const [newDaily, setNewDaily] = useState(false);
-  const [newRepeatDays, setNewRepeatDays] = useState<number[]>(ALL_DAYS);
+  const [newRepeat, setNewRepeat] = useState<RepeatRule>({});
+  const tags = useTags();
+  const [plan, setPlan] = useState<{ plan: DayPlan; window: DayWindow } | null>(null);
   const [newTag, setNewTag] = useState<TagId | "">("");
   const [tagFilter, setTagFilter] = useState<TagId | "all">("all");
   const [view, setView] = useState<View>("day");
@@ -220,6 +223,7 @@ export default function TodosPage() {
     setDeleted(null);
     setSelectedBlock(null);
     setQuickAdd(null);
+    setPlan(null);
     setShowYesterday(false);
     const local = loadTodos(selectedDate);
     // Sync before adding daily copies, so they're added to the latest copy of the day.
@@ -260,21 +264,21 @@ export default function TodosPage() {
     setFocus(getFocusSession());
   }, []);
 
-  // Shortcuts: N or / to add a task, ← → to change day (or week), T for today, W to switch view.
+  // Shortcuts: N or / to add a task, ← → to change day (or week, or month), T for today, W and M to switch view.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
       if (e.metaKey || e.ctrlKey || e.altKey || el.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
-      const step = view === "week" ? 7 : 1;
       if (e.key === "n" || e.key === "/") {
         e.preventDefault();
-        if (view === "week") setView("day");
+        if (view !== "day") setView("day");
         setMobileView("tasks");
         setTimeout(() => inputRef.current?.focus(), 0);
-      } else if (e.key === "ArrowLeft") setSelectedDate((d) => shiftDate(d, -step));
-      else if (e.key === "ArrowRight") setSelectedDate((d) => shiftDate(d, step));
+      } else if (e.key === "ArrowLeft") setSelectedDate((d) => stepDate(d, view, -1));
+      else if (e.key === "ArrowRight") setSelectedDate((d) => stepDate(d, view, 1));
       else if (e.key === "t") setSelectedDate(getTodayDate());
       else if (e.key === "w") setView((v) => (v === "week" ? "day" : "week"));
+      else if (e.key === "m") setView((v) => (v === "month" ? "day" : "month"));
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -376,30 +380,48 @@ export default function TodosPage() {
     refreshMeta();
   };
 
-  const handleAddTodo = (e: React.FormEvent) => {
+  const handleAddTodo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTodoText.trim()) return;
-    // Shorthand in the title ("6pm", "45m", "#work", "!high", "daily") wins over the form controls.
+    // Shorthand in the title ("6pm", "45m", "#work", "!high", "daily", "fri") wins over the form controls.
     const quick = parseQuickAdd(newTodoText);
     const start = quick.start ?? fromInputTime(newTime);
-    apply(
-      addTodo(
-        quick.text || newTodoText.trim(),
-        selectedDate,
-        quick.priority ?? (newPriority || undefined),
-        start !== null ? { start, duration: quick.duration ?? newDuration } : undefined,
-        newDaily ? newRepeatDays : quick.daily ?? false,
-        newNote,
-        quick.tag ?? (newTag || undefined)
-      )
-    );
-    setNewRepeatDays(ALL_DAYS);
+    const date = quick.date ?? selectedDate;
+    const repeat: RepeatRule | false = newDaily ? newRepeat : quick.repeat ?? (quick.daily ? {} : false);
+    const text = quick.text || newTodoText.trim();
+    const note = newNote;
+    const priority = quick.priority ?? (newPriority || undefined);
+    const tag = quick.tag ?? (newTag || undefined);
+    const schedule = start !== null ? { start, duration: quick.duration ?? newDuration } : undefined;
+    setNewRepeat({});
     setNewTodoText("");
     setNewNote("");
     setShowNewNote(false);
     setNewDaily(false);
     setNewTime("");
     inputRef.current?.focus();
+    // Another day's month may not be on this device yet, and pushing it unpulled would replace the server's copy.
+    if (date !== selectedDate) await syncPlanner([date]);
+    const updated = addTodo(text, date, priority, schedule, repeat, note, tag);
+    if (date === selectedDate) apply(updated);
+    else refreshMeta();
+    const stored = repeat ? normalizeRepeat(repeat) : null;
+    if (stored?.monthDay && !repeatsOn({ ...stored, id: "", text: "", startDate: date }, date)) flash(`${repeatLabel(stored)}. Nothing to do until then.`);
+    else if (date !== selectedDate) flash(`Added to ${longDay(date)}`);
+  };
+
+  const startAutoSchedule = () => {
+    const window = dayWindow(loadAllDayLogs(), selectedDate);
+    setPlan({ plan: planDay(sortTodos(todos), window, isToday && now !== null ? now : undefined), window });
+  };
+
+  const applyPlan = () => {
+    if (!plan) return;
+    let updated = todos;
+    for (const b of plan.plan.placed) updated = scheduleTodo(b.id, { start: b.start, duration: b.duration }, selectedDate);
+    apply(updated);
+    flash(`Scheduled ${plan.plan.placed.length} ${plan.plan.placed.length === 1 ? "task" : "tasks"}`);
+    setPlan(null);
   };
 
   const handleDelete = (id: string) => {
@@ -508,7 +530,8 @@ export default function TodosPage() {
         `Imported ${r.todos} ${r.todos === 1 ? "todo" : "todos"} across ${r.days} ${r.days === 1 ? "day" : "days"}` +
           (r.daily ? ` + ${r.daily} daily ${r.daily === 1 ? "task" : "tasks"}` : "") +
           (r.logs ? ` + ${r.logs} day ${r.logs === 1 ? "log" : "logs"}` : "") +
-          (r.lists || r.items ? ` + ${r.items} list ${r.items === 1 ? "item" : "items"}` : "")
+          (r.lists || r.items ? ` + ${r.items} list ${r.items === 1 ? "item" : "items"}` : "") +
+          (r.templates ? ` + ${r.templates} ${r.templates === 1 ? "template" : "templates"}` : "")
       );
     } catch (err) {
       flash(err instanceof Error ? err.message : "Could not import that file");
@@ -572,7 +595,13 @@ export default function TodosPage() {
   const completedCount = todos.length - activeCount;
   const percent = todos.length ? Math.round((completedCount / todos.length) * 100) : 0;
 
-  const repeatDaysById = useMemo(() => new Map(dailyTasks.map((d) => [d.id, d.days])), [dailyTasks]);
+  const repeatById = useMemo(() => new Map(dailyTasks.map((d) => [d.id, normalizeRepeat(d)])), [dailyTasks]);
+  // This week's count for "times a week" tasks, shown beside the target.
+  const weekCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const d of dailyTasks) if (d.timesPerWeek && todos.some((t) => t.dailyId === d.id)) m.set(d.id, timesDone(d, selectedDate));
+    return m;
+  }, [todos, dailyTasks, selectedDate]);
   const streaks = useMemo(() => {
     const m = new Map<string, number>();
     for (const t of todos) if (t.dailyId) m.set(t.dailyId, getDailyStreak(t.dailyId, selectedDate));
@@ -611,7 +640,7 @@ export default function TodosPage() {
     apply(reorderTodo(t.id, before, selectedDate));
   };
 
-  const usedTags = TAGS.map((t) => t.id).filter((id) => id === tagFilter || todos.some((t) => t.tag === id));
+  const usedTags = allTags().map((t) => t.id).filter((id) => id === tagFilter || todos.some((t) => t.tag === id));
 
   const isToday = selectedDate === getTodayDate();
   const selectedForHint = todos.find((t) => t.id === selectedBlock && t.start !== undefined && !t.completed);
@@ -698,7 +727,7 @@ export default function TodosPage() {
           <div className="relative flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0 flex-1">
               <h1 className="bg-gradient-to-r from-white via-white to-gold/80 bg-clip-text text-3xl font-bold text-transparent sm:text-5xl">
-                {view === "week" ? "This week at a glance" : formatDate(selectedDate)}
+                {view === "week" ? "This week at a glance" : view === "month" ? formatMonth(selectedDate) : formatDate(selectedDate)}
               </h1>
               {view === "week" && (
                 <p className="mt-1 text-white/60">
@@ -729,7 +758,7 @@ export default function TodosPage() {
 
           <div className="relative mt-5 flex flex-wrap items-center gap-2">
             <div className="flex rounded-full border border-white/15 bg-black/20 p-0.5 text-sm">
-              {(["day", "week"] as View[]).map((v) => (
+              {(["day", "week", "month"] as View[]).map((v) => (
                 <button
                   key={v}
                   onClick={() => setView(v)}
@@ -743,9 +772,9 @@ export default function TodosPage() {
               ))}
             </div>
             <button
-              onClick={() => setSelectedDate(shiftDate(selectedDate, view === "week" ? -7 : -1))}
+              onClick={() => setSelectedDate(stepDate(selectedDate, view, -1))}
               className="h-8 w-8 rounded-full border border-white/20 bg-black/20 text-sm hover:border-gold/40 hover:text-gold"
-              aria-label={view === "week" ? "Previous week" : "Previous day"}
+              aria-label={`Previous ${view}`}
             >
               ‹
             </button>
@@ -757,9 +786,9 @@ export default function TodosPage() {
               aria-label="Pick a date"
             />
             <button
-              onClick={() => setSelectedDate(shiftDate(selectedDate, view === "week" ? 7 : 1))}
+              onClick={() => setSelectedDate(stepDate(selectedDate, view, 1))}
               className="h-8 w-8 rounded-full border border-white/20 bg-black/20 text-sm hover:border-gold/40 hover:text-gold"
-              aria-label={view === "week" ? "Next week" : "Next day"}
+              aria-label={`Next ${view}`}
             >
               ›
             </button>
@@ -776,7 +805,16 @@ export default function TodosPage() {
           {view === "day" && <WeekStrip selectedDate={selectedDate} todos={todos} onPick={setSelectedDate} />}
         </section>
 
-        {view === "week" ? (
+        {view === "month" ? (
+          <MonthView
+            selectedDate={selectedDate}
+            onPick={(date) => {
+              setSelectedDate(date);
+              setView("day");
+              setMobileView("tasks");
+            }}
+          />
+        ) : view === "week" ? (
           <WeekView
             anchorDate={selectedDate}
             now={now}
@@ -928,13 +966,13 @@ export default function TodosPage() {
 
         <div className="grid items-start gap-6 lg:grid-cols-2 xl:grid-cols-[minmax(0,6fr)_minmax(0,5fr)]">
           {/* ---------------- Tasks column ---------------- */}
-          <section className={mobileView === "tasks" ? "" : "hidden lg:block"}>
+          <section className={`min-w-0 ${mobileView === "tasks" ? "" : "hidden lg:block"}`}>
             <DayLogCard date={selectedDate} version={logVersion} onChange={setDayLog} />
             <form
               onSubmit={handleAddTodo}
               className="sticky top-[4.25rem] z-30 mb-4 flex flex-wrap gap-2 rounded-3xl border border-white/15 bg-white/[.07] p-3 shadow-xl shadow-black/30 backdrop-blur-xl transition focus-within:border-gold/50 focus-within:shadow-gold/10"
             >
-              <div className="flex basis-full items-center gap-2">
+              <div className="flex min-w-0 basis-full items-center gap-2">
                 <span aria-hidden className="pl-1 text-xl text-gold">+</span>
                 <input
                   ref={inputRef}
@@ -987,7 +1025,7 @@ export default function TodosPage() {
                   aria-label="Tag"
                 >
                   <option value="">No tag</option>
-                  {TAGS.map((t) => (
+                  {tags.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.label}
                     </option>
@@ -1032,20 +1070,19 @@ export default function TodosPage() {
                   type="button"
                   onClick={() => setNewDaily((v) => !v)}
                   aria-pressed={newDaily}
-                  title="Repeat this task every day"
+                  title="Repeat this task"
                   className={`rounded-lg border px-2.5 py-1.5 text-xs transition ${
                     newDaily
                       ? "border-gold/60 bg-gold/15 text-gold"
                       : "border-white/10 bg-ink text-white/60 hover:text-white"
                   }`}
                 >
-                  ↻ {newDaily ? repeatLabel(newRepeatDays.length === 7 ? undefined : newRepeatDays) : "Daily"}
+                  ↻ {newDaily ? repeatLabel(newRepeat) : "Repeat"}
                 </button>
               </div>
               {newDaily && (
-                <div className="flex basis-full items-center gap-3 text-xs text-white/55">
-                  Repeats on
-                  <DayPicker value={newRepeatDays} onChange={setNewRepeatDays} />
+                <div className="basis-full">
+                  <RepeatPicker value={newRepeat} onChange={setNewRepeat} date={selectedDate} />
                 </div>
               )}
               {showNewNote && (
@@ -1061,6 +1098,11 @@ export default function TodosPage() {
                 />
               )}
             </form>
+            <PlannerTools
+              date={selectedDate}
+              onApplied={(updated) => apply(updated)}
+              onMessage={flash}
+            />
 
             {todos.length > 0 && (
               <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -1098,8 +1140,8 @@ export default function TodosPage() {
                             : "border-white/15 text-white/60 hover:text-white"
                         }`}
                       >
-                        {tag !== "all" && <span className="h-2 w-2 rounded-full" style={{ background: TAG_COLORS[tag] }} />}
-                        {tag === "all" ? "All tags" : TAG_LABEL[tag]}
+                        {tag !== "all" && <span className="h-2 w-2 rounded-full" style={{ background: tagColor(tag) }} />}
+                        {tag === "all" ? "All tags" : tagLabel(tag)}
                       </button>
                     ))}
                   </div>
@@ -1173,11 +1215,10 @@ export default function TodosPage() {
                     }
                     onSchedule={quickSchedule}
                     onToggleDaily={handleToggleDaily}
-                    repeatDays={todo.dailyId ? repeatDaysById.get(todo.dailyId) : undefined}
+                    repeat={todo.dailyId ? repeatById.get(todo.dailyId) : undefined}
+                    weekCount={todo.dailyId ? weekCounts.get(todo.dailyId) : undefined}
                     streak={todo.dailyId ? streaks.get(todo.dailyId) ?? 0 : 0}
-                    onSetRepeatDays={(t, days) => {
-                      apply(setTodoRepeatDays(t.id, days.length === 7 ? undefined : days, selectedDate));
-                    }}
+                    onSetRepeat={(t, rule) => apply(setTodoRepeat(t.id, rule, selectedDate))}
                     onAddSubtask={(t, text) => apply(addSubtask(t.id, text, selectedDate))}
                     onToggleSubtask={(t, subId) => apply(toggleSubtask(t.id, subId, selectedDate))}
                     onDeleteSubtask={(t, subId) => apply(deleteSubtask(t.id, subId, selectedDate))}
@@ -1205,7 +1246,7 @@ export default function TodosPage() {
 
           {/* ---------------- Planner column ---------------- */}
           <section
-            className={`overflow-hidden rounded-3xl border border-white/15 bg-white/[.05] shadow-xl shadow-black/30 backdrop-blur-xl lg:sticky lg:top-20 ${
+            className={`min-w-0 overflow-hidden rounded-3xl border border-white/15 bg-white/[.05] shadow-xl shadow-black/30 backdrop-blur-xl lg:sticky lg:top-20 ${
               mobileView === "schedule" ? "" : "hidden lg:block"
             }`}
           >
@@ -1213,6 +1254,15 @@ export default function TodosPage() {
               <h2 className="font-semibold">Schedule</h2>
               <p className="hidden text-xs text-white/45 xl:block">Click a slot to add · drag tasks here to time-block</p>
               <p className="order-last basis-full text-xs text-white/45 sm:hidden">Tap a slot to add · tap a block to edit</p>
+              {todos.some(canAutoSchedule) && !plan && (
+                <button
+                  onClick={startAutoSchedule}
+                  title="Place unscheduled tasks in your free time. You can change the plan before it's saved."
+                  className="rounded-lg border border-white/10 bg-panel px-2 py-1 text-xs text-white/80 hover:border-gold/50 hover:text-gold"
+                >
+                  ✨ Auto-schedule
+                </button>
+              )}
               <select
                 value={reminderLead ?? ""}
                 onChange={(e) => handleReminderChange(e.target.value)}
@@ -1228,6 +1278,17 @@ export default function TodosPage() {
                 ))}
               </select>
             </div>
+
+            {plan && (
+              <AutoSchedulePanel
+                plan={plan.plan}
+                window={plan.window}
+                repeating={todos.filter((t) => t.dailyId && !t.completed && t.start === undefined).length}
+                onChange={(placed: PlannedBlock[]) => setPlan({ ...plan, plan: { ...plan.plan, placed } })}
+                onApply={applyPlan}
+                onCancel={() => setPlan(null)}
+              />
+            )}
 
             {selected && (
               <div className="flex flex-wrap items-center gap-3 border-b border-white/10 bg-white/[.03] px-4 py-3 text-sm">
@@ -1283,7 +1344,7 @@ export default function TodosPage() {
                 </button>
                 {lengthHint && (
                   <p className="w-full text-xs text-white/60">
-                    {selected.tag ? TAG_LABEL[selected.tag] : "Untagged"} blocks usually run {Math.abs(lengthHint.overBy)}% {lengthHint.overBy > 0 ? "over" : "under"}.{" "}
+                    {selected.tag ? tagLabel(selected.tag) : "Untagged"} blocks usually run {Math.abs(lengthHint.overBy)}% {lengthHint.overBy > 0 ? "over" : "under"}.{" "}
                     <button
                       onClick={() =>
                         apply(scheduleTodo(selected.id, { start: clampStart(selected.start!, lengthHint.minutes), duration: lengthHint.minutes }, selectedDate))
@@ -1438,9 +1499,10 @@ function TodoItem({
   onSchedule,
   onShowBlock,
   onToggleDaily,
-  repeatDays,
+  repeat,
+  weekCount,
   streak,
-  onSetRepeatDays,
+  onSetRepeat,
   onAddSubtask,
   onToggleSubtask,
   onDeleteSubtask,
@@ -1467,9 +1529,10 @@ function TodoItem({
   onSchedule: (todo: Todo) => void;
   onShowBlock: (todo: Todo) => void;
   onToggleDaily: (todo: Todo) => void;
-  repeatDays?: number[];
+  repeat?: RepeatRule;
+  weekCount?: number;
   streak: number;
-  onSetRepeatDays: (todo: Todo, days: number[]) => void;
+  onSetRepeat: (todo: Todo, rule: RepeatRule) => void;
   onAddSubtask: (todo: Todo, text: string) => void;
   onToggleSubtask: (todo: Todo, subtaskId: string) => void;
   onDeleteSubtask: (todo: Todo, subtaskId: string) => void;
@@ -1552,7 +1615,7 @@ function TodoItem({
       data-reorder-id={todo.completed ? undefined : todo.id}
       style={{
         ...(lifted ? { transform: `translateY(${reorder.drag!.dy}px)` } : {}),
-        ...(todo.tag && !todo.completed ? { borderLeftColor: TAG_COLORS[todo.tag], borderLeftWidth: 3 } : {}),
+        ...(todo.tag && !todo.completed ? { borderLeftColor: tagColor(todo.tag), borderLeftWidth: 3 } : {}),
       }}
       className={`relative rounded-2xl border p-3.5 pr-2 backdrop-blur-xl sm:pr-3.5 ${
         lifted
@@ -1699,8 +1762,8 @@ function TodoItem({
               className="relative inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-white/15 px-2 py-0.5 text-white/60 focus-within:border-gold/50 hover:border-white/30 hover:text-white"
               title="Tag"
             >
-              {todo.tag && <span className="h-2 w-2 rounded-full" style={{ background: TAG_COLORS[todo.tag] }} />}
-              {todo.tag ? TAG_LABEL[todo.tag] : "+ Tag"}
+              {todo.tag && <span className="h-2 w-2 rounded-full" style={{ background: tagColor(todo.tag) }} />}
+              {todo.tag ? tagLabel(todo.tag) : "+ Tag"}
               <select
                 value={todo.tag ?? ""}
                 onChange={(e) => onSetTag(todo, (e.target.value || undefined) as TagId | undefined)}
@@ -1708,7 +1771,7 @@ function TodoItem({
                 aria-label="Tag"
               >
                 <option value="">No tag</option>
-                {TAGS.map((t) => (
+                {activeTags().map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.label}
                   </option>
@@ -1741,14 +1804,16 @@ function TodoItem({
                 onClick={() => setShowRepeat((v) => !v)}
                 aria-expanded={showRepeat}
                 className="rounded-full bg-gold/10 px-2 py-0.5 text-gold/80 hover:bg-gold/20"
-                title="Choose which days it repeats"
+                title="Choose how it repeats"
               >
-                ↻ {repeatLabel(repeatDays)}
+                ↻ {repeatLabel(repeat)}
+                {repeat?.timesPerWeek ? ` · ${weekCount ?? 0}/${repeat.timesPerWeek}` : ""}
               </button>
             )}
             {streak >= 2 && (
-              <span className="rounded-full bg-orange-500/15 px-2 py-0.5 text-orange-300" title={`Done ${streak} times in a row`}>
+              <span className="rounded-full bg-orange-500/15 px-2 py-0.5 text-orange-300" title={repeat?.timesPerWeek ? `Target met ${streak} weeks in a row` : `Done ${streak} times in a row`}>
                 🔥 {streak}
+                {repeat?.timesPerWeek ? " wk" : ""}
               </span>
             )}
             {subtasks.length > 0 ? (
@@ -1805,8 +1870,7 @@ function TodoItem({
           )}
           {showRepeat && todo.dailyId && (
             <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-white/55">
-              Repeats on
-              <DayPicker value={repeatDays ?? ALL_DAYS} onChange={(days) => onSetRepeatDays(todo, days)} />
+              <RepeatPicker value={repeat ?? {}} onChange={(rule) => onSetRepeat(todo, rule)} date={date} />
               <button
                 onClick={() => {
                   setShowRepeat(false);
@@ -1880,34 +1944,6 @@ function TodoItem({
 }
 
 // Weekday toggles; at least one day stays selected.
-function DayPicker({ value, onChange }: { value: number[]; onChange: (days: number[]) => void }) {
-  return (
-    <div className="flex gap-1">
-      {DAY_LETTERS.map((letter, d) => {
-        const on = value.includes(d);
-        return (
-          <button
-            key={d}
-            type="button"
-            onClick={() => {
-              if (on && value.length === 1) return;
-              onChange(on ? value.filter((x) => x !== d) : [...value, d].sort((a, b) => a - b));
-            }}
-            aria-pressed={on}
-            aria-label={DAY_NAMES[d]}
-            title={DAY_NAMES[d]}
-            className={`h-7 w-7 rounded-full text-[11px] font-semibold transition ${
-              on ? "bg-gold text-black" : "border border-white/20 text-white/55 hover:border-gold/50 hover:text-gold"
-            }`}
-          >
-            {letter}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 function FocusBar({
   session,
   nowMs,
@@ -2116,8 +2152,8 @@ function DayLogCard({ date, version, onChange }: { date: string; version: number
             <span className="font-normal text-white/50">kg</span>
           </span>
         </label>
-        <div className="flex flex-col gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
-          <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-col gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-x-2">
             <span className="text-xs uppercase tracking-wide text-white/50">Water</span>
             <span className="text-sm tabular-nums">
               <span className="font-semibold text-white" data-testid="water-total">
@@ -2139,7 +2175,7 @@ function DayLogCard({ date, version, onChange }: { date: string; version: number
               style={{ width: `${Math.min(100, (water / WATER_GOAL) * 100)}%` }}
             />
           </div>
-          <div className="flex gap-1.5">
+          <div className="flex flex-wrap gap-1.5">
             {waterButton("Less water", -WATER_STEP, "− Glass")}
             {waterButton("More water", WATER_STEP, "+ Glass")}
             {waterButton("Add a bottle", WATER_STEP * 2, "+ Bottle")}
@@ -2313,14 +2349,16 @@ function QuickAddHint({ quick, typed }: { quick: QuickAdd; typed: boolean }) {
   if (quick.start !== undefined) chips.push(`⏰ ${fmtTime(quick.start)}${quick.duration ? ` · ${fmtDuration(quick.duration)}` : ""}`);
   else if (quick.duration) chips.push(`⏱ ${fmtDuration(quick.duration)} (add a time to schedule it)`);
   if (quick.priority) chips.push(`⚑ ${quick.priority[0].toUpperCase()}${quick.priority.slice(1)}`);
-  if (quick.tag) chips.push(`# ${TAG_LABEL[quick.tag]}`);
-  if (quick.daily) chips.push("↻ Every day");
+  if (quick.tag) chips.push(`# ${tagLabel(quick.tag)}`);
+  if (quick.date) chips.push(`📅 ${longDay(quick.date)}`);
+  if (quick.repeat) chips.push(`↻ ${repeatLabel(quick.repeat)}`);
+  else if (quick.daily) chips.push("↻ Every day");
   if (!chips.length)
     return typed ? null : (
       <p className="basis-full px-1 text-[11px] text-white/35">
         Shorthand: <span className="text-white/55">6pm</span> · <span className="text-white/55">45m</span> ·{" "}
         <span className="text-white/55">#work</span> · <span className="text-white/55">!high</span> ·{" "}
-        <span className="text-white/55">daily</span>
+        <span className="text-white/55">fri</span> · <span className="text-white/55">daily</span>
       </p>
     );
   return (

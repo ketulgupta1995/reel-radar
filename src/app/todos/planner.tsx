@@ -3,7 +3,8 @@
 // Pieces shared by the day planner, the week view and the stats page.
 
 import { useRef, useState } from "react";
-import { DEFAULT_DURATION, getTodayDate, shiftDate, type Priority, type TagId, type Todo } from "@/lib/todos";
+import { DEFAULT_DURATION, getTodayDate, shiftDate, type Priority, type Todo } from "@/lib/todos";
+import { tagColor } from "@/lib/plannerSettings";
 import { fmtTime } from "@/lib/reminders";
 
 export { fmtTime };
@@ -20,16 +21,6 @@ export const PRIORITY_STYLE: Record<Priority, { dot: string; label: string; bloc
 };
 export const NO_PRIORITY_BLOCK = "border-white/25 bg-white/10";
 const DONE_BLOCK = "border-white/15 bg-[#1b1b27]";
-
-// Categorical colours in a fixed order, checked for colour-blind separation and 3:1 contrast on `panel`.
-export const TAG_COLORS: Record<TagId, string> = {
-  work: "#3987e5",
-  home: "#d95926",
-  health: "#199e70",
-  personal: "#c98500",
-  learning: "#d55181",
-  errands: "#008300",
-};
 
 export const DAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"];
 export const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -51,6 +42,19 @@ export function getRelativeDateLabel(dateStr: string): string {
   return formatDate(dateStr);
 }
 
+export const DURATIONS = [15, 30, 45, 60, 90, 120, 180, 240];
+export const toInputTime = (mins: number): string =>
+  `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+export const fromInputTime = (v: string): number | null => {
+  const m = /^(\d{2}):(\d{2})$/.exec(v);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+};
+// The same day of a month `n` months away, or that month's last day if it's shorter.
+export function shiftMonth(date: string, n: number): string {
+  const [y, m, d] = date.split("-").map(Number);
+  const last = new Date(y, m - 1 + n + 1, 0);
+  return `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, "0")}-${String(Math.min(d, last.getDate())).padStart(2, "0")}`;
+}
 export const fmtDuration = (mins: number): string =>
   mins % 60 === 0 ? `${mins / 60}h` : mins > 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
 export const snap = (mins: number) => Math.round(mins / SNAP) * SNAP;
@@ -161,7 +165,7 @@ export function TimeBlock({
         height: Math.max((duration / 60) * HOUR_PX - 2, MIN_BLOCK_PX),
         left: `${(lane / lanes) * 100}%`,
         width: `calc(${100 / lanes}% - 3px)`,
-        ...(todo.tag ? { borderLeftColor: TAG_COLORS[todo.tag], borderLeftWidth: 4 } : {}),
+        ...(todo.tag ? { borderLeftColor: tagColor(todo.tag), borderLeftWidth: 4 } : {}),
       }}
       title={`${todo.text} · ${fmtTime(start)}–${fmtTime(start + duration)}${todo.note ? `\n${todo.note}` : ""}`}
     >

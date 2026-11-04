@@ -15,11 +15,11 @@ import {
   type Trend,
   type TrendPoint,
 } from "@/lib/plannerInsights";
-import { TAGS, WATER_GOAL, shiftDate, type DayLog, type TagId, type Todo } from "@/lib/todos";
-import { TAG_COLORS, fmtDuration, formatShortDate } from "../planner";
+import { tagColor, tagLabel } from "@/lib/plannerSettings";
+import { WATER_GOAL, shiftDate, type DayLog, type TagId, type Todo } from "@/lib/todos";
+import { fmtDuration, formatShortDate } from "../planner";
 import { Card, TableToggle, Tip } from "./parts";
 
-const TAG_LABEL = Object.fromEntries(TAGS.map((t) => [t.id, t.label])) as Record<TagId, string>;
 const NO_TAG_COLOR = "rgba(255,255,255,0.35)";
 
 const litres = (ml: number) => `${(ml / 1000).toFixed(1)} L`;
@@ -202,7 +202,7 @@ function Patterns({ patterns }: { patterns: Pattern[] }) {
   );
 }
 
-const tagName = (tag: TagId | null) => (tag ? `${TAG_LABEL[tag]} tasks` : "Untagged tasks");
+const tagName = (tag: TagId | null) => (tag ? `${tagLabel(tag)} tasks` : "Untagged tasks");
 
 function fitHeadline(f: TimeFit): string {
   if (Math.abs(f.overBy) < FIT_TOLERANCE) return `${tagName(f.tag)} run about as planned`;
@@ -230,7 +230,7 @@ export function TimeFitCard({ days, from, today }: { days: Days; from: string; t
             {fits.map((f) => (
               <li key={f.tag ?? "none"} className="text-sm">
                 <div className="flex flex-wrap items-baseline gap-x-2">
-                  <span className="h-2 w-2 shrink-0 self-center rounded-full" style={{ background: f.tag ? TAG_COLORS[f.tag] : NO_TAG_COLOR }} />
+                  <span className="h-2 w-2 shrink-0 self-center rounded-full" style={{ background: f.tag ? tagColor(f.tag) : NO_TAG_COLOR }} />
                   <span className="font-medium">{fitHeadline(f)}</span>
                   <span className="text-xs text-white/50">
                     {f.tasks} tasks
@@ -246,7 +246,7 @@ export function TimeFitCard({ days, from, today }: { days: Days; from: string; t
           </ul>
           <TableToggle
             head={["Tag", "Tasks", "Planned", "Actual", "Difference"]}
-            rows={fits.map((f) => [f.tag ? TAG_LABEL[f.tag] : "No tag", f.tasks, fmtDuration(f.planned), fmtDuration(f.actual), `${f.overBy > 0 ? "+" : ""}${f.overBy}%`])}
+            rows={fits.map((f) => [f.tag ? tagLabel(f.tag) : "No tag", f.tasks, fmtDuration(f.planned), fmtDuration(f.actual), `${f.overBy > 0 ? "+" : ""}${f.overBy}%`])}
           />
         </>
       )}

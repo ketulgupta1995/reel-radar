@@ -1,6 +1,7 @@
 "use client";
 
 import { listsBackup, mergeById, restoreLists, syncLists, type ListsBackup } from "@/lib/lists";
+import { restoreSettings, settingsBackup, type SettingsBackup } from "@/lib/plannerSettings";
 import {
   getTodayDate,
   loadAllDayLogs,
@@ -16,18 +17,20 @@ import {
   type Todo,
 } from "@/lib/todos";
 
-// The planner's backup file: every day's tasks, the repeating tasks, the day log and the lists.
+// The planner's backup file: every day's tasks, the repeating tasks, the day log, the lists, and
+// the tags and day templates.
 // Photos and voice notes stay on the server; list items hold references to them.
 
 export type PlannerBackup = {
   app: "planner";
-  version: 3;
+  version: 4;
   days: Record<string, Todo[]>;
   daily: DailyTask[];
   log: Record<string, DayLog>;
   lists: ListsBackup;
+  settings: SettingsBackup;
 };
-export type PlannerImport = { todos: number; days: number; daily: number; logs: number; lists: number; items: number };
+export type PlannerImport = { todos: number; days: number; daily: number; logs: number; lists: number; items: number; tags: number; templates: number };
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -37,11 +40,12 @@ export async function exportPlanner(): Promise<{ synced: boolean }> {
   const pulled = await Promise.all([syncAllPlanner(), syncLists()]);
   const backup: PlannerBackup = {
     app: "planner",
-    version: 3,
+    version: 4,
     days: loadAllTodos(),
     daily: loadDailyTasks(),
     log: loadAllDayLogs(),
     lists: listsBackup(),
+    settings: settingsBackup(),
   };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -114,6 +118,7 @@ export async function importPlanner(file: File): Promise<PlannerImport> {
   if (daily.length) saveDailyTasks(mergeById(loadDailyTasks(), daily));
   for (const [date, log] of logs) updateDayLog(date, cleanDayLog(log));
   const { lists, items } = restoreLists(p.lists);
+  const { tags, templates } = restoreSettings(p.settings);
   return {
     todos: Object.values(days).reduce((n, t) => n + t.length, 0),
     days: Object.values(days).filter((t) => t.length > 0).length,
@@ -121,5 +126,7 @@ export async function importPlanner(file: File): Promise<PlannerImport> {
     logs: logs.length,
     lists,
     items,
+    tags,
+    templates,
   };
 }

@@ -1,5 +1,5 @@
 import { ConflictError, readDoc, writeDoc, type ReadResult } from "@/lib/docStore";
-import { DEFAULT_DURATION, REMINDER_LEADS, dueReminders, missingDailyTasks, reminderBody, reminderKey } from "@/lib/reminders";
+import { DEFAULT_DURATION, REMINDER_LEADS, dueReminders, missingDailyTasks, reminderBody, reminderKey, weekOf } from "@/lib/reminders";
 import { same } from "@/lib/syncDocs";
 import { sendPush, vapidConfig, type PushTarget } from "@/lib/webPush";
 import type { DailyTask, Todo } from "@/lib/todos";
@@ -105,7 +105,11 @@ const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0
 // the planner is opened, so a day nobody opened yet still has to count those tasks.
 function dayTodos(month: { date: string; pos: number; todo: Todo }[], daily: DailyTask[], date: string): Todo[] {
   const todos = month.filter((i) => i.date === date).sort((a, b) => a.pos - b.pos).map((i) => i.todo);
-  const copies = missingDailyTasks(daily, todos, date)
+  // A week can start in the previous month, which isn't read here. At worst a "times a week" task
+  // reminds once more than it needs to.
+  const doneInWeek = (d: DailyTask) =>
+    weekOf(date).filter((day) => day !== date && (d.doneDates?.includes(day) || month.some((i) => i.date === day && i.todo.dailyId === d.id && i.todo.completed))).length;
+  const copies = missingDailyTasks(daily, todos, date, doneInWeek)
     .filter((d) => d.start !== undefined)
     .map((d): Todo => ({
       id: `${d.id}:${date}`, // the id the planner gives this day's copy (loadTodosWithDaily)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeLogTrends, computePatterns, computeTimeFit, reviewWeek, sleepHours, suggestBlockLength } from "./plannerInsights";
+import { computeLogTrends, computeMonth, computePatterns, computeTimeFit, heatLevel, reviewWeek, sleepHours, suggestBlockLength } from "./plannerInsights";
 import type { DayLog, Todo } from "./todos";
 
 const todo = (id: string, extra: Partial<Todo> = {}): Todo => ({ id, text: id, completed: false, createdAt: "", ...extra });
@@ -162,5 +162,39 @@ describe("reviewWeek", () => {
     const w = reviewWeek("2026-03-11"); // a Wednesday
     expect(w).toMatchObject({ start: "2026-03-02", end: "2026-03-08" });
     expect(w.next).toEqual(["2026-03-11", "2026-03-12", "2026-03-13", "2026-03-14", "2026-03-15"]);
+  });
+});
+
+describe("computeMonth", () => {
+  it("lists every day, totals what was finished and finds the best day", () => {
+    const m = computeMonth(
+      {
+        "2026-02-03": [todo("a", { completed: true }), todo("b")],
+        "2026-02-10": [todo("c", { completed: true }), todo("d", { completed: true })],
+        "2026-03-01": [todo("e", { completed: true })],
+      },
+      [],
+      "2026-02"
+    );
+    expect(m.days).toHaveLength(28);
+    expect(m.days[2]).toEqual({ date: "2026-02-03", done: 1, total: 2 });
+    expect(m).toMatchObject({ done: 3, activeDays: 2, best: { date: "2026-02-10", done: 2 } });
+  });
+
+  it("counts a repeating task's cleared copy, once", () => {
+    const daily = [{ id: "d", text: "Run", startDate: "2026-01-01", doneDates: ["2026-02-05", "2026-02-06"] }];
+    const m = computeMonth({ "2026-02-06": [todo("copy", { dailyId: "d", completed: true })] }, daily, "2026-02");
+    expect(m.days[4]).toMatchObject({ done: 1, total: 1 });
+    expect(m.days[5]).toMatchObject({ done: 1, total: 1 });
+  });
+
+  it("has no best day in an empty month", () => {
+    expect(computeMonth({}, [], "2026-02")).toMatchObject({ done: 0, activeDays: 0, best: null });
+  });
+});
+
+describe("heatLevel", () => {
+  it("uses fixed steps", () => {
+    expect([0, 1, 2, 3, 4, 5, 7, 8, 30].map(heatLevel)).toEqual([0, 1, 1, 2, 2, 3, 3, 4, 4]);
   });
 });

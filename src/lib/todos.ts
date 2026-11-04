@@ -3,23 +3,16 @@
 import { useEffect } from "react";
 import { merge3 } from "@/lib/syncDocs";
 import { SYNC_EVENT, markDirty, registerDocs, syncKeys, watchKeys } from "@/lib/sync";
-import { DEFAULT_DURATION, missingDailyTasks, repeatsOn, weekday } from "@/lib/reminders";
+import { DEFAULT_DURATION, missingDailyTasks, repeatsOn, weekOf, weekday, type RepeatRule } from "@/lib/reminders";
+import { SETTINGS_DOC, loadTemplates, saveTemplate, type TemplateItem } from "@/lib/plannerSettings";
 
-export { DEFAULT_DURATION, dueReminders, repeatsOn, weekday } from "@/lib/reminders";
+export { DEFAULT_DURATION, dueReminders, repeatsOn, weekday, type RepeatRule } from "@/lib/reminders";
 
 export type Priority = "high" | "medium" | "low";
 
 export type Subtask = { id: string; text: string; done: boolean; doneAt?: number }; // doneAt: when it was ticked (ms since epoch)
 
-export type TagId = "work" | "home" | "health" | "personal" | "learning" | "errands";
-export const TAGS: { id: TagId; label: string }[] = [
-  { id: "work", label: "Work" },
-  { id: "home", label: "Home" },
-  { id: "health", label: "Health" },
-  { id: "personal", label: "Personal" },
-  { id: "learning", label: "Learning" },
-  { id: "errands", label: "Errands" },
-];
+export type TagId = string; // a built-in tag or one the user added; see lib/plannerSettings.ts
 
 export type Todo = {
   id: string;
@@ -51,6 +44,9 @@ export type DailyTask = {
   duration?: number;
   startDate: string; // first day it appears
   days?: number[]; // weekdays it repeats on (0 = Sunday); unset means every day
+  every?: number; // or every N days from startDate
+  monthDay?: number; // or on this day of each month
+  timesPerWeek?: number; // or any day, until done this many times that week
   subtasks?: string[]; // checklist items each day's copy starts with, unticked
   skipDates?: string[]; // days the user removed it from
   doneDates?: string[]; // days whose finished copy was cleared, so streaks still count them
@@ -231,7 +227,7 @@ export function addTodo(
   date?: string,
   priority?: Priority,
   schedule?: Schedule,
-  daily?: boolean | number[], // true = every day, or the weekdays to repeat on
+  daily?: boolean | number[] | RepeatRule, // true = every day, the weekdays to repeat on, or any other rule
   note?: string,
   tag?: TagId
 ): Todo[] {
@@ -247,8 +243,11 @@ export function addTodo(
     ...(schedule ? { start: schedule.start, duration: schedule.duration ?? DEFAULT_DURATION } : {}),
   };
   if (daily) {
-    const task = templateFrom(newTodo, date || getTodayDate(), Array.isArray(daily) ? daily : undefined);
+    const rule = daily === true ? {} : Array.isArray(daily) ? { days: daily } : daily;
+    const task = templateFrom(newTodo, date || getTodayDate(), rule);
     saveDailyTasks([...loadDailyTasks(), task]);
+    // "Pay rent on the 1st", added on the 15th, has nothing to do today.
+    if (rule.monthDay && !repeatsOn(task, date || getTodayDate())) return todos;
     newTodo.dailyId = task.id;
   }
   const updated = [...todos, newTodo];
@@ -450,13 +449,25 @@ function updateDailyTask(id: string, change: (task: DailyTask) => DailyTask): vo
   saveDailyTasks(tasks.map((t) => (t.id === id ? change(t) : t)));
 }
 
-function templateFrom(todo: Todo, startDate: string, days?: number[]): DailyTask {
-  const repeatDays = normalizeDays(days);
+// At most one kind of repeat, with sane numbers; every day is the empty rule.
+export function normalizeRepeat(rule: RepeatRule = {}): RepeatRule {
+  const whole = (n: number | undefined, max: number) => (Number.isInteger(n) && n! >= 1 && n! <= max ? n : undefined);
+  const monthDay = whole(rule.monthDay, 31);
+  if (monthDay) return { monthDay };
+  const every = whole(rule.every, 365);
+  if (every && every > 1) return { every };
+  const timesPerWeek = whole(rule.timesPerWeek, 6);
+  if (timesPerWeek) return { timesPerWeek };
+  const days = normalizeDays(rule.days);
+  return days ? { days } : {};
+}
+
+function templateFrom(todo: Todo, startDate: string, rule?: RepeatRule): DailyTask {
   return {
     id: crypto.randomUUID(),
     text: todo.text,
     startDate,
-    ...(repeatDays ? { days: repeatDays } : {}),
+    ...normalizeRepeat(rule),
     ...(todo.note ? { note: todo.note } : {}),
     ...(todo.subtasks?.length ? { subtasks: todo.subtasks.map((st) => st.text) } : {}),
     ...(todo.priority ? { priority: todo.priority } : {}),
@@ -485,7 +496,7 @@ function syncDailyFrom(todo: Todo | undefined): void {
 // Load a day's todos, adding that day's copy of every daily task it is missing.
 export function loadTodosWithDaily(date: string): Todo[] {
   const todos = loadTodos(date);
-  const missing = missingDailyTasks(loadDailyTasks(), todos, date);
+  const missing = missingDailyTasks(loadDailyTasks(), todos, date, (d) => timesDone(d, date, date));
   if (missing.length === 0) return todos;
   const updated = [
     ...todos,
@@ -509,12 +520,20 @@ export function loadTodosWithDaily(date: string): Todo[] {
   return updated;
 }
 
-// Turn an existing todo into a daily task, starting on `date` (every day, or only on `days`).
-export function makeTodoDaily(id: string, date: string, days?: number[]): Todo[] {
+const doneOn = (task: DailyTask, day: string) =>
+  task.doneDates?.includes(day) || loadTodos(day).some((t) => t.dailyId === task.id && t.completed);
+
+// How many days of the week containing `date` a task was done, not counting `except`.
+export function timesDone(task: DailyTask, date: string, except?: string): number {
+  return weekOf(date).filter((day) => day !== except && doneOn(task, day)).length;
+}
+
+// Turn an existing todo into a daily task, starting on `date` (every day, or by a rule).
+export function makeTodoDaily(id: string, date: string, repeat?: number[] | RepeatRule): Todo[] {
   const todos = loadTodos(date);
   const todo = todos.find((t) => t.id === id);
   if (!todo || todo.dailyId) return todos;
-  const task = templateFrom(todo, date, days);
+  const task = templateFrom(todo, date, Array.isArray(repeat) ? { days: repeat } : repeat);
   saveDailyTasks([...loadDailyTasks(), task]);
   const updated = todos.map((t) => (t.id === id ? { ...t, dailyId: task.id } : t));
   saveTodos(updated, date);
@@ -541,15 +560,23 @@ export function stopTodoDaily(id: string, date: string): Todo[] {
 // Change which weekdays a daily task repeats on (undefined or all seven = every day).
 // Unfinished copies already created after `date` on days it no longer repeats on are removed.
 export function setTodoRepeatDays(id: string, days: number[] | undefined, date: string): Todo[] {
+  return setTodoRepeat(id, { days }, date);
+}
+
+// Change how a daily task repeats. "Every N days" starts counting from `date`. Unfinished copies
+// already created after `date` on days it no longer falls on are removed.
+export function setTodoRepeat(id: string, rule: RepeatRule, date: string): Todo[] {
   const todos = loadTodos(date);
   const dailyId = todos.find((t) => t.id === id)?.dailyId;
   if (!dailyId) return todos;
-  const repeatDays = normalizeDays(days);
+  const next = normalizeRepeat(rule);
+  let updated: DailyTask | undefined;
   updateDailyTask(dailyId, (d) => {
-    const { days: _d, ...rest } = d;
-    return repeatDays ? { ...rest, days: repeatDays } : rest;
+    const { days: _d, every: _e, monthDay: _m, timesPerWeek: _t, ...rest } = d;
+    updated = { ...rest, ...next, ...(next.every ? { startDate: date } : {}) };
+    return updated;
   });
-  if (repeatDays) removeFutureCopies(dailyId, date, (day) => repeatDays.includes(weekday(day)));
+  if (updated) removeFutureCopies(dailyId, date, (day) => repeatsOn(updated!, day));
   return todos;
 }
 
@@ -568,10 +595,17 @@ export function getDailyStreak(dailyId: string, date: string): number {
   const task = loadDailyTasks().find((d) => d.id === dailyId);
   if (!task) return 0;
   let streak = 0;
+  if (task.timesPerWeek) {
+    // Weeks in a row that met the target. This week can still get there, so it doesn't break it.
+    for (let day = date; weekOf(day)[6] >= task.startDate; day = shiftDate(day, -7)) {
+      if (timesDone(task, day) >= task.timesPerWeek) streak++;
+      else if (day !== date) break;
+    }
+    return streak;
+  }
   for (let day = date; day >= task.startDate; day = shiftDate(day, -1)) {
     if (!repeatsOn(task, day)) continue;
-    const done =
-      task.doneDates?.includes(day) || loadTodos(day).some((t) => t.dailyId === dailyId && t.completed);
+    const done = doneOn(task, day);
     if (done) streak++;
     else if (task.skipDates?.includes(day) || day === date) continue;
     else break;
@@ -767,9 +801,51 @@ export function loadAllTodos(): Record<string, Todo[]> {
   return Object.fromEntries(getAllStoredDates().map((date) => [date, loadTodos(date)]));
 }
 
+// ---------------- Day templates ----------------
+
+// Save a day's one-off tasks as a named layout. Repeating tasks are left out: they arrive on their
+// own. Resolves to how many tasks were saved; nothing is saved for a day with none.
+export function saveDayAsTemplate(name: string, date: string): number {
+  const items: TemplateItem[] = loadTodos(date)
+    .filter((t) => !t.dailyId)
+    .map((t) => ({
+      text: t.text,
+      ...(t.note ? { note: t.note } : {}),
+      ...(t.priority ? { priority: t.priority } : {}),
+      ...(t.tag ? { tag: t.tag } : {}),
+      ...(t.start !== undefined ? { start: t.start, duration: t.duration ?? DEFAULT_DURATION } : {}),
+      ...(t.subtasks?.length ? { subtasks: t.subtasks.map((s) => s.text) } : {}),
+    }));
+  if (items.length) saveTemplate(name, items);
+  return items.length;
+}
+
+// Add a template's tasks to a day as new, unfinished tasks. One already there at the same time is
+// skipped, so applying twice doesn't double up.
+export function applyTemplate(id: string, date: string): { todos: Todo[]; added: number } {
+  const todos = loadTodos(date);
+  const items = loadTemplates().find((t) => t.id === id)?.items ?? [];
+  const fresh = items
+    .filter((i) => !todos.some((t) => t.text === i.text && t.start === i.start))
+    .map((i): Todo => ({
+      id: crypto.randomUUID(),
+      text: i.text,
+      completed: false,
+      createdAt: new Date().toISOString(),
+      ...(i.note ? { note: i.note } : {}),
+      ...(i.priority ? { priority: i.priority } : {}),
+      ...(i.tag ? { tag: i.tag } : {}),
+      ...(i.start !== undefined ? { start: i.start, duration: i.duration ?? DEFAULT_DURATION } : {}),
+      ...(i.subtasks?.length ? { subtasks: i.subtasks.map((text) => ({ id: crypto.randomUUID(), text, done: false })) } : {}),
+    }));
+  const updated = [...todos, ...fresh];
+  if (fresh.length) saveTodos(updated, date);
+  return { todos: updated, added: fresh.length };
+}
+
 // ---------------- Sync ----------------
 
-const plannerKeys = (months: string[]) => [DAILY_DOC, LOG_DOC, ...Array.from(new Set(months)).map(monthDocKey)];
+const plannerKeys = (months: string[]) => [DAILY_DOC, LOG_DOC, SETTINGS_DOC, ...Array.from(new Set(months)).map(monthDocKey)];
 
 // Months from PLANNER_EPOCH through a few months ahead, for views that need every day.
 function allMonths(): string[] {

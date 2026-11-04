@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AppSwitcher } from "@/components/AppSwitcher";
-import { loadAllDayLogs, loadAllTodos, syncAllPlanner, getTodayDate, shiftDate, TAGS, type DayLog, type TagId, type Todo } from "@/lib/todos";
+import { loadAllDayLogs, loadAllTodos, syncAllPlanner, getTodayDate, shiftDate, type DayLog, type Todo } from "@/lib/todos";
+import { tagColor, tagLabel, useTags } from "@/lib/plannerSettings";
 import { computePlannerStats, type PlannerStats } from "@/lib/plannerStats";
 import { bucketDate, usageByDay, type UsageBucket } from "@/lib/usageStats";
-import { DAY_NAMES, TAG_COLORS, fmtDuration, formatShortDate } from "../planner";
+import { DAY_NAMES, fmtDuration, formatShortDate } from "../planner";
 import { Card, TableToggle, Tip } from "./parts";
 import { DayLogInsights, TimeFitCard } from "./insights";
 
@@ -17,7 +18,6 @@ const RANGES: { id: Range; label: string }[] = [
   { id: "90", label: "90 days" },
   { id: "all", label: "All time" },
 ];
-const TAG_LABEL = Object.fromEntries(TAGS.map((t) => [t.id, t.label])) as Record<TagId, string>;
 const NO_TAG_COLOR = "rgba(255,255,255,0.35)";
 
 const pct = (done: number, total: number) => (total ? Math.round((done / total) * 100) : 0);
@@ -29,6 +29,7 @@ export default function PlannerStatsPage() {
   const [range, setRange] = useState<Range>("30");
   const [usage, setUsage] = useState<UsageBucket[] | null>(null);
   const [offline, setOffline] = useState(false);
+  useTags(); // redraw when a tag's name changes
 
   // Show this browser's copy at once, then every month from the server (mostly unchanged, so cheap).
   useEffect(() => {
@@ -193,8 +194,8 @@ function TagChart({ stats }: { stats: PlannerStats }) {
     <Card title="Tasks by tag" sub="Bar length is tasks; the filled part is how many got done">
       <ul className="space-y-2.5">
         {stats.byTag.map((t) => {
-          const color = t.tag ? TAG_COLORS[t.tag] : NO_TAG_COLOR;
-          const label = t.tag ? TAG_LABEL[t.tag] : "No tag";
+          const color = t.tag ? tagColor(t.tag) : NO_TAG_COLOR;
+          const label = t.tag ? tagLabel(t.tag) : "No tag";
           return (
             <li key={t.tag ?? "none"} className="grid grid-cols-[5.5rem_1fr_3.5rem] items-center gap-3 text-xs">
               <span className="flex items-center gap-1.5 truncate text-white/75">
@@ -230,7 +231,7 @@ function TagChart({ stats }: { stats: PlannerStats }) {
       </ul>
       <TableToggle
         head={["Tag", "Done", "Tasks", "Rate"]}
-        rows={stats.byTag.map((t) => [t.tag ? TAG_LABEL[t.tag] : "No tag", t.done, t.total, `${pct(t.done, t.total)}%`])}
+        rows={stats.byTag.map((t) => [t.tag ? tagLabel(t.tag) : "No tag", t.done, t.total, `${pct(t.done, t.total)}%`])}
       />
     </Card>
   );

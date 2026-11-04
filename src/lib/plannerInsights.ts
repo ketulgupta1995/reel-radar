@@ -1,4 +1,4 @@
-import { DEFAULT_DURATION, WATER_GOAL, shiftDate, weekday, type DayLog, type TagId, type Todo } from "./todos";
+import { DEFAULT_DURATION, WATER_GOAL, shiftDate, weekday, type DailyTask, type DayLog, type TagId, type Todo } from "./todos";
 import { weekStart } from "./plannerStats";
 
 // What the day log and the focus timer say when set against the tasks. Pure, like plannerStats.
@@ -190,4 +190,35 @@ export function reviewWeek(today: string): { start: string; end: string; next: s
     end,
     next: dateRange(shiftDate(end, 1), shiftDate(end, 7)).filter((d) => d >= today),
   };
+}
+
+// ---------------- Month view ----------------
+
+export type MonthDay = { date: string; done: number; total: number };
+export type MonthSummary = { days: MonthDay[]; done: number; activeDays: number; best: MonthDay | null };
+
+// Each day of a month (YYYY-MM): tasks finished and planned. A repeating task's finished copy that
+// was cleared away still counts, through its doneDates.
+export function computeMonth(days: Days, daily: DailyTask[], month: string): MonthSummary {
+  const [y, m] = month.split("-").map(Number);
+  const count = new Date(y, m, 0).getDate();
+  const list = Array.from({ length: count }, (_, i): MonthDay => {
+    const date = `${month}-${String(i + 1).padStart(2, "0")}`;
+    const tasks = days[date] ?? [];
+    const cleared = daily.filter((d) => d.doneDates?.includes(date) && !tasks.some((t) => t.dailyId === d.id)).length;
+    const done = tasks.filter((t) => t.completed).length + cleared;
+    return { date, done, total: tasks.length + cleared };
+  });
+  const active = list.filter((d) => d.done > 0);
+  return {
+    days: list,
+    done: list.reduce((n, d) => n + d.done, 0),
+    activeDays: active.length,
+    best: active.reduce<MonthDay | null>((top, d) => (!top || d.done > top.done ? d : top), null),
+  };
+}
+
+// How a count of finished tasks shows on the heatmap: fixed steps, so months can be compared.
+export function heatLevel(done: number): 0 | 1 | 2 | 3 | 4 {
+  return done <= 0 ? 0 : done <= 2 ? 1 : done <= 4 ? 2 : done <= 7 ? 3 : 4;
 }

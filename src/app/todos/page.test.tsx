@@ -323,10 +323,10 @@ describe("adding tasks", () => {
     fireEvent.change(screen.getByLabelText("Duration"), { target: { value: "90" } });
     fireEvent.click(screen.getByTitle("Add a description"));
     fireEvent.change(screen.getByPlaceholderText("Description (optional)"), { target: { value: "Q3 numbers" } });
-    fireEvent.click(screen.getByTitle("Repeat this task every day"));
+    fireEvent.click(screen.getByTitle("Repeat this task"));
     fireEvent.click(screen.getByLabelText("Sun"));
     fireEvent.click(screen.getByLabelText("Sat"));
-    expect(screen.getByTitle("Repeat this task every day").textContent).toBe("↻ Weekdays");
+    expect(screen.getByTitle("Repeat this task").textContent).toBe("↻ Weekdays");
     fireEvent.click(screen.getByText("Add"));
 
     const [t] = loadTodos(T);
@@ -939,6 +939,307 @@ describe("reminders", () => {
     await waitFor(() => expect(FakeNotification.sent).toHaveLength(1));
     expect(FakeNotification.sent[0].title).toBe("Meeting");
     expect(FakeNotification.sent[0].body).toMatch(/^In \d+ min · .*\nroom 4$/);
+  });
+});
+
+describe("flexible repeats", () => {
+  const openRepeat = () => fireEvent.click(screen.getByTitle("Repeat this task"));
+
+  it("adds a task every few days", () => {
+    render(<TodosPage />);
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done today?"), { target: { value: "Water plants" } });
+    openRepeat();
+    fireEvent.change(screen.getByLabelText("How it repeats"), { target: { value: "every" } });
+    fireEvent.change(screen.getByLabelText("Every how many days"), { target: { value: "5" } });
+    expect(screen.getByTitle("Repeat this task").textContent).toBe("↻ Every 5 days");
+    fireEvent.click(screen.getByText("Add"));
+    expect(loadDailyTasks()[0]).toMatchObject({ text: "Water plants", every: 5 });
+  });
+
+  it("adds a times-a-week task and shows progress toward it", () => {
+    render(<TodosPage />);
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done today?"), { target: { value: "Run" } });
+    openRepeat();
+    fireEvent.change(screen.getByLabelText("How it repeats"), { target: { value: "timesPerWeek" } });
+    fireEvent.change(screen.getByLabelText("Times a week"), { target: { value: "4" } });
+    fireEvent.click(screen.getByText("Add"));
+    expect(loadDailyTasks()[0]).toMatchObject({ timesPerWeek: 4 });
+    expect(screen.getByTitle("Choose how it repeats").textContent).toBe("↻ 4× a week · 0/4");
+    fireEvent.click(screen.getByLabelText(/Mark.*Run.*done|Complete/i, { selector: "input,button" }));
+    expect(screen.getByTitle("Choose how it repeats").textContent).toBe("↻ 4× a week · 1/4");
+  });
+
+  it("adds a monthly task due another day without cluttering today, and says so", async () => {
+    const dom = Number(T.slice(8));
+    const other = dom === 1 ? 2 : 1;
+    render(<TodosPage />);
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done today?"), { target: { value: "Pay rent" } });
+    openRepeat();
+    fireEvent.change(screen.getByLabelText("How it repeats"), { target: { value: "monthDay" } });
+    fireEvent.change(screen.getByLabelText("Day of the month"), { target: { value: String(other) } });
+    fireEvent.click(screen.getByText("Add"));
+    expect(await flashed(/Monthly on the (1st|2nd)\. Nothing to do until then\./)).toBeTruthy();
+    expect(loadTodos(T)).toEqual([]);
+    expect(loadDailyTasks()[0]).toMatchObject({ monthDay: other });
+    openRepeat();
+    fireEvent.change(screen.getByLabelText("How it repeats"), { target: { value: "monthDay" } });
+    fireEvent.change(screen.getByLabelText("Day of the month"), { target: { value: "31" } });
+    expect(screen.getByText("Shorter months use their last day.")).toBeTruthy();
+  });
+
+  it("changes an existing repeating task's rule and marks weekly streaks", () => {
+    addTodo("Yoga", T, undefined, undefined, true);
+    render(<TodosPage />);
+    fireEvent.click(screen.getByTitle("Choose how it repeats"));
+    fireEvent.change(screen.getByLabelText("How it repeats"), { target: { value: "every" } });
+    expect(loadDailyTasks()[0]).toMatchObject({ every: 2 });
+    expect(screen.getByTitle("Choose how it repeats").textContent).toBe("↻ Every 2 days");
+    fireEvent.change(screen.getByLabelText("How it repeats"), { target: { value: "days" } });
+    expect(loadDailyTasks()[0].every).toBeUndefined();
+    fireEvent.click(screen.getByLabelText("Sun"));
+    expect(loadDailyTasks()[0].days).toEqual([1, 2, 3, 4, 5, 6]);
+    fireEvent.click(screen.getByLabelText("Sun"));
+    expect(loadDailyTasks()[0].days).toBeUndefined();
+  });
+});
+
+describe("dates in the add box", () => {
+  it("previews the date and repeat before anything is added", () => {
+    render(<TodosPage />);
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done today?"), { target: { value: "Pay rent on the 1st" } });
+    expect(screen.getByTestId("quick-add-preview").textContent).toContain("↻ Monthly on the 1st");
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done today?"), { target: { value: "Dentist tomorrow" } });
+    expect(screen.getByTestId("quick-add-preview").textContent).toContain("📅");
+  });
+
+  it("adds to the named day, pulling its month first, and stays on this day", async () => {
+    const tomorrow = shiftDate(T, 1);
+    fetch = routeFetch();
+    render(<TodosPage />);
+    await waitFor(() => expect(requests(fetch, "/api/sync").length).toBeGreaterThan(0));
+    fetch.mockClear();
+    const input = screen.getByPlaceholderText("What needs to be done today?");
+    fireEvent.change(input, { target: { value: "Dentist tomorrow 3pm #health" } });
+    fireEvent.click(screen.getByText("Add"));
+    expect((input as HTMLInputElement).value).toBe(""); // cleared at once, so Enter twice can't double it
+    expect(await flashed(/^Added to /)).toBeTruthy();
+    expect(loadTodos(tomorrow)[0]).toMatchObject({ text: "Dentist", start: 15 * 60, tag: "health" });
+    expect(loadTodos(T)).toEqual([]);
+    expect(screen.queryByText("Dentist", { selector: "p" })).toBeNull();
+  });
+});
+
+describe("templates and tags", () => {
+  it("saves a day as a template and applies it to another day", async () => {
+    saveTodos([todo("Standup", { start: 570, duration: 15 })], T);
+    render(<TodosPage />);
+    fireEvent.click(screen.getByText(/^templates/));
+    expect(screen.getByText(/Save a day's tasks and times as a layout/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Template name"), { target: { value: "Workday" } });
+    fireEvent.click(screen.getByText("Save"));
+    expect(await flashed("Saved “Workday” with 1 task")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Next day"));
+    await screen.findByPlaceholderText(/Add a task for/);
+    fireEvent.click(screen.getByLabelText("Apply “Workday”"));
+    expect(await flashed("Added 1 task from “Workday”")).toBeTruthy();
+    expect(loadTodos(shiftDate(T, 1))[0]).toMatchObject({ text: "Standup", start: 570 });
+    fireEvent.click(screen.getByLabelText("Apply “Workday”"));
+    expect(await flashed("Everything in “Workday” is already on this day")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Delete “Workday”"));
+    fireEvent.click(screen.getByText("Delete it?"));
+    expect(screen.queryByText("Workday")).toBeNull();
+    fireEvent.click(screen.getByText(/^templates/));
+    expect(screen.queryByLabelText("Template name")).toBeNull();
+  });
+
+  it("explains when there's nothing to save, and ignores a blank name", async () => {
+    render(<TodosPage />);
+    fireEvent.click(screen.getByText(/^templates/));
+    fireEvent.submit(screen.getByLabelText("Template name"));
+    fireEvent.change(screen.getByLabelText("Template name"), { target: { value: "Empty" } });
+    fireEvent.click(screen.getByText("Save"));
+    expect(await flashed("This day has no one-off tasks to save")).toBeTruthy();
+  });
+
+  it("adds, renames and removes tags, and shows them everywhere", async () => {
+    saveTodos([todo("Task", { tag: "work" })], T);
+    render(<TodosPage />);
+    fireEvent.click(screen.getByText(/^tags/));
+    fireEvent.change(screen.getByLabelText("Rename Work"), { target: { value: "Job" } });
+    fireEvent.blur(screen.getByLabelText("Rename Work"));
+    await waitFor(() => expect(inItem("Task").getAllByText("Job").length).toBeGreaterThan(0));
+
+    fireEvent.change(screen.getByLabelText("New tag"), { target: { value: "Deep work" } });
+    fireEvent.click(screen.getAllByText("Add").find((b) => b.closest("form")?.querySelector('[aria-label="New tag"]'))!);
+    expect(await screen.findByLabelText("Rename Deep work")).toBeTruthy();
+    expect((screen.getByLabelText("New tag") as HTMLInputElement).value).toBe("");
+
+    // Offered in the add box, by shorthand too.
+    const input = screen.getByPlaceholderText("What needs to be done today?");
+    fireEvent.change(input, { target: { value: "Write #deepwork" } });
+    expect(screen.getByTestId("quick-add-preview").textContent).toContain("Deep work");
+    fireEvent.change(input, { target: { value: "" } });
+
+    // A removed tag stops being offered but stays on its task.
+    fireEvent.click(screen.getByLabelText("Remove Job"));
+    await waitFor(() => expect(screen.queryByLabelText("Rename Job")).toBeNull());
+    expect(inItem("Task").getAllByText("Job").length).toBeGreaterThan(0);
+  });
+
+  it("refuses a duplicate name or an empty one, keeping the old name", async () => {
+    render(<TodosPage />);
+    fireEvent.click(screen.getByText(/^tags/));
+    fireEvent.change(screen.getByLabelText("New tag"), { target: { value: "home" } });
+    fireEvent.submit(screen.getByLabelText("New tag"));
+    expect(await flashed("There's already a home tag")).toBeTruthy();
+    const work = screen.getByLabelText("Rename Work") as HTMLInputElement;
+    fireEvent.change(work, { target: { value: "Home" } });
+    fireEvent.keyDown(work, { key: "Enter" });
+    fireEvent.blur(work);
+    expect(await flashed("There's already a Home tag")).toBeTruthy();
+    expect(work.value).toBe("Work");
+  });
+});
+
+describe("auto-schedule", () => {
+  const hours = (h: number) => `${String(h).padStart(2, "0")}:00`;
+  // Tomorrow, so the current time doesn't limit the plan.
+  const D = shiftDate(T, 1);
+  const open = async () => {
+    render(<TodosPage />);
+    fireEvent.click(screen.getByLabelText("Next day"));
+    await screen.findByPlaceholderText(/Add a task for/);
+  };
+
+  it("proposes blocks by priority, lets them be changed, and saves only on apply", async () => {
+    updateDayLog(D, { wake: hours(9), sleep: hours(21) });
+    saveTodos([todo("Low one", { priority: "low" }), todo("Top one", { priority: "high", duration: 30 }), todo("Busy", { start: 9 * 60 + 30, duration: 60 }), todo("Drop me")], D);
+    await open();
+    fireEvent.click(screen.getByText("✨ Auto-schedule"));
+    expect(screen.getByRole("region", { name: "Proposed schedule" }).textContent).toContain("between 9 AM and 9 PM");
+    expect((screen.getByLabelText("Start time for “Top one”") as HTMLInputElement).value).toBe("09:00");
+    expect((screen.getByLabelText("Start time for “Low one”") as HTMLInputElement).value).toBe("11:30");
+    expect(loadTodos(D).find((t) => t.id === "Top one")!.start).toBeUndefined(); // nothing saved yet
+
+    fireEvent.change(screen.getByLabelText("Start time for “Low one”"), { target: { value: "15:00" } });
+    fireEvent.change(screen.getByLabelText("Start time for “Low one”"), { target: { value: "" } }); // cleared mid-edit
+    fireEvent.change(screen.getByLabelText("Length of “Low one”"), { target: { value: "90" } });
+    fireEvent.click(screen.getByLabelText("Leave “Drop me” out"));
+    fireEvent.click(screen.getByText("Apply"));
+    expect(await flashed("Scheduled 2 tasks")).toBeTruthy();
+    const saved = loadTodos(D);
+    expect(saved.find((t) => t.id === "Low one")).toMatchObject({ start: 15 * 60, duration: 90 });
+    expect(saved.find((t) => t.id === "Top one")).toMatchObject({ start: 9 * 60, duration: 30 });
+    expect(saved.find((t) => t.id === "Drop me")!.start).toBeUndefined();
+  });
+
+  it("can be cancelled, says what didn't fit, and leaves repeating tasks alone", async () => {
+    updateDayLog(D, { wake: hours(20), sleep: hours(21) });
+    saveTodos([todo("Fits", { duration: 60 }), todo("Too much", { duration: 60 }), todo("Repeats", { dailyId: "d" })], D);
+    await open();
+    fireEvent.click(screen.getByText("✨ Auto-schedule"));
+    expect(screen.getByText("Didn't fit: Too much")).toBeTruthy();
+    expect(screen.getByText(/Left out 1 repeating task/)).toBeTruthy();
+    fireEvent.click(screen.getByText("Cancel"));
+    expect(screen.queryByRole("region", { name: "Proposed schedule" })).toBeNull();
+    expect(loadTodos(D).every((t) => t.start === undefined)).toBe(true);
+  });
+
+  it("isn't offered without something to place, and shows when there's no room", async () => {
+    updateDayLog(D, { wake: hours(23), sleep: hours(23) });
+    saveTodos([todo("Done", { completed: true })], D);
+    await open();
+    expect(screen.queryByText("✨ Auto-schedule")).toBeNull();
+    saveTodos([todo("Done", { completed: true }), todo("Open")], D);
+    fireEvent.click(screen.getByLabelText("Previous day"));
+    await screen.findByPlaceholderText("What needs to be done today?");
+    fireEvent.click(screen.getByLabelText("Next day"));
+    fireEvent.click(await screen.findByText("✨ Auto-schedule"));
+    expect(screen.getByText(/No free time/)).toBeTruthy();
+    expect((screen.getByText("Apply") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("doesn't plan in the past today", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 2, 2, 13, 5));
+    saveTodos([todo("Later")], "2026-03-02");
+    render(<TodosPage />);
+    await waitFor(() => expect(screen.getByText("✨ Auto-schedule")).toBeTruthy());
+    fireEvent.click(screen.getByText("✨ Auto-schedule"));
+    expect((screen.getByLabelText("Start time for “Later”") as HTMLInputElement).value).toBe("13:15");
+    fireEvent.click(screen.getByText("Apply"));
+    expect(loadTodos("2026-03-02")[0].start).toBe(13 * 60 + 15);
+  });
+});
+
+describe("month view", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 2, 15, 12, 0));
+  });
+
+  it("shows finished tasks as a heatmap, with totals, and opens a day on click", async () => {
+    const done = (id: string) => todo(id, { completed: true });
+    saveTodos([done("a"), done("b"), done("c"), done("d"), done("e"), done("f"), done("g"), done("h"), todo("open")], "2026-03-05");
+    saveTodos([done("x")], "2026-03-06");
+    render(<TodosPage />);
+    fireEvent.click(screen.getByText("month"));
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("March 2026");
+    const cell = await screen.findByRole("button", { name: /Mar 5: 8 of 9 tasks finished/ });
+    expect(cell.textContent).toContain("8");
+    expect(screen.getByRole("button", { name: /Mar 6: 1 of 1 task finished/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Mar 7: nothing planned/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Mar 15/ }).getAttribute("aria-current")).toBe("date");
+    expect(screen.getByText("tasks this month").previousElementSibling!.textContent).toBe("9");
+    expect(screen.getByText("of 31")).toBeTruthy();
+    expect(screen.getByText("8 finished")).toBeTruthy();
+    expect(screen.getByText("8+")).toBeTruthy(); // legend
+
+    fireEvent.click(cell);
+    expect(await screen.findByText("h", { selector: "p" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toContain("Mar");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toContain("5");
+  });
+
+  it("moves by month, keeping within shorter months", async () => {
+    vi.setSystemTime(new Date(2026, 0, 31, 12, 0));
+    render(<TodosPage />);
+    fireEvent.click(screen.getByText("month"));
+    fireEvent.click(screen.getByLabelText("Next month"));
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("February 2026");
+    expect((screen.getByLabelText("Pick a date") as HTMLInputElement).value).toBe("2026-02-28");
+    fireEvent.click(screen.getByLabelText("Previous month"));
+    fireEvent.click(screen.getByLabelText("Previous month"));
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("December 2025");
+    expect(await screen.findByText("nothing finished yet")).toBeTruthy();
+  });
+
+  it("switches and steps by keyboard", () => {
+    render(<TodosPage />);
+    fireEvent.keyDown(document.body, { key: "m" });
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("March 2026");
+    fireEvent.keyDown(document.body, { key: "ArrowRight" });
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("April 2026");
+    fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+    fireEvent.keyDown(document.body, { key: "n" });
+    expect(screen.getByPlaceholderText("What needs to be done today?")).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: "m" });
+    fireEvent.keyDown(document.body, { key: "m" });
+    expect(screen.queryByText("of 31")).toBeNull();
+  });
+
+  it("takes in a month that arrives from the server", async () => {
+    routeFetch({
+      "/api/sync": (url, init) => {
+        if (init?.method === "POST") return { etag: '"e"' };
+        return decodeURIComponent(url.search).includes("planner-2026-03")
+          ? { docs: { "planner-2026-03": { etag: '"m"', data: { items: [{ date: "2026-03-02", pos: 0, todo: todo("Remote", { completed: true }), updatedAt: 1 }] } } } }
+          : { docs: {} };
+      },
+    });
+    render(<TodosPage />);
+    fireEvent.click(screen.getByText("month"));
+    expect(await screen.findByRole("button", { name: /Mar 2: 1 of 1 task finished/ })).toBeTruthy();
   });
 });
 

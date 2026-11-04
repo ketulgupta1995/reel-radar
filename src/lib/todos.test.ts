@@ -13,6 +13,11 @@ import {
   addTodo,
   carryOverFromYesterday,
   carryOverdueTo,
+  applyTemplate,
+  normalizeRepeat,
+  saveDayAsTemplate,
+  setTodoRepeat,
+  timesDone,
   getOverdueTodos,
   postponeCount,
   syncPastPlanner,
@@ -49,6 +54,7 @@ import {
   updateTodoText,
 } from "./todos";
 import { flush } from "./sync";
+import { loadTemplates } from "./plannerSettings";
 import { jsonResponse } from "@/test/fixtures";
 
 const D1 = "2026-03-01";
@@ -171,6 +177,162 @@ describe("basic todo operations", () => {
   it("clears completed todos", () => {
     saveTodos([todo("a", { completed: true }), todo("b")], D1);
     expect(clearCompletedTodos(D1).map((t) => t.id)).toEqual(["b"]);
+  });
+});
+
+describe("flexible repeats", () => {
+  const MON = "2026-03-02";
+  const nth = (n: number) => `2026-03-${String(n).padStart(2, "0")}`;
+  const copy = (date: string) => loadTodosWithDaily(date).filter((t) => t.dailyId);
+
+  it("repeats every N days from its first day", () => {
+    addTodo("Water plants", MON, undefined, undefined, { every: 3 });
+    expect(copy(nth(2))).toHaveLength(1);
+    expect(copy(nth(3))).toHaveLength(0);
+    expect(copy(nth(5))).toHaveLength(1);
+    expect(copy("2026-04-01")).toHaveLength(1); // 30 days on, across the month boundary
+    expect(copy("2026-04-02")).toHaveLength(0);
+    expect(copy("2026-02-27")).toHaveLength(0); // before it starts
+  });
+
+  it("keeps counting evenly across a clock change", () => {
+    addTodo("Water", "2026-03-07", undefined, undefined, { every: 2 });
+    expect(copy("2026-03-09")).toHaveLength(1); // US clocks change on the 8th
+    expect(copy("2026-03-10")).toHaveLength(0);
+  });
+
+  it("repeats monthly, using the last day of shorter months", () => {
+    const day = "2026-01-31";
+    addTodo("Close books", day, undefined, undefined, { monthDay: 31 });
+    expect(copy(day)).toHaveLength(1);
+    expect(copy("2026-02-28")).toHaveLength(1);
+    expect(copy("2026-02-27")).toHaveLength(0);
+    expect(copy("2026-03-31")).toHaveLength(1);
+    expect(copy("2026-04-30")).toHaveLength(1);
+    expect(copy("2028-02-29")).toHaveLength(1); // a leap year
+  });
+
+  it("adds nothing today for a monthly task due another day", () => {
+    const out = addTodo("Pay rent", "2026-03-15", undefined, undefined, { monthDay: 1 });
+    expect(out).toEqual([]);
+    expect(loadTodos("2026-03-15")).toEqual([]);
+    expect(loadDailyTasks()[0]).toMatchObject({ text: "Pay rent", monthDay: 1, startDate: "2026-03-15" });
+    expect(copy("2026-04-01").map((t) => t.text)).toEqual(["Pay rent"]);
+    expect(copy("2026-03-01")).toEqual([]); // before it was added
+  });
+
+  it("shows a times-a-week task daily until the target is met, then stops for that week", () => {
+    addTodo("Run", MON, undefined, undefined, { timesPerWeek: 2 });
+    expect(copy(nth(2))).toHaveLength(1);
+    toggleTodo(copy(nth(2))[0].id, nth(2));
+    expect(copy(nth(3))).toHaveLength(1); // once so far
+    expect(copy(nth(4))).toHaveLength(1);
+    toggleTodo(copy(nth(4))[0].id, nth(4));
+    expect(copy(nth(5))).toHaveLength(0); // met
+    expect(copy(nth(8))).toHaveLength(0); // Sunday, the same week
+    expect(copy(nth(9))).toHaveLength(1); // a new Monday
+  });
+
+  it("counts a cleared finished copy toward the target", () => {
+    addTodo("Run", MON, undefined, undefined, { timesPerWeek: 1 });
+    toggleTodo(copy(nth(2))[0].id, nth(2));
+    clearCompletedTodos(nth(2));
+    expect(copy(nth(3))).toHaveLength(0);
+    expect(timesDone(loadDailyTasks()[0], nth(3))).toBe(1);
+  });
+
+  it("counts a streak in weeks for times-a-week tasks", () => {
+    addTodo("Run", MON, undefined, undefined, { timesPerWeek: 1 });
+    const id = loadDailyTasks()[0].id;
+    const finish = (date: string) => toggleTodo(copy(date)[0].id, date);
+    finish(nth(2));
+    finish(nth(10));
+    expect(getDailyStreak(id, nth(11))).toBe(2);
+    expect(getDailyStreak(id, nth(16))).toBe(2); // this week isn't over
+    expect(getDailyStreak(id, nth(23))).toBe(0); // a whole week was missed
+  });
+
+  it("changes the rule, removing later copies that no longer fall on it", () => {
+    addTodo("Water", MON, undefined, undefined, true);
+    const [t] = copy(MON);
+    copy(nth(3));
+    copy(nth(4));
+    setTodoRepeat(t.id, { every: 2 }, MON);
+    expect(loadDailyTasks()[0]).toMatchObject({ every: 2, startDate: MON });
+    expect(loadDailyTasks()[0].days).toBeUndefined();
+    expect(loadTodos(nth(3))).toEqual([]);
+    expect(loadTodos(nth(4))).toHaveLength(1);
+    setTodoRepeat(t.id, { monthDay: 2 }, MON);
+    expect(loadDailyTasks()[0]).toMatchObject({ monthDay: 2 });
+    expect(loadDailyTasks()[0].every).toBeUndefined();
+    expect(setTodoRepeat("nope", {}, MON)).toHaveLength(1);
+  });
+
+  it("re-anchors every N days on the day it's changed", () => {
+    addTodo("Water", MON, undefined, undefined, true);
+    const [t] = copy(nth(4));
+    setTodoRepeat(t.id, { every: 5 }, nth(4));
+    expect(loadDailyTasks()[0].startDate).toBe(nth(4));
+    expect(copy(nth(9))).toHaveLength(1);
+  });
+
+  it("turns an existing task into any kind of repeat", () => {
+    saveTodos([todo("a")], MON);
+    makeTodoDaily("a", MON, { timesPerWeek: 4 });
+    expect(loadDailyTasks()[0]).toMatchObject({ timesPerWeek: 4 });
+    saveTodos([todo("b")], D1);
+    makeTodoDaily("b", D1, [1, 3]);
+    expect(loadDailyTasks()[1]).toMatchObject({ days: [1, 3] });
+  });
+
+  it("cleans up rules: one kind at a time, sane numbers", () => {
+    expect(normalizeRepeat()).toEqual({});
+    expect(normalizeRepeat({ every: 1 })).toEqual({});
+    expect(normalizeRepeat({ every: 0 })).toEqual({});
+    expect(normalizeRepeat({ every: 400 })).toEqual({});
+    expect(normalizeRepeat({ every: 2.5 })).toEqual({});
+    expect(normalizeRepeat({ monthDay: 32 })).toEqual({});
+    expect(normalizeRepeat({ timesPerWeek: 7 })).toEqual({});
+    expect(normalizeRepeat({ monthDay: 5, every: 3 })).toEqual({ monthDay: 5 });
+    expect(normalizeRepeat({ days: [0, 1, 2, 3, 4, 5, 6] })).toEqual({});
+    expect(normalizeRepeat({ days: [3, 1, 1] })).toEqual({ days: [1, 3] });
+  });
+});
+
+describe("day templates", () => {
+  it("saves a day's one-off tasks and adds them to another day as new tasks", () => {
+    saveTodos(
+      [
+        todo("Standup", { start: 570, duration: 15, tag: "work", priority: "high", note: "room 2", completed: true, subtasks: [{ id: "s", text: "Notes", done: true }] }),
+        todo("Loose"),
+        todo("Copy", { dailyId: "d" }),
+      ],
+      D1
+    );
+    expect(saveDayAsTemplate("Workday", D1)).toBe(2);
+    const [t] = loadTemplates();
+    const { todos, added } = applyTemplate(t.id, D2);
+    expect(added).toBe(2);
+    expect(todos[0]).toMatchObject({ text: "Standup", start: 570, duration: 15, tag: "work", priority: "high", note: "room 2", completed: false });
+    expect(todos[0].subtasks![0]).toMatchObject({ text: "Notes", done: false });
+    expect(todos[0].id).not.toBe("Standup");
+    expect(todos[1].start).toBeUndefined();
+    expect(ids(D1)).toEqual(["Standup", "Loose", "Copy"]); // the original day is untouched
+  });
+
+  it("doesn't double up when applied twice", () => {
+    saveTodos([todo("Standup", { start: 570 })], D1);
+    saveDayAsTemplate("Workday", D1);
+    const [t] = loadTemplates();
+    applyTemplate(t.id, D2);
+    expect(applyTemplate(t.id, D2)).toMatchObject({ added: 0 });
+    expect(loadTodos(D2)).toHaveLength(1);
+    expect(applyTemplate("gone", D3)).toEqual({ todos: [], added: 0 });
+  });
+
+  it("saves nothing for a day with no one-off tasks", () => {
+    expect(saveDayAsTemplate("Empty", D1)).toBe(0);
+    expect(loadTemplates()).toEqual([]);
   });
 });
 
@@ -473,7 +635,7 @@ describe("server sync", () => {
       })
     );
     expect(await syncPlanner([D1, D2])).toBe(true);
-    expect(decodeURIComponent(fetchMock.mock.calls[0][0])).toBe("/api/sync?keys=planner-daily,planner-log,planner-2026-03");
+    expect(decodeURIComponent(fetchMock.mock.calls[0][0])).toBe("/api/sync?keys=planner-daily,planner-log,planner-settings,planner-2026-03");
     expect(ids()).toEqual(["local", "server"]);
     expect(loadDailyTasks()).toEqual([task]);
     // The month gained "local", so it goes back up, against the etag just read.
@@ -482,7 +644,7 @@ describe("server sync", () => {
 
   it("asks only for changes after that, and skips docs synced in the last two minutes", async () => {
     fetchMock.mockResolvedValueOnce(
-      docsResponse({ "planner-daily": null, "planner-log": null, "planner-2026-03": { etag: '"e1"', data: monthDoc(item(todo("a"))) } })
+      docsResponse({ "planner-daily": null, "planner-log": null, "planner-settings": null, "planner-2026-03": { etag: '"e1"', data: monthDoc(item(todo("a"))) } })
     );
     await syncPlanner([D1], true);
     fetchMock.mockClear();

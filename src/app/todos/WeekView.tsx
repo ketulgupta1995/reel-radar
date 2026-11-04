@@ -16,11 +16,11 @@ import {
   type Todo,
 } from "@/lib/todos";
 import { weekStart } from "@/lib/plannerStats";
+import { tagColor } from "@/lib/plannerSettings";
 import {
   HOUR_PX,
   SNAP,
   DAY_NAMES,
-  TAG_COLORS,
   TimeBlock,
   clampStart,
   fmtDuration,
@@ -193,7 +193,7 @@ export default function WeekView({
                         }}
                         onClick={() => onOpenDay(d)}
                         className="cursor-grab truncate rounded border border-white/15 bg-white/5 px-1.5 py-0.5 text-[11px] text-white/80 hover:border-gold/40"
-                        style={t.tag ? { borderLeftColor: TAG_COLORS[t.tag], borderLeftWidth: 3 } : undefined}
+                        style={t.tag ? { borderLeftColor: tagColor(t.tag), borderLeftWidth: 3 } : undefined}
                         title={`${t.text} - drag into a time slot`}
                       >
                         {t.text}

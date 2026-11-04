@@ -263,6 +263,33 @@ describe("/api/push/send", () => {
     expect(pushedTo(device)).toEqual([expect.objectContaining({ title: "Walk", tag: `${DAY}:walk:${DAY}:${start}` })]);
   });
 
+  it("handles every-N-days, monthly and times-a-week tasks on days the planner wasn't opened", async () => {
+    const device = newDevice();
+    await addDevice(device);
+    const start = 17 * 60 + 33;
+    const task = (id: string, extra: object) => ({ updatedAt: 1, task: { id, text: id, startDate: "2026-02-26", start, ...extra } });
+    await writeData("planner-daily.json", {
+      items: [
+        task("every2", { every: 2 }), // Feb 26 + 4 days = Mar 2
+        task("every3", { every: 3 }),
+        task("second", { monthDay: 2 }),
+        task("third", { monthDay: 3 }),
+        task("flex", { timesPerWeek: 1 }),
+        task("flexdone", { timesPerWeek: 1, doneDates: ["2026-03-03"] }),
+      ],
+    });
+    await runCron();
+    expect(pushedTo(device).map((m) => m.title).sort()).toEqual(["every2", "flex", "second"]);
+  });
+
+  it("stops a times-a-week task once that week's finished copies meet the target", async () => {
+    const device = newDevice();
+    await addDevice(device);
+    await writeData("planner-daily.json", { items: [{ updatedAt: 1, task: { id: "run", text: "Run", startDate: "2026-01-01", start: 17 * 60 + 33, timesPerWeek: 1 } }] });
+    await writeData(MONTH_FILE, { items: [{ date: "2026-03-04", pos: 0, updatedAt: 1, todo: { id: "run:2026-03-04", dailyId: "run", text: "Run", completed: true, createdAt: "" } }] });
+    expect((await runCron()).sent).toBe(0);
+  });
+
   it("uses the day's copy of a repeating task instead of the template", async () => {
     const device = newDevice();
     await addDevice(device);

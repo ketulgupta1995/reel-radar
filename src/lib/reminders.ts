@@ -8,14 +8,50 @@ export const REMINDER_LEADS = [0, 5, 10, 15]; // minutes before a block starts
 
 export const weekday = (date: string): number => new Date(date + "T00:00:00").getDay();
 
+// How a task repeats. At most one field is set (see normalizeRepeat in lib/todos.ts); none means every day.
+export type RepeatRule = {
+  days?: number[]; // on these weekdays (0 = Sunday)
+  every?: number; // every N days, counted from the task's startDate
+  monthDay?: number; // on this day of each month; shorter months use their last day
+  timesPerWeek?: number; // any day, until it's been done this many times that week (Monday to Sunday)
+};
+
+const dayNumber = (date: string) => {
+  const [y, m, d] = date.split("-").map(Number);
+  return Date.UTC(y, m - 1, d) / 86400000;
+};
+
 export function repeatsOn(task: DailyTask, date: string): boolean {
+  if (task.monthDay) {
+    const [y, m, d] = date.split("-").map(Number);
+    return d === Math.min(task.monthDay, new Date(y, m, 0).getDate());
+  }
+  if (task.every) return (dayNumber(date) - dayNumber(task.startDate)) % task.every === 0;
   return !task.days || task.days.includes(weekday(date));
 }
 
-// Daily tasks that belong on `date` but have no copy in `todos` yet.
-export function missingDailyTasks(tasks: DailyTask[], todos: Todo[], date: string): DailyTask[] {
+// The Monday to Sunday containing `date`.
+export function weekOf(date: string): string[] {
+  const [y, m, d] = date.split("-").map(Number);
+  const back = (weekday(date) + 6) % 7;
+  return Array.from({ length: 7 }, (_, i) => {
+    const day = new Date(y, m - 1, d - back + i);
+    return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+  });
+}
+
+// Daily tasks that belong on `date` but have no copy in `todos` yet. `doneInWeek` says how many
+// other days of `date`'s week a task was done, which ends a "times a week" task once it's met.
+export function missingDailyTasks(tasks: DailyTask[], todos: Todo[], date: string, doneInWeek: (task: DailyTask) => number = () => 0): DailyTask[] {
   const present = new Set(todos.map((t) => t.dailyId).filter(Boolean));
-  return tasks.filter((d) => d.startDate <= date && repeatsOn(d, date) && !present.has(d.id) && !d.skipDates?.includes(date));
+  return tasks.filter(
+    (d) =>
+      d.startDate <= date &&
+      repeatsOn(d, date) &&
+      !present.has(d.id) &&
+      !d.skipDates?.includes(date) &&
+      !(d.timesPerWeek && doneInWeek(d) >= d.timesPerWeek)
+  );
 }
 
 export const fmtTime = (mins: number): string => {
