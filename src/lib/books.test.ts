@@ -2,7 +2,7 @@
 import { IDBFactory } from "fake-indexeddb";
 import { beforeEach, describe, expect, it } from "vitest";
 import { epubFile } from "@/test/epub";
-import { MAX_EPUB_BYTES, addUpload, errorText, loadLibrary, openBook } from "./books";
+import { MAX_EPUB_BYTES, addUpload, errorText, loadLibrary, loadPosition, openBook, savePosition } from "./books";
 import { EpubError } from "./epub";
 
 beforeEach(() => {
@@ -53,5 +53,24 @@ describe("books on this device", () => {
   it("words errors for the reader", () => {
     expect(errorText(new EpubError("drm", "Copy protected."))).toBe("Copy protected.");
     expect(errorText("weird")).toBe("That file couldn't be added.");
+  });
+});
+
+describe("saved position", () => {
+  it("remembers where you stopped in each book", () => {
+    expect(loadPosition("a")).toBeUndefined();
+    savePosition("a", 2, 14);
+    savePosition("b", 0, 3);
+    expect(loadPosition("a")).toMatchObject({ chapter: 2, sentence: 14 });
+    expect(loadPosition("b")).toMatchObject({ chapter: 0, sentence: 3 });
+    expect(loadPosition("a")!.updatedAt).toBeGreaterThan(0);
+  });
+
+  it("starts fresh when the saved positions are damaged", () => {
+    localStorage.setItem("books-position-v1", "{oops");
+    expect(loadPosition("a")).toBeUndefined();
+    localStorage.setItem("books-position-v1", "[1]");
+    savePosition("a", 1, 1);
+    expect(loadPosition("a")).toMatchObject({ chapter: 1, sentence: 1 });
   });
 });

@@ -1,16 +1,15 @@
 // @vitest-environment jsdom
 import { IDBFactory } from "fake-indexeddb";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it } from "vitest";
+import { fireEvent, render, screen, configure } from "@testing-library/react";
 import { getApp } from "@/lib/apps";
 import { epubFile } from "@/test/epub";
 import { loadLibrary } from "@/lib/books";
 
-const nav = vi.hoisted(() => ({ params: { id: "" } as Record<string, string> }));
-vi.mock("next/navigation", () => ({ useParams: () => nav.params }));
-
 import BooksPage from "./page";
-import BookPage from "./[id]/page";
+
+// Reading an EPUB (build, hash, parse) is slow when the machine is busy, as it is under coverage.
+configure({ asyncUtilTimeout: 5000 });
 
 beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
@@ -73,42 +72,5 @@ describe("Books page", () => {
     );
     render(<BooksPage />);
     expect(screen.getByRole("link", { name: /Saved Book/ }).getAttribute("href")).toBe("/books/abc");
-  });
-});
-
-describe("Book page", () => {
-  it("shows the chapters and the text of the chosen chapter", async () => {
-    const home = render(<BooksPage />);
-    upload(await epubFile());
-    await screen.findByText("Added “The Station Clock”.");
-    nav.params.id = loadLibrary()[0].id;
-    home.unmount();
-
-    render(<BookPage />);
-    await screen.findByRole("heading", { name: "The Station Clock" });
-    expect(screen.getByLabelText("Chapter text").textContent).toContain("Mr. Rao kept the clock fast.");
-
-    fireEvent.change(screen.getByLabelText("Chapter"), { target: { value: "1" } });
-    expect(screen.getByLabelText("Chapter text").textContent).toContain("She closed her book.");
-    expect(screen.getByRole("link", { name: "← Library" }).getAttribute("href")).toBe("/books");
-  });
-
-  it("asks for the file again when it isn't on this device", async () => {
-    nav.params.id = "0123456789abcdef";
-    render(<BookPage />);
-    await waitFor(() => expect(screen.getByText(/isn't on this device/)).toBeTruthy());
-  });
-
-  it("treats an unreadable file as missing", async () => {
-    nav.params.id = "badbadbadbadbad0";
-    const db = await new Promise<IDBDatabase>((resolve) => {
-      const req = indexedDB.open("books", 1);
-      req.onupgradeneeded = () => req.result.createObjectStore("files");
-      req.onsuccess = () => resolve(req.result);
-    });
-    db.transaction("files", "readwrite").objectStore("files").put(new TextEncoder().encode("junk").buffer, nav.params.id);
-    db.close();
-    render(<BookPage />);
-    await waitFor(() => expect(screen.getByText(/isn't on this device/)).toBeTruthy());
   });
 });

@@ -76,3 +76,22 @@ export async function openBook(id: string): Promise<ParsedBook | null> {
 }
 
 export const errorText = (err: unknown) => (err instanceof EpubError || err instanceof Error ? err.message : "That file couldn't be added.");
+
+// Where you stopped in each book on this device, saved after every sentence.
+export type Position = { chapter: number; sentence: number; updatedAt: number };
+const POSITION_KEY = "books-position-v1";
+
+function positions(): Record<string, Position> {
+  try {
+    const all = JSON.parse(localStorage.getItem(POSITION_KEY) || "{}");
+    return all && typeof all === "object" && !Array.isArray(all) ? all : {};
+  } catch {
+    return {};
+  }
+}
+
+export const loadPosition = (id: string): Position | undefined => positions()[id];
+
+export function savePosition(id: string, chapter: number, sentence: number): void {
+  localStorage.setItem(POSITION_KEY, JSON.stringify({ ...positions(), [id]: { chapter, sentence, updatedAt: Date.now() } }));
+}
