@@ -22,6 +22,15 @@ describe("playerReducer", () => {
     expect(run(jumped, { type: "ENDED", runId: playing.runId })).toBe(jumped);
   });
 
+  it("speaks the same sentence again on a retry, unless that run is already over", () => {
+    const playing = run(loaded(1), { type: "PLAY" });
+    const retried = run(playing, { type: "RETRY", runId: playing.runId });
+    expect(retried).toMatchObject({ status: "playing", index: 1, runId: playing.runId + 1 });
+    expect(run(retried, { type: "RETRY", runId: playing.runId })).toBe(retried);
+    const paused = run(retried, { type: "PAUSE" });
+    expect(run(paused, { type: "RETRY", runId: paused.runId })).toBe(paused);
+  });
+
   it("pauses in place, and playing again speaks the same sentence anew", () => {
     const playing = run(loaded(1), { type: "PLAY" });
     const paused = run(playing, { type: "PAUSE" });

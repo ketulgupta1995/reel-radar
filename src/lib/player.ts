@@ -16,6 +16,7 @@ export type PlayerAction =
   | { type: "PLAY" }
   | { type: "PAUSE" }
   | { type: "ENDED"; runId: number }
+  | { type: "RETRY"; runId: number }
   | { type: "JUMP"; index: number }
   | { type: "LOAD"; key: string; count: number; index: number; play: boolean };
 
@@ -35,6 +36,8 @@ export function playerReducer(state: PlayerState, action: PlayerAction): PlayerS
       const index = state.index + 1;
       return index >= state.count ? { ...state, status: "finished" } : { ...state, index, runId: state.runId + 1 };
     }
+    case "RETRY":
+      return state.status === "playing" && action.runId === state.runId ? { ...state, runId: state.runId + 1 } : state;
     case "JUMP": {
       if (!state.count) return state;
       const status = state.status === "finished" ? "paused" : state.status;

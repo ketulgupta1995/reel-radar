@@ -108,3 +108,17 @@ export const loadPosition = (id: string): Position | undefined => positions()[id
 export function savePosition(id: string, chapter: number, sentence: number): void {
   localStorage.setItem(POSITION_KEY, JSON.stringify({ ...positions(), [id]: { chapter, sentence, updatedAt: Date.now() } }));
 }
+
+// The voice and speed you chose, kept on this device.
+export type VoicePrefs = { voiceURI: string | null; rate: number };
+
+export function loadVoicePrefs(): VoicePrefs {
+  try {
+    const p = JSON.parse(localStorage.getItem("books-voice-v1") || "{}");
+    return { voiceURI: typeof p?.voiceURI === "string" ? p.voiceURI : null, rate: typeof p?.rate === "number" ? p.rate : 1 };
+  } catch {
+    return { voiceURI: null, rate: 1 };
+  }
+}
+
+export const saveVoicePrefs = (prefs: VoicePrefs) => localStorage.setItem("books-voice-v1", JSON.stringify(prefs));

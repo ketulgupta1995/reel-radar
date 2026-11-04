@@ -7,6 +7,8 @@ import { AppSwitcher } from "@/components/AppSwitcher";
 import { loadPosition, openBook, savePosition } from "@/lib/books";
 import type { ParsedBook } from "@/lib/epub";
 import { usePlayer } from "@/lib/usePlayer";
+import { useWakeLock } from "@/lib/useWakeLock";
+import { RATES, voiceLabel } from "@/lib/voices";
 
 export default function BookPage() {
   const { id } = useParams<{ id: string }>();
@@ -60,6 +62,7 @@ export default function BookPage() {
   }, [state.index, state.key]);
 
   const playing = state.status === "playing";
+  useWakeLock(playing);
 
   return (
     <main className="min-h-screen bg-[radial-gradient(ellipse_at_top,#261e38_0%,#090910_55%,#050508_100%)] text-white">
@@ -93,6 +96,43 @@ export default function BookPage() {
                 {player.error}
               </p>
             )}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="voice" className="block text-xs font-semibold uppercase tracking-wider text-white/45">
+                  Voice
+                </label>
+                <select
+                  id="voice"
+                  value={player.prefs.voiceURI ?? ""}
+                  onChange={(e) => player.choose({ voiceURI: e.target.value || null })}
+                  className="mt-1 w-full rounded-xl border border-white/10 bg-panel px-3 py-2 text-sm text-white outline-none focus:border-gold/50"
+                >
+                  <option value="">Phone default</option>
+                  {player.voices.map((v) => (
+                    <option key={v.voiceURI} value={v.voiceURI}>
+                      {voiceLabel(v)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <span className="block text-xs font-semibold uppercase tracking-wider text-white/45">Speed</span>
+                <div className="mt-1 flex flex-wrap gap-1.5" role="group" aria-label="Speed">
+                  {RATES.map((r) => (
+                    <button
+                      key={r}
+                      onClick={() => player.choose({ rate: r })}
+                      aria-pressed={player.prefs.rate === r}
+                      className={`rounded-full border px-3 py-1.5 text-sm transition ${
+                        player.prefs.rate === r ? "border-gold/50 bg-gold/15 text-gold" : "border-white/10 text-white/70 hover:border-white/25"
+                      }`}
+                    >
+                      {r}×
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
             <label htmlFor="chapter" className="block text-xs font-semibold uppercase tracking-wider text-white/45">
               Chapter
             </label>

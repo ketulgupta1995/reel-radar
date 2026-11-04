@@ -2,7 +2,7 @@
 import { IDBFactory } from "fake-indexeddb";
 import { beforeEach, describe, expect, it } from "vitest";
 import { epubFile } from "@/test/epub";
-import { MAX_EPUB_BYTES, addUpload, errorText, loadLibrary, loadPosition, openBook, savePosition } from "./books";
+import { MAX_EPUB_BYTES, addUpload, errorText, loadLibrary, loadPosition, loadVoicePrefs, openBook, savePosition, saveVoicePrefs } from "./books";
 import { EpubError } from "./epub";
 
 beforeEach(() => {
@@ -72,5 +72,20 @@ describe("saved position", () => {
     localStorage.setItem("books-position-v1", "[1]");
     savePosition("a", 1, 1);
     expect(loadPosition("a")).toMatchObject({ chapter: 1, sentence: 1 });
+  });
+});
+
+describe("voice choice", () => {
+  it("defaults to the phone's voice at normal speed, and remembers what you pick", () => {
+    expect(loadVoicePrefs()).toEqual({ voiceURI: null, rate: 1 });
+    saveVoicePrefs({ voiceURI: "English India", rate: 1.5 });
+    expect(loadVoicePrefs()).toEqual({ voiceURI: "English India", rate: 1.5 });
+  });
+
+  it("ignores damaged saved choices", () => {
+    localStorage.setItem("books-voice-v1", "{oops");
+    expect(loadVoicePrefs()).toEqual({ voiceURI: null, rate: 1 });
+    localStorage.setItem("books-voice-v1", '{"voiceURI":5,"rate":"fast"}');
+    expect(loadVoicePrefs()).toEqual({ voiceURI: null, rate: 1 });
   });
 });
