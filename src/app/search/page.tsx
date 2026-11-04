@@ -7,6 +7,7 @@ import { ReelNavLinks } from "@/components/ReelNavLinks";
 import { Title, keyOf } from "@/types/title";
 import { load, save, useStorageSync, State } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
+import { TmdbRefreshButton } from "@/components/TmdbRefreshButton";
 import { StorageControls } from "@/components/StorageControls";
 
 export default function SearchPage() {
@@ -47,6 +48,12 @@ export default function SearchPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const reloadSearch = async () => {
+    const res = await fetch(`/api/search?query=${encodeURIComponent(query)}`, { cache: "reload" });
+    const data = await res.json();
+    setResults(data.results || []);
   };
 
   const persist = (fn: (s: State) => State) =>
@@ -103,6 +110,12 @@ export default function SearchPage() {
             {loading ? "Searching..." : "Search"}
           </button>
         </form>
+
+        {results.length > 0 && (
+          <div className="mt-4">
+            <TmdbRefreshButton onRefreshed={reloadSearch} />
+          </div>
+        )}
 
         {results.length > 0 && (
           <div className="mt-10 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">

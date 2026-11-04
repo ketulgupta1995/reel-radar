@@ -20,7 +20,7 @@ export async function POST(r: Request) {
       watched: Title[];
       seen?: string[];
       dismissed?: string[];
-      watchlist?: Title[];
+      watchlist?: (Title | string)[];
       discoveryStyle?: "balanced" | "popular" | "deepcuts";
       mood?: "all" | "dark" | "adrenaline" | "feelgood" | "mindbending";
       era?: "all" | "classic" | "modern" | "recent";

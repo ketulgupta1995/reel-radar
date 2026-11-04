@@ -8,6 +8,7 @@ import { Title, keyOf, MediaType } from "@/types/title";
 import { load, save, useStorageSync, State } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
 import { StorageControls } from "@/components/StorageControls";
+import { TmdbRefreshButton } from "@/components/TmdbRefreshButton";
 
 type Filter = "all" | MediaType;
 type RegionFilter = "all" | "in" | "global";
@@ -54,7 +55,8 @@ export default function Discover() {
     type: MediaType,
     currentState: State,
     currentRegion = region,
-    resetPage = false
+    resetPage = false,
+    init?: RequestInit
   ) => {
     if (type === "movie") setLoadingMovies(true);
     else setLoadingTv(true);
@@ -71,7 +73,8 @@ export default function Discover() {
 
       while (fresh.length < 15 && pagesScanned < maxPagesToScan) {
         const r = await fetch(
-          `/api/discover?type=${type}&region=${currentRegion}&page=${page}`
+          `/api/discover?type=${type}&region=${currentRegion}&page=${page}`,
+          init
         );
         const d = await r.json();
 
@@ -121,13 +124,15 @@ export default function Discover() {
     }
   };
 
-  const loadAllBatches = (currentState: State, currentRegion = region, resetPage = false) => {
+  const loadAllBatches = (currentState: State, currentRegion = region, resetPage = false, init?: RequestInit) => {
     if (resetPage) {
       moviePageRef.current = 1;
       tvPageRef.current = 1;
     }
-    fetchCategoryBatch("movie", currentState, currentRegion, resetPage);
-    fetchCategoryBatch("tv", currentState, currentRegion, resetPage);
+    return Promise.all([
+      fetchCategoryBatch("movie", currentState, currentRegion, resetPage, init),
+      fetchCategoryBatch("tv", currentState, currentRegion, resetPage, init),
+    ]);
   };
 
   useEffect(() => {
@@ -293,6 +298,9 @@ export default function Discover() {
         <p className="mt-2 text-white/65">
           Select what you have seen across Hollywood and Indian cinema. Series and Movies are segregated for effortless tracking.
         </p>
+        <div className="mt-3">
+          <TmdbRefreshButton onRefreshed={() => loadAllBatches(load(), region, true, { cache: "reload" })} />
+        </div>
 
         <div className="mt-5 h-2 overflow-hidden rounded bg-white/10">
           <div

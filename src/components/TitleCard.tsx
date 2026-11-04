@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Title } from "@/types/title";
-import { poster } from "@/lib/tmdb";
+import { poster, posterSrcSet } from "@/lib/tmdb";
 import { isIndianTitle } from "@/lib/region";
 import { TitleDetailsModal } from "./TitleDetailsModal";
 
@@ -38,6 +38,8 @@ export function TitleCard({
           {title.posterPath ? (
             <img
               src={poster(title.posterPath)!}
+              srcSet={posterSrcSet(title.posterPath)}
+              sizes="(min-width: 1280px) 256px, (min-width: 768px) 25vw, (min-width: 640px) 33vw, 50vw"
               alt={title.title}
               className="h-full w-full object-cover"
               loading="lazy"

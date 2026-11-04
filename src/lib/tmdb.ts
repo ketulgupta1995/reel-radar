@@ -2,7 +2,7 @@ import { MediaType, Title } from "@/types/title";
 import { isIndianTitle } from "@/lib/region";
 
 const base = "https://api.themoviedb.org/3";
-const image = "https://image.tmdb.org/t/p/w500";
+const image = "https://image.tmdb.org/t/p";
 
 const genres: Record<MediaType, Record<number, string>> = {
   movie: {
@@ -32,12 +32,27 @@ const genres: Record<MediaType, Record<number, string>> = {
   },
 };
 
-export const poster = (path: string | null) => (path ? `${image}${path}` : null);
+export const poster = (path: string | null, size: "w154" | "w185" | "w342" | "w500" = "w500") =>
+  path ? `${image}/${size}${path}` : null;
+
+// For a poster whose width depends on the screen: the browser picks the smallest that looks sharp.
+export const posterSrcSet = (path: string) =>
+  ([185, 342, 500] as const).map((w) => `${image}/w${w}${path} ${w}w`).join(", ");
 
 // How long Next's data cache keeps a TMDB response, in seconds. Lists and search results move;
 // a title's or person's details (credits, keywords, trailer) rarely do.
 const LIST_TTL = 6 * 60 * 60;
 const DETAIL_TTL = 7 * 24 * 60 * 60;
+
+// Tags on cached TMDB responses, so /api/tmdb/refresh can expire them: one for all lists, and one
+// for each title or person.
+export const LIST_TAG = "tmdb-lists";
+export const detailTag = (kind: MediaType | "person", id: number) => `tmdb-${kind}-${id}`;
+const tagsFor = (path: string, revalidate: number) => {
+  if (revalidate === LIST_TTL) return [LIST_TAG];
+  const [, kind, id] = path.split("/");
+  return [detailTag(kind as MediaType | "person", Number(id))];
+};
 
 async function get(path: string, params: Record<string, string | number | boolean> = {}, revalidate = LIST_TTL) {
   const key = process.env.TMDB_API_KEY;
@@ -45,12 +60,13 @@ async function get(path: string, params: Record<string, string | number | boolea
   const u = new URL(base + path);
   u.searchParams.set("api_key", key);
   Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, String(v)));
+  const next = { revalidate, tags: tagsFor(path, revalidate) };
   // Fail fast and retry once: connect timeouts are common on flaky networks (e.g. WSL).
   let r: Response;
   try {
-    r = await fetch(u, { next: { revalidate }, signal: AbortSignal.timeout(8000) });
+    r = await fetch(u, { next, signal: AbortSignal.timeout(8000) });
   } catch {
-    r = await fetch(u, { next: { revalidate }, signal: AbortSignal.timeout(8000) });
+    r = await fetch(u, { next, signal: AbortSignal.timeout(8000) });
   }
   if (!r.ok) throw new Error(`TMDB request failed (${r.status})`);
   return r.json();

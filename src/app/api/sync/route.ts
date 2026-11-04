@@ -39,11 +39,8 @@ export async function GET(req: Request) {
 
   try {
     const docs: Record<string, ReadResult> = {};
-    // The first read settles whether the store is private or public; the rest run in parallel.
-    const [[firstKey, firstEtag], ...rest] = wanted;
-    docs[firstKey] = await readDoc(firstKey, firstEtag);
     await Promise.all(
-      rest.map(async ([k, etag]) => {
+      wanted.map(async ([k, etag]) => {
         docs[k] = await readDoc(k, etag);
       })
     );

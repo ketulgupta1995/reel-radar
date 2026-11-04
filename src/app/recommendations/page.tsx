@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ReelNavLinks } from "@/components/ReelNavLinks";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { Title, keyOf, MediaType } from "@/types/title";
 import { load, save, useStorageSync, State } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
+import { TmdbRefreshButton } from "@/components/TmdbRefreshButton";
 import { StorageControls } from "@/components/StorageControls";
 
 type Rec = Title & { why: string };
@@ -26,6 +27,22 @@ type CategorizedData = {
   globalSeries: Rec[];
   thematicShelves: ThematicShelf[];
 };
+
+// What ranking reads from a watched title if TMDB can't supply its details. The server fetches the
+// rest itself, so sending whole titles would only make every request slower.
+const tasteInput = ({ id, mediaType, title, year, genres, genreNames, rating, popularity, originalLanguage, originCountry, watchedSeasons }: Title) => ({
+  id,
+  mediaType,
+  title,
+  year,
+  genres,
+  genreNames,
+  rating,
+  popularity,
+  originalLanguage,
+  originCountry,
+  watchedSeasons,
+});
 
 export default function Recommendations() {
   const [state, setState] = useState<State>({
@@ -53,6 +70,19 @@ export default function Recommendations() {
   const [summary, setSummary] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  // Results by filter combination while the page is open, so going back to one costs no request.
+  const results = useRef(new Map<string, any>());
+
+  const showResults = (d: any) => {
+    setCategories({
+      indianMovies: d.categories.indianMovies || [],
+      globalMovies: d.categories.globalMovies || [],
+      indianSeries: d.categories.indianSeries || [],
+      globalSeries: d.categories.globalSeries || [],
+      thematicShelves: d.categories.thematicShelves || [],
+    });
+    setSummary(d.summary || []);
+  };
 
   const persist = (fn: (s: State) => State) =>
     setState((s) => {
@@ -64,11 +94,20 @@ export default function Recommendations() {
   const get = async (
     style = discoveryStyle,
     era = eraFilter,
-    mood = moodFilter
+    mood = moodFilter,
+    refresh = false
   ) => {
     const s = load();
     setState(s);
     if (s.watched.length < 10) {
+      setLoading(false);
+      return;
+    }
+    // Lists that shape the ranking are part of the key, so changing them asks the server again.
+    const resultsKey = [style, era, mood, s.watched.length, s.dismissed.length, s.watchlist.length].join("|");
+    const known = results.current.get(resultsKey);
+    if (known && !refresh) {
+      showResults(known);
       setLoading(false);
       return;
     }
@@ -78,10 +117,10 @@ export default function Recommendations() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          watched: s.watched,
+          watched: s.watched.map(tasteInput),
           seen: s.shown,
           dismissed: s.dismissed || [],
-          watchlist: s.watchlist || [],
+          watchlist: (s.watchlist || []).map(keyOf),
           discoveryStyle: style,
           era,
           mood,
@@ -90,14 +129,8 @@ export default function Recommendations() {
       const d = await r.json();
       if (!r.ok) throw new Error(d.error);
 
-      setCategories({
-        indianMovies: d.categories.indianMovies || [],
-        globalMovies: d.categories.globalMovies || [],
-        indianSeries: d.categories.indianSeries || [],
-        globalSeries: d.categories.globalSeries || [],
-        thematicShelves: d.categories.thematicShelves || [],
-      });
-      setSummary(d.summary || []);
+      results.current.set(resultsKey, d);
+      showResults(d);
 
       const allFetched: Rec[] = [
         ...(d.categories.indianMovies || []),
@@ -487,9 +520,10 @@ export default function Recommendations() {
           </div>
         )}
 
-        <div className="mt-12 flex flex-wrap gap-3">
+        <div className="mt-12 flex flex-wrap items-center gap-3">
+          <TmdbRefreshButton onRefreshed={() => get(discoveryStyle, eraFilter, moodFilter, true)} />
           <button
-            onClick={() => get(discoveryStyle, eraFilter, moodFilter)}
+            onClick={() => get(discoveryStyle, eraFilter, moodFilter, true)}
             className="rounded-full border border-white/20 px-6 py-3 text-sm hover:bg-white/10 transition"
           >
             Refresh recommendations

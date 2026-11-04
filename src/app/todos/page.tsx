@@ -161,7 +161,6 @@ export default function TodosPage() {
   const [tagFilter, setTagFilter] = useState<TagId | "all">("all");
   const [view, setView] = useState<View>("day");
   const [focus, setFocus] = useState<FocusSession | null>(null);
-  const [clockNow, setClockNow] = useState(0);
   const [dailyTasks, setDailyTasks] = useState<DailyTask[]>([]);
   const [reminderLead, setReminderLead] = useState<number | null>(null);
   const [newNote, setNewNote] = useState("");
@@ -323,14 +322,6 @@ export default function TodosPage() {
     if (y < box.scrollTop + 24 || y > box.scrollTop + box.clientHeight - 24)
       box.scrollTo({ top: Math.max(0, y - box.clientHeight / 2), behavior: "smooth" });
   }, [dayLog]);
-
-  // Focus timer clock.
-  useEffect(() => {
-    if (!focus) return;
-    setClockNow(Date.now());
-    const id = setInterval(() => setClockNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [focus]);
 
   // Notify about today's blocks as they come up while this page is open. Pushes from the server
   // cover the rest; they share a tag, so a block that gets both only shows once.
@@ -1463,7 +1454,7 @@ export default function TodosPage() {
       </div>
 
       {/* Toasts */}
-      {focus && <FocusBar session={focus} nowMs={clockNow} selectedDate={selectedDate} onStop={handleStopFocus} alerted={focusAlerted} />}
+      {focus && <FocusBar session={focus} selectedDate={selectedDate} onStop={handleStopFocus} alerted={focusAlerted} />}
       <div className={`fixed left-1/2 ${focus ? "bottom-[calc(6rem+env(safe-area-inset-bottom))]" : "bottom-[calc(1.5rem+env(safe-area-inset-bottom))]"} z-50 flex w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col items-center gap-2`}>
         {deleted && (
           <div className="flex items-center gap-4 rounded-full border border-white/15 bg-panel px-4 py-2 text-sm shadow-2xl">
@@ -1946,17 +1937,23 @@ function TodoItem({
 // Weekday toggles; at least one day stays selected.
 function FocusBar({
   session,
-  nowMs,
   selectedDate,
   onStop,
   alerted,
 }: {
   session: FocusSession;
-  nowMs: number;
   selectedDate: string;
   onStop: (markDone: boolean) => void;
   alerted: React.MutableRefObject<string | null>;
 }) {
+  // The clock lives here so that each tick redraws this bar, not the whole page.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [session]);
+
   const todo = loadTodos(session.date).find((t) => t.id === session.todoId);
   const elapsed = Math.max(0, (nowMs - session.startedAt) / 1000);
   const spentBefore = (todo?.spent ?? 0) * 60;

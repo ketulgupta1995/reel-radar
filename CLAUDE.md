@@ -44,6 +44,7 @@ Copy `.env.example` to `.env.local`. Never commit `.env.local` or print its valu
 | `MONEY_ENCRYPTION_KEY` | for Money | 32 bytes, base64. `docStore` encrypts `money-*` docs with it; money reads and writes fail without it |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`, `PUSH_CRON_SECRET` | no | Closed-app reminders. The public key reaches the browser through `GET /api/push` behind the login; don't make any of these `NEXT_PUBLIC_` |
 | `MONEY_MY_NAMES`, `MONEY_FAMILY` | no | Starter family for Money (`lib/moneyFamily.ts`), served by `api/money/family` and added once by `seedFamily()`. Keeps real names out of the public repo; never make them `NEXT_PUBLIC_` (static bundles aren't behind the login) |
+| `BLOB_READ_WRITE_TOKEN` | scripts only | For the scripts that read or clean up old Vercel Blob data. The app doesn't use it |
 
 ## Keep away from live data
 
@@ -52,20 +53,23 @@ Copy `.env.example` to `.env.local`. Never commit `.env.local` or print its valu
 - Start any dev server or script you run with the store turned off, on a different port: `TURSO_DATABASE_URL= npx next dev -p 3001`. An empty shell variable takes precedence over `.env.local`, and `docStore` then falls back to `data/`.
 - Remember that edits to sync, storage or `docStore` code hot-reload into the owner's running server and their open tabs, so they can reach live data before any deploy.
 - Ask before running `scripts/*.ts` without `--dry-run` or listing mode, or before anything else that writes to or deletes from Turso.
-- Vercel Hobby limits matter. When changing sync or storage, count the database reads and writes and the function calls the change adds.
+- When changing sync or storage, count the database reads and writes and the function calls the change adds (see "Free-tier usage and performance").
 
 ## Layout
 
 ```
 src/
-  proxy.ts               Auth gate for every route except /login and /api/auth/*
+  proxy.ts               Auth gate for every route except /login, /api/auth/*, /api/push/send (own secret) and static files
   app/                   Pages: / (app launcher), reel-radar (Reel Radar landing), discover,
-                         recommendations, analysis, watched, watchlist, search, similar,
+                         recommendations, analysis, watched, watchlist, dismissed, search, similar,
                          person/[id], todos, todos/stats, todos/lists, todos/review, money, money/import, money/settings, login
-                         (api/money/family: starter family from the env)
+  app/todos/             Planner page parts: WeekView, MonthView, AutoSchedule, RepeatPicker, PlannerTools, Slipping,
+                         ClockTimePicker, shared planner.tsx
+  app/money/             Money page parts: ReviewQueue, shared.tsx
   app/api/               Route handlers: discover, recommendations, similar, search, title,
-                         person/[id], sync, media/[id], usage, push, push/send, auth/login, auth/logout
-  components/            TitleCard, TitleDetailsModal, StorageControls, LogoutButton, AppSwitcher
+                         person/[id], sync, media/[id], usage, push, push/send, money/family (starter family from the env),
+                         tmdb/refresh, auth/login, auth/logout
+  components/            TitleCard, TitleDetailsModal, StorageControls, LogoutButton, AppSwitcher, ReelNavLinks, TmdbRefreshButton
   lib/
     apps.ts              App registry (home page cards + AppSwitcher menu)
     tmdb.ts              TMDB client and normalization (server only)
@@ -82,6 +86,7 @@ src/
     lists.ts             Planner lists (wishlist, things to remember): items, quick-add parsing, sync ("use client")
     media.ts             Photo/voice-note uploads to /api/media: shrinking, type and size limits
     money.ts             Money model: transactions, people, limits, categories, import plan, sync ("use client")
+    moneyFamily.ts       Parses the starter family from MONEY_MY_NAMES and MONEY_FAMILY (server only)
     gpayStatement.ts     Statement PDF reader (no PDF library), Google Pay rows, parseStatementPdf(); tested with src/test/gpayPdf.ts
     paytmStatement.ts    Paytm statement rows (year from the period, sign gives direction); same reader and test helper
     sync.ts              Client sync engine (etags, batched pushes, three-way merge, refocus)
@@ -92,6 +97,7 @@ src/
     plannerInsights.ts   Sleep hours, day log trends and patterns, planned vs. actual time, review week, month data (pure)
     plannerSettings.ts   Tags and day templates: a synced doc, useTags(), tagLabel(), tagColor() ("use client")
     autoSchedule.ts      Proposes a day's plan from free time, priority and length (pure)
+    quickAdd.ts          Reads the add-box shorthand: time, length, tag, priority, date, repeat
     usageStats.ts        Database reads/writes per local day (pure; used by /todos/stats)
     auth.ts              Session signing/verification via Web Crypto
   types/title.ts         Title / MediaType types and keyOf()
@@ -124,7 +130,7 @@ The repo is indexed by CodeGraph (`.codegraph/`). Use `codegraph explore "<symbo
 - **Adding to another day**: pull its month first (`syncPlanner([date])`). A device that never pulled a month pushes it with no etag, which replaces the server's copy.
 - **Tags**: a `TagId` is any string. Read names and colours with `tagLabel()`/`tagColor()`, and offer choices with `useTags()` (it starts on the built-ins, so the first render matches the prerendered page). Colours come only from `TAG_PALETTE`, validated together, which is why tags stop at `MAX_TAGS`. Removing a tag keeps its entry so old tasks and stats still show it.
 - **Reminders**: `public/sw.js` shows pushes and has no `fetch` handler, so private pages are never cached. An outside scheduler calls `POST /api/push/send` every minute with `PUSH_CRON_SECRET`. It's the one data route `proxy.ts` skips, so it must check that secret itself, stay shut when the secret is unset, answer with counts only, and never log task text or endpoints. `push-subscriptions` goes through `readDoc`/`writeDoc` and stays out of `DOC_KEY`. Stored endpoints are limited to known push services (`PUSH_HOST`), because the server POSTs to them. The server works out what's due from the docs, so it counts today's repeating tasks that have no copy yet (`missingDailyTasks`). Code it shares with `lib/todos.ts` belongs in `lib/reminders.ts`, because a `"use client"` module can't be called from a route.
-- **Vercel usage**: TMDB GET routes answer through `cachedJson()` and every route sets `maxDuration`. Keep new routes the same.
+- **Vercel usage**: TMDB GET routes answer through `cachedJson()` with `LIST_MAX_AGE` or `DETAIL_MAX_AGE`, which match the data-cache TTLs in `lib/tmdb.ts`, so change them together. `TmdbRefreshButton` gets past both caches: `/api/tmdb/refresh` expires the `LIST_TAG` tag plus one `detailTag()`, then the page refetches with `cache: "reload"`. Don't expire every detail, because the next recommendations request would then make hundreds of TMDB calls. Mocks can't prove cache expiry, so check changes to it against a real `next start` with TMDB faked. `/recommendations` sends `tasteInput()` fields and keeps results per filter combination while open; if ranking starts reading another field of a watched title's fallback, add it to `tasteInput()`. Pick a `poster()` size that fits the slot. Every route that calls TMDB or the database sets `maxDuration`. Keep new routes the same (see "Free-tier usage and performance").
 - **Todos** are stored one doc per month (`planner-YYYY-MM`), plus `planner-daily` for repeating tasks. `loadTodos`/`saveTodos` keep the per-day API on top of that.
 - **Auth**: `lib/auth.ts` must stay Web Crypto–only (no Node `crypto`) so it stays portable between the proxy and route handlers. New API routes are protected automatically by the proxy matcher (`/api/push/send` is the exception, with its own secret). Unauthenticated `/api/*` requests get a 401 JSON response, and unauthenticated pages redirect to `/login?next=...`. Login guesses are capped (`beginLoginAttempt()`/`forgetLoginAttempt()` in `docStore`, `login_attempts` table or `data/login-attempts.json`): 10 failures an hour across all clients, then 429 even for the right password. Each attempt is recorded before the password is checked so parallel guesses count; if it can't be recorded, login answers 503 rather than skipping the cap.
 - **Recommendations**: ranking in `lib/recommend.ts` must stay deterministic and must exclude watched, watchlisted, and dismissed titles. If you change scoring weights, update the formula in the README and add or adjust a test.
@@ -173,6 +179,23 @@ The Money app holds personal financial data and the GitHub repo is public. Whene
 
 If you find a concern, say so before or alongside the change and propose a fix. Don't silently work around it.
 
+## Free-tier usage and performance
+
+The app runs on free or hobby plans (Vercel Hobby, Turso's free plan), so keep usage low without making it slower for the user.
+
+- For every change, consider what it adds: function calls, proxy runs, database reads and writes, TMDB requests, bandwidth, and client bundle size.
+- Prefer savings the user doesn't notice: browser and data caching, conditional reads, batched writes, static rendering, and doing work in the browser.
+- Don't trade away perceived speed, sync freshness or correctness to save usage unless the owner agrees. Local changes must still feel instant.
+- Don't add polling, cron jobs, or per-render or per-keystroke requests without counting their monthly cost.
+
+When a task affects usage or performance, report this before the commit message:
+
+- **Usage:** what changes, with numbers where possible (for example, "+1 read per page open, about 300 a month").
+- **Performance:** what the user would notice, or "no noticeable change".
+- **Trade-off:** what you chose and why, plus any option you rejected.
+
+If a task affects neither, say so in one line: "Usage and performance: no impact, because ...".
+
 ## Finishing a change
 
 - Always end by giving a ready-to-use commit message for the changes made: a short imperative subject line (about 50–72 characters), a blank line, then a few bullet points on what changed and why. Give it even when you weren't asked to commit. Don't commit or push unless asked.
@@ -180,4 +203,6 @@ If you find a concern, say so before or alongside the change and propose a fix. 
 
 ## Docs
 
-`README.md` covers setup, features, the data flow, the scoring formula, the project structure, and troubleshooting. Keep it in sync whenever you add a page or API route, change scoring weights, or change the storage shape.
+`README.md` covers setup, features, the data flow, the scoring formula, the project structure, and troubleshooting. `CLAUDE.md` covers commands, layout, invariants and testing rules.
+
+After every task, before giving the commit message, check both files against what changed and update them in the same change, so neither describes old behaviour or contradicts the other. This includes new or removed pages, API routes, `lib/` files, environment variables and scripts, and changes to features, scoring weights, the storage shape, or test numbers. If a task changes nothing they cover, leave them alone and say so.

@@ -7,6 +7,7 @@ import { AppSwitcher } from "@/components/AppSwitcher";
 import { Title, keyOf } from "@/types/title";
 import { load, save, useStorageSync, State } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
+import { TmdbRefreshButton } from "@/components/TmdbRefreshButton";
 
 export default function PersonPage() {
   const params = useParams();
@@ -18,15 +19,17 @@ export default function PersonPage() {
 
   useStorageSync(setState);
 
-  useEffect(() => {
-    setState(load());
-    fetch(`/api/person/${personId}`)
+  const loadPerson = (init?: RequestInit) =>
+    fetch(`/api/person/${personId}`, init)
       .then((r) => r.json())
       .then((d) => {
         if (d.name) setName(d.name);
         if (d.titles) setTitles(d.titles);
-      })
-      .finally(() => setLoading(false));
+      });
+
+  useEffect(() => {
+    setState(load());
+    loadPerson().finally(() => setLoading(false));
   }, [personId]);
 
   const persist = (fn: (s: State) => State) =>
@@ -68,7 +71,10 @@ export default function PersonPage() {
 
       <section className="mx-auto max-w-7xl py-6">
         <h1 className="text-3xl font-bold mb-2">{loading ? "Loading..." : name}</h1>
-        <p className="text-white/50 mb-10">Discover titles involving this creator</p>
+        <p className="text-white/50 mb-4">Discover titles involving this creator</p>
+        <div className="mb-8">
+          <TmdbRefreshButton person={Number(personId)} onRefreshed={() => loadPerson({ cache: "reload" })} />
+        </div>
 
         {titles.length > 0 && (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">

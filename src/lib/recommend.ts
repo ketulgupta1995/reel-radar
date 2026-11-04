@@ -86,10 +86,14 @@ export function rank(
 
   // Recency & engagement weighting: titles toward the end of `watched` (most recently recorded)
   // receive up to +35% higher weighting in taste profile derivation.
+  const watchedIndex = new Map<string, number>();
+  watched.forEach((t, i) => {
+    if (!watchedIndex.has(keyOf(t))) watchedIndex.set(keyOf(t), i);
+  });
   const itemWeight = (t: Title) => {
     let w = 1;
-    const index = watched.findIndex((x) => keyOf(x) === keyOf(t));
-    if (index !== -1) {
+    const index = watchedIndex.get(keyOf(t));
+    if (index !== undefined) {
       const recencyBoost = 1 + (index / totalWatched) * 0.35; // 1.0 to 1.35
       w *= recencyBoost;
     }

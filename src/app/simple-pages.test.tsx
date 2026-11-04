@@ -48,6 +48,21 @@ describe("Layout", () => {
 });
 
 describe("SearchPage", () => {
+  it("gets the latest from TMDB for the search on request", async () => {
+    routeFetch({ "/api/search": { results: [mk(1, { title: "Dune" })] } });
+    stubLocation("");
+    render(<SearchPage />);
+    expect(screen.queryByText("↻ Get latest from TMDB")).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText(/Search for a movie/), { target: { value: "dune" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByText("Dune");
+    const fetch = routeFetch({ "/api/search": { results: [mk(2, { title: "Dune: Part Two" })] } });
+    fireEvent.click(screen.getByText("↻ Get latest from TMDB"));
+    expect(await screen.findByText("Dune: Part Two")).toBeTruthy();
+    expect(requests(fetch, "/api/tmdb/refresh")).toHaveLength(1);
+    expect(requests(fetch, "/api/search")[0].init?.cache).toBe("reload");
+  });
+
   it("searches and shows results", async () => {
     const fetch = routeFetch({ "/api/search": { results: [mk(1, { title: "Dune" }), mk(2, { title: "Arrival" })] } });
     stubLocation("");
@@ -102,6 +117,21 @@ describe("SearchPage", () => {
 });
 
 describe("PersonPage", () => {
+  it("gets the latest from TMDB for this person, past both caches, on request", async () => {
+    nav.params = { id: "42" };
+    const fetch = routeFetch({ "/api/person/*": { name: "Denis Villeneuve", titles: [mk(1, { title: "Sicario" })] } });
+    render(<PersonPage />);
+    await screen.findByText("Sicario");
+    expect(requests(fetch, "/api/person/42")[0].init).toBeUndefined();
+    fetch.mockImplementation(async (input: string) =>
+      new Response(JSON.stringify(String(input).startsWith("/api/person") ? { name: "Denis Villeneuve", titles: [mk(2, { title: "New Film" })] } : {}))
+    );
+    fireEvent.click(screen.getByText("↻ Get latest from TMDB"));
+    expect(await screen.findByText("New Film")).toBeTruthy();
+    expect(JSON.parse(requests(fetch, "/api/tmdb/refresh")[0].init?.body as string)).toEqual({ person: 42 });
+    expect(requests(fetch, "/api/person/42").at(-1)!.init?.cache).toBe("reload");
+  });
+
   it("shows the person's titles and toggles watched and watchlist", async () => {
     nav.params = { id: "42" };
     const fetch = routeFetch({ "/api/person/*": { name: "Denis Villeneuve", titles: [mk(1, { title: "Sicario" })] } });

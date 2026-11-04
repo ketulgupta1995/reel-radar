@@ -11,7 +11,6 @@ vi.mock("next/navigation", () => ({
 }));
 
 import SimilarPage from "./page";
-import ReelRadarHome from "../reel-radar/page";
 
 const source = mk(10, { title: "Heat", genreNames: ["Crime", "Thriller"], rating: 8.3, year: 1995 });
 const similar = [mk(11, { title: "Collateral", similarityScore: 91, why: "Same director" }), mk(12, { title: "Thief" })];
@@ -29,6 +28,27 @@ const cardOf = (title: string) => {
 };
 
 describe("SimilarPage", () => {
+  it("gets the latest from TMDB for this title, past both caches, on request", async () => {
+    render(<SimilarPage />);
+    await screen.findByText("Thief");
+    expect(requests(fetch, "/api/similar")[0].init).toBeUndefined();
+    fetch.mockImplementation(async (input: string) =>
+      String(input).startsWith("/api/similar") ? jsonResponse({ results: [mk(13, { title: "Brand New" })] }) : jsonResponse(source)
+    );
+    fireEvent.click(screen.getByText("↻ Get latest from TMDB"));
+    expect(await screen.findByText("Brand New")).toBeTruthy();
+    expect(JSON.parse(requests(fetch, "/api/tmdb/refresh")[0].init?.body as string)).toEqual({ title: { type: "movie", id: 10 } });
+    expect(requests(fetch, "/api/similar").at(-1)!.init?.cache).toBe("reload");
+    expect(requests(fetch, "/api/title").at(-1)!.init?.cache).toBe("reload");
+  });
+
+  it("offers no refresh without a valid title", async () => {
+    nav.search = "type=movie";
+    render(<SimilarPage />);
+    await screen.findByText("Missing or invalid title identifier.");
+    expect(screen.queryByText("↻ Get latest from TMDB")).toBeNull();
+  });
+
   it("shows the source title and its similar titles", async () => {
     render(<SimilarPage />);
     expect(await screen.findByText(/Titles Similar to/)).toBeTruthy();
@@ -93,13 +113,5 @@ describe("SimilarPage", () => {
     await screen.findByText("Thief");
     fireEvent.click(within(cardOf("Thief")).getByText("Not interested"));
     expect(stored().dismissed).toEqual(["tv:1", "movie:12"]);
-  });
-});
-
-describe("ReelRadarHome", () => {
-  it("links to the Reel Radar pages", async () => {
-    render(await ReelRadarHome());
-    const hrefs = screen.getAllByRole("link").map((a) => a.getAttribute("href"));
-    for (const path of ["/discover", "/search", "/watchlist", "/watched", "/analysis"]) expect(hrefs).toContain(path);
   });
 });

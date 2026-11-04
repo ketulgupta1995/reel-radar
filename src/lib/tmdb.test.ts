@@ -9,6 +9,7 @@ import {
   normalize,
   personCredits,
   poster,
+  posterSrcSet,
   search,
 } from "./tmdb";
 
@@ -88,10 +89,33 @@ describe("normalize", () => {
   });
 });
 
+describe("cache tags", () => {
+  it("tags lists together, and details by title or person", async () => {
+    vi.stubEnv("TMDB_API_KEY", "key");
+    const fetchMock = mockTmdb({
+      "/discover/movie": { results: [] },
+      "/person/42": { name: "A" },
+      "/person/42/combined_credits": { cast: [] },
+      "/tv/7": { id: 7, name: "B", genres: [] },
+    });
+    const tags = (i: number) => (fetchMock.mock.calls[i] as unknown as [URL, { next: { tags: string[] } }])[1].next.tags;
+    await discover("movie");
+    expect(tags(0)).toEqual(["tmdb-lists"]);
+    await personCredits(42);
+    expect([tags(1), tags(2)]).toEqual([["tmdb-person-42"], ["tmdb-person-42"]]);
+    await detail("tv", 7);
+    expect(tags(3)).toEqual(["tmdb-tv-7"]);
+  });
+});
+
 describe("poster and genreList", () => {
   it("builds a w500 poster URL or null", () => {
     expect(poster("/a.jpg")).toBe("https://image.tmdb.org/t/p/w500/a.jpg");
     expect(poster(null)).toBeNull();
+    expect(poster("/a.jpg", "w154")).toBe("https://image.tmdb.org/t/p/w154/a.jpg");
+    expect(posterSrcSet("/a.jpg")).toBe(
+      "https://image.tmdb.org/t/p/w185/a.jpg 185w, https://image.tmdb.org/t/p/w342/a.jpg 342w, https://image.tmdb.org/t/p/w500/a.jpg 500w"
+    );
   });
 
   it("lists genres per media type", () => {

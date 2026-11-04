@@ -158,11 +158,11 @@ describe("browser caching", () => {
     m.getSimilar.mockResolvedValue([]);
     m.discover.mockResolvedValue([]);
     const cache = async (res: Response | Promise<Response>) => (await res).headers.get("Cache-Control");
-    expect(await cache(titleRoute(get("/api/title?type=movie&id=1")))).toBe("private, max-age=86400");
-    expect(await cache(personRoute(get("/api/person/1"), { params: Promise.resolve({ id: "1" }) }))).toBe("private, max-age=86400");
-    expect(await cache(searchRoute(get("/api/search?query=x")))).toBe("private, max-age=3600");
-    expect(await cache(similarRoute(get("/api/similar?type=movie&id=1")))).toBe("private, max-age=3600");
-    expect(await cache(discoverRoute(get("/api/discover")))).toBe("private, max-age=3600");
+    expect(await cache(titleRoute(get("/api/title?type=movie&id=1")))).toBe("private, max-age=604800");
+    expect(await cache(personRoute(get("/api/person/1"), { params: Promise.resolve({ id: "1" }) }))).toBe("private, max-age=604800");
+    expect(await cache(searchRoute(get("/api/search?query=x")))).toBe("private, max-age=21600");
+    expect(await cache(similarRoute(get("/api/similar?type=movie&id=1")))).toBe("private, max-age=21600");
+    expect(await cache(discoverRoute(get("/api/discover")))).toBe("private, max-age=21600");
     m.detail.mockRejectedValue(new Error("down"));
     expect(await cache(titleRoute(get("/api/title?type=movie&id=1")))).toBeNull();
   });

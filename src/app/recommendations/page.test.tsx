@@ -92,6 +92,59 @@ describe("Recommendations", () => {
     expect(last).toMatchObject({ discoveryStyle: "balanced", era: "recent", mood: "mindbending" });
   });
 
+  it("gets the latest from TMDB on request, even for results it already has", async () => {
+    const fetch = recsFetch();
+    seed({ watched });
+    render(<Recommendations />);
+    await screen.findByText("Rec 101");
+    fireEvent.click(screen.getByText("↻ Get latest from TMDB"));
+    await waitFor(() => expect(requests(fetch, "/api/tmdb/refresh")).toHaveLength(1));
+    await waitFor(() => expect(requests(fetch, "/api/recommendations")).toHaveLength(2));
+    const calls = fetch.mock.calls.map(([input]) => String(input));
+    expect(calls.indexOf("/api/tmdb/refresh")).toBeLessThan(calls.lastIndexOf("/api/recommendations"));
+  });
+
+  it("sends only what ranking needs", async () => {
+    const fetch = recsFetch();
+    seed({ watched, watchlist: [mk(70, { title: "Saved" })] });
+    render(<Recommendations />);
+    await screen.findByText("Rec 101");
+    const body = JSON.parse(requests(fetch, "/api/recommendations")[0].init!.body as string);
+    expect(body.watched[0]).toMatchObject({ id: watched[0].id, mediaType: watched[0].mediaType, genres: watched[0].genres });
+    for (const field of ["overview", "posterPath", "cast", "creators"]) expect(body.watched[0]).not.toHaveProperty(field);
+    expect(body.watchlist).toEqual(["movie:70"]);
+  });
+
+  it("reuses a filter combination it already has, until asked to refresh", async () => {
+    const fetch = recsFetch();
+    seed({ watched });
+    render(<Recommendations />);
+    await screen.findByText("Rec 101");
+    fireEvent.click(screen.getByText("★ Hidden Gems"));
+    await waitFor(() => expect(requests(fetch, "/api/recommendations")).toHaveLength(2));
+    fireEvent.click(screen.getByText("Balanced"));
+    expect(await screen.findByText("Rec 101")).toBeTruthy();
+    fireEvent.click(screen.getByText("★ Hidden Gems"));
+    expect(await screen.findByText("Rec 101")).toBeTruthy();
+    expect(requests(fetch, "/api/recommendations")).toHaveLength(2);
+    fireEvent.click(screen.getByText("Refresh recommendations"));
+    await waitFor(() => expect(requests(fetch, "/api/recommendations")).toHaveLength(3));
+  });
+
+  it("asks again for a filter once the watched list has changed", async () => {
+    const fetch = recsFetch();
+    seed({ watched });
+    render(<Recommendations />);
+    await screen.findByText("Rec 101");
+    fireEvent.click(screen.getByText("★ Hidden Gems"));
+    await waitFor(() => expect(requests(fetch, "/api/recommendations")).toHaveLength(2));
+    await screen.findByText("Rec 101");
+    fireEvent.click(within(cardOf("Rec 101")).getByText("Mark seen"));
+    await waitFor(() => expect(stored().watched).toHaveLength(watched.length + 1));
+    fireEvent.click(screen.getByText("Balanced"));
+    await waitFor(() => expect(requests(fetch, "/api/recommendations")).toHaveLength(3));
+  });
+
   it("marks seen, saves, and dismisses, hiding saved and dismissed titles", async () => {
     recsFetch();
     seed({ watched });

@@ -1,6 +1,6 @@
 import { getSimilar } from "@/lib/tmdb";
 import { MediaType } from "@/types/title";
-import { HOUR, cachedJson } from "@/lib/http";
+import { LIST_MAX_AGE, cachedJson } from "@/lib/http";
 
 export const maxDuration = 10;
 
@@ -35,7 +35,7 @@ export async function GET(request: Request) {
       limit,
     });
 
-    return cachedJson({ results }, HOUR);
+    return cachedJson({ results }, LIST_MAX_AGE);
   } catch (e) {
     return Response.json(
       { error: e instanceof Error ? e.message : "Unable to find similar titles" },

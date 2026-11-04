@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { jsonResponse, mk } from "@/test/fixtures";
+import { requests, routeFetch } from "@/test/pages";
 
 const pathname = vi.hoisted(() => ({ value: "/" }));
 vi.mock("next/navigation", () => ({ usePathname: () => pathname.value }));
@@ -12,6 +13,7 @@ import { TitleDetailsModal } from "./TitleDetailsModal";
 import { StorageControls } from "./StorageControls";
 import { LogoutButton } from "./LogoutButton";
 import { AppSwitcher } from "./AppSwitcher";
+import { TmdbRefreshButton } from "./TmdbRefreshButton";
 import { APPS } from "@/lib/apps";
 import * as storage from "@/lib/storage";
 
@@ -28,6 +30,42 @@ function stubLocation(search = "") {
   return loc;
 }
 
+describe("TmdbRefreshButton", () => {
+  const press = () => fireEvent.click(screen.getByRole("button"));
+
+  it("expires the server's copy for its scope, then reloads", async () => {
+    const fetch = routeFetch();
+    const onRefreshed = vi.fn(async () => {});
+    render(<TmdbRefreshButton person={42} onRefreshed={onRefreshed} />);
+    press();
+    expect(screen.getByRole("button").textContent).toBe("Getting latest…");
+    await waitFor(() => expect(onRefreshed).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("button").textContent).toContain("Get latest from TMDB"));
+    const [call] = requests(fetch, "/api/tmdb/refresh");
+    expect(call.init?.method).toBe("POST");
+    expect(JSON.parse(call.init?.body as string)).toEqual({ person: 42 });
+  });
+
+  it("says so and doesn't reload when the server refuses, and can try again", async () => {
+    routeFetch({ "/api/tmdb/refresh": () => jsonResponse({}, { status: 500 }) });
+    const onRefreshed = vi.fn(async () => {});
+    render(<TmdbRefreshButton onRefreshed={onRefreshed} />);
+    press();
+    await screen.findByText("Couldn't update. Try again");
+    expect(onRefreshed).not.toHaveBeenCalled();
+    routeFetch();
+    press();
+    await waitFor(() => expect(onRefreshed).toHaveBeenCalledTimes(1));
+  });
+
+  it("says so when reloading fails", async () => {
+    routeFetch();
+    render(<TmdbRefreshButton onRefreshed={() => Promise.reject(new Error("down"))} />);
+    press();
+    expect(await screen.findByText("Couldn't update. Try again")).toBeTruthy();
+  });
+});
+
 describe("TitleCard", () => {
   it("shows title info, poster and region badge", () => {
     render(<TitleCard title={mk(1, { title: "Lagaan", year: 2001, rating: 8.1, originalLanguage: "hi", genreNames: ["Drama", "Sport", "Musical"] })} />);
@@ -37,6 +75,7 @@ describe("TitleCard", () => {
     expect(screen.getByText("Drama • Sport")).toBeTruthy();
     expect(screen.getByText("IN")).toBeTruthy();
     expect(screen.getByRole("img").getAttribute("src")).toBe("https://image.tmdb.org/t/p/w500/p1.jpg");
+    expect(screen.getByRole("img").getAttribute("srcset")).toContain("https://image.tmdb.org/t/p/w185/p1.jpg 185w");
   });
 
   it("handles missing poster and genres, and marks series", () => {

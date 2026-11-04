@@ -391,7 +391,7 @@ export default function WatchedPage() {
                       <div className="relative aspect-[2/3] rounded-xl overflow-hidden border border-white/10 group-hover:border-gold/50 transition-all group-hover:shadow-lg group-hover:shadow-gold/10">
                         {t.posterPath ? (
                           <img
-                            src={poster(t.posterPath)!}
+                            src={poster(t.posterPath, "w342")!}
                             alt={t.title}
                             className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-300"
                             loading="lazy"
@@ -568,7 +568,7 @@ export default function WatchedPage() {
                     <div className="h-16 w-11 shrink-0 rounded-lg overflow-hidden poster">
                       {t.posterPath ? (
                         <img
-                          src={poster(t.posterPath)!}
+                          src={poster(t.posterPath, "w154")!}
                           alt={t.title}
                           className="h-full w-full object-cover"
                           loading="lazy"

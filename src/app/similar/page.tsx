@@ -8,6 +8,7 @@ import { ReelNavLinks } from "@/components/ReelNavLinks";
 import { MediaType, Title, keyOf } from "@/types/title";
 import { load, save, useStorageSync, State } from "@/lib/storage";
 import { TitleCard } from "@/components/TitleCard";
+import { TmdbRefreshButton } from "@/components/TmdbRefreshButton";
 import { StorageControls } from "@/components/StorageControls";
 import { poster } from "@/lib/tmdb";
 
@@ -46,19 +47,13 @@ function SimilarContent() {
 
   useStorageSync(setState);
 
-  useEffect(() => {
-    if (!id || !["movie", "tv"].includes(type)) {
-      setLoading(false);
-      setError("Missing or invalid title identifier.");
-      return;
-    }
-
+  const loadSimilar = (init?: RequestInit) => {
     setLoading(true);
     setError("");
 
-    Promise.all([
-      fetch(`/api/title?type=${type}&id=${id}`).then((r) => (r.ok ? r.json() : null)),
-      fetch(`/api/similar?type=${type}&id=${id}&minYear=${eraFilter}`).then((r) => {
+    return Promise.all([
+      fetch(`/api/title?type=${type}&id=${id}`, init).then((r) => (r.ok ? r.json() : null)),
+      fetch(`/api/similar?type=${type}&id=${id}&minYear=${eraFilter}`, init).then((r) => {
         if (!r.ok) throw new Error("Failed to fetch similar titles");
         return r.json();
       }),
@@ -71,6 +66,15 @@ function SimilarContent() {
         setError(err instanceof Error ? err.message : "Unable to load similar titles");
       })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    if (!id || !["movie", "tv"].includes(type)) {
+      setLoading(false);
+      setError("Missing or invalid title identifier.");
+      return;
+    }
+    loadSimilar();
   }, [type, id, eraFilter]);
 
   const toggleWatched = (t: Title) => {
@@ -128,7 +132,7 @@ function SimilarContent() {
               {sourceTitle.posterPath && (
                 <div className="h-36 w-24 sm:h-44 sm:w-28 shrink-0 overflow-hidden rounded-xl border border-white/20 shadow-lg">
                   <img
-                    src={poster(sourceTitle.posterPath)!}
+                    src={poster(sourceTitle.posterPath, "w342")!}
                     alt={sourceTitle.title}
                     className="h-full w-full object-cover"
                   />
@@ -225,6 +229,12 @@ function SimilarContent() {
             </div>
           </div>
         </div>
+
+        {id && ["movie", "tv"].includes(type) && (
+          <div className="mb-6">
+            <TmdbRefreshButton title={{ type, id }} onRefreshed={() => loadSimilar({ cache: "reload" })} />
+          </div>
+        )}
 
         {error && (
           <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-6 text-center text-sm text-red-200">

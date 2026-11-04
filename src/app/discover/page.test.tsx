@@ -32,6 +32,21 @@ const cardOf = (title: string) => {
 };
 
 describe("Discover", () => {
+  it("gets the latest from TMDB, past both caches, on request", async () => {
+    render(<Discover />);
+    await screen.findByText("movie 1-0");
+    await screen.findByText("tv 1-0");
+    expect(discoverCalls().every((r) => r.init === undefined)).toBe(true);
+    const before = discoverCalls().length;
+    fireEvent.click(screen.getByText("↻ Get latest from TMDB"));
+    await waitFor(() => expect(requests(fetch, "/api/tmdb/refresh")).toHaveLength(1));
+    await waitFor(() => expect(discoverCalls().length).toBeGreaterThan(before));
+    await screen.findByText("↻ Get latest from TMDB");
+    const fresh = discoverCalls().slice(before);
+    expect(fresh.every((r) => r.init?.cache === "reload")).toBe(true);
+    expect(fresh[0].url.searchParams.get("page")).toBe("1");
+  });
+
   it("loads fifteen unseen movies and series, and records them as displayed", async () => {
     seed({ watched: [mk(1000, { title: "seen" })], dismissed: ["movie:1001"] });
     render(<Discover />);
