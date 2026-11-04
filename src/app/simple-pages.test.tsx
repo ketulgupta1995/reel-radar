@@ -9,7 +9,7 @@ const nav = vi.hoisted(() => ({ params: { id: "42" } as Record<string, string> }
 vi.mock("next/navigation", () => ({ usePathname: () => "/", useParams: () => nav.params }));
 
 import Home from "./page";
-import Layout from "./layout";
+import Layout, { metadata } from "./layout";
 import SearchPage from "./search/page";
 import PersonPage from "./person/[id]/page";
 import WatchlistPage from "./watchlist/page";
@@ -36,6 +36,11 @@ describe("Home", () => {
 });
 
 describe("Layout", () => {
+  it("links the install manifest and icons", () => {
+    expect(metadata.manifest).toBe("/manifest.webmanifest");
+    expect(metadata.icons.apple).toBe("/apple-touch-icon.png");
+  });
+
   it("renders the page with the logout button", () => {
     const html = Layout({ children: <p>child</p> }) as React.ReactElement<{ children: React.ReactElement }>;
     expect(html.props.children).toBeTruthy();

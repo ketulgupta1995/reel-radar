@@ -26,6 +26,7 @@ npm run dev                  # http://localhost:3000, then sign in
 | `AUTH_SECRET` | ✅ | Signs the session cookie. Generate one with `openssl rand -hex 32`. |
 | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | optional | Enables cloud sync via Turso. Without the URL, data is saved under `data/`. |
 | `MONEY_ENCRYPTION_KEY` | for Money | Encrypts the Money docs where they're stored (`openssl rand -base64 32`). Without it the Money app can't sync. Use the same key locally and on Vercel, and keep a copy somewhere safe. |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`, `PUSH_CRON_SECRET` | for closed-app reminders | See [Reminders with the app closed](#reminders-with-the-app-closed). Without them, reminders only fire while the planner page is open. |
 | `MONEY_MY_NAMES`, `MONEY_FAMILY` | no | The family the Money app starts with, so real names stay out of the repo: your statement names comma-separated, and family members split by `;` with each one's names by `,` (see `.env.example`). Server-only; served to signed-in users by `/api/money/family`. |
 
 If any of the three login variables is missing, nobody can sign in.
@@ -59,7 +60,7 @@ After 10 failed logins within an hour, login is locked for everyone (even with t
 | `/watchlist` | Your saved titles, with sorting and filters |
 | `/search` | Search across movies, series, and people |
 | `/person/[id]` | An actor's or director's filmography, with quick watch and watchlist buttons |
-| `/todos` | **Daily Planner**: tasks with a title, an optional note, a checklist, a priority and a colour tag (Work, Home, Health…), on a drag-to-schedule timeline where you resize blocks by dragging their bottom edge. A **week view** shows seven days side by side; drag tasks between days to move them, or hold Ctrl/Alt while dropping to copy. Each task also has a ⇄ button to move or copy it to any date. A **focus timer** on any task counts down its planned time and records the time actually spent. Tasks can repeat every day or on chosen weekdays (with a 🔥 streak count), the planner can send browser reminders before each block while the page is open, and you can bring over unfinished tasks from yesterday. Type shorthand in the add box (`Gym 6pm 45m #health !high daily`) to set time, length, tag, priority and repeat in one go. Drag the ⋮⋮ handle (or use ↑/↓) to reorder tasks. A day log records wake and sleep times on a clock, your weight in kg, water against a 2.5 L goal, and a short review. Keyboard: N or / to add, ← → to change day, T for today, W for the week view. |
+| `/todos` | **Daily Planner**: tasks with a title, an optional note, a checklist, a priority and a colour tag (Work, Home, Health…), on a drag-to-schedule timeline where you resize blocks by dragging their bottom edge. A **week view** shows seven days side by side; drag tasks between days to move them, or hold Ctrl/Alt while dropping to copy. Each task also has a ⇄ button to move or copy it to any date. A **focus timer** on any task counts down its planned time and records the time actually spent. Tasks can repeat every day or on chosen weekdays (with a 🔥 streak count), the planner can remind you before each block, even with the app closed once [push is set up](#reminders-with-the-app-closed), and you can bring over unfinished tasks from yesterday. Type shorthand in the add box (`Gym 6pm 45m #health !high daily`) to set time, length, tag, priority and repeat in one go. Drag the ⋮⋮ handle (or use ↑/↓) to reorder tasks. A day log records wake and sleep times on a clock, your weight in kg, water against a 2.5 L goal, and a short review. Keyboard: N or / to add, ← → to change day, T for today, W for the week view. |
 | `/todos/lists` | Planner **lists**: things to remember that don't belong to a day (a wishlist, gift ideas, books to read). Make as many named lists as you like, each with an icon. An item can hold a note, a link, a price (each list totals what's still to get), photos and voice notes (up to 6 per item; voice notes up to 2 minutes). Typing `Headphones ₹2,999 amazon.in/x` in the add box fills in the price and link. Pin items to the top, tick them off into a Done section, move them between lists, search across all lists, or add one to today's tasks. 📷 opens the phone camera or photo picker; photos are shrunk to 1600 px before upload. |
 | `/todos/stats` | Planner stats: completion rate by weekday, planned vs. done hours, tasks by tag, focus time, the most postponed tasks, and database reads and writes per day for the whole app, over 7/30/90 days or all time. Pulls every month from the server first, so it covers all your devices. |
 | `/money` | **Money**: a hero card with the month's spending (change vs last month, the monthly limit and about how much a day is left), a bar per day with the daily average, income, what you saved against your goal, and what you owe family; spending by category (share of the month, per-category limits); and a card per family member with what you owe them (what they've spent since you last paid them, as each payment covers what they'd spent up to then; everything they've spent if you never have), what they spent and you paid them that month, a **Paid ✓** button, and **Show transactions**: every payment to them, their spending and money between you, each marked You paid, Owed (after your last payment), Covered (before it) or Not counted. Transactions are grouped by day with the day's total, searchable (payee, note, category) and filterable by person; tap one to change its category, type (spent, refund, income, paid back, ignored), whose it is, its note, or delete it. The **+** button opens a sheet to add one (the category is guessed from the name; "Paid back" picks a family member). The **💵** button logs cash spending: type the amount, tap a category, and it's saved (marked "💵 Cash"; the hero shows how much of the month's spending was cash). **Sort your spending** shows imported spending nobody has confirmed a category for (still Other, or matching more than one category's keywords), one payee at a time with the likely categories first: a tap files all that payee's payments under it and learns it for later imports; **Keep as Other** also stops it being asked again; **Skip for now** hides it until the page reloads. On first use, after a sync shows no family yet, the family from `MONEY_FAMILY` is filled in and your own statement names from `MONEY_MY_NAMES` are set (nothing is added while they're unset). |
@@ -69,7 +70,7 @@ After 10 failed logins within an hour, login is locked for everyone (even with t
 
 **Season tracking.** Series are tracked per season (S1, S2, …). The more seasons you finish, the more weight a series carries in your taste profile.
 
-**Backup.** Export your history and watchlist to a `.json` file, or import one to restore or merge data. The planner has its own Export and Import: one file with every day and daily task. Importing adds to what's there and never deletes; an older single-day planner file still imports. Both apps also sync automatically across devices.
+**Backup.** Export your history and watchlist to a `.json` file, or import one to restore or merge data. The planner has its own Export and Import: one file with every day, daily task, day log and list. Export pulls from the server first, so the file covers all your devices (it warns you if it couldn't). Photos and voice notes on list items aren't in the file: it keeps references, and the files stay on the server. Importing adds to what's there and never deletes; older planner files still import. Both apps also sync automatically across devices.
 
 ---
 
@@ -92,6 +93,7 @@ Data is synced as separate docs, so a change only moves the doc it touches:
 | `planner-daily` | Repeating daily tasks |
 | `planner-log` | Per-day wake time, sleep time, weight (kg), water (ml) and review notes |
 | `planner-lists` | The planner's lists and their items (photos and voice notes only as references) |
+| `push-subscriptions` | Devices that get closed-app reminders. Server only: never served by `/api/sync` |
 | `media-<id>` | One photo or voice note (`{ mime, data }`, base64), written once by `/api/media` and never through `/api/sync` |
 | `money-YYYY-MM` | One month of Money transactions |
 | `money-settings` | Money people, limits/income/goal, learned payee categories, and the list of months with data |
@@ -159,6 +161,8 @@ src/
 │       ├── person/[id]/     GET   Person credits
 │       ├── sync/            GET ?keys=doc:etag,…  /  POST { key, data, baseEtag }
 │       ├── media/[id]/      GET / PUT (raw file, ≤1.5 MB) / DELETE  Photos and voice notes for lists
+│       ├── push/            GET key / POST / DELETE  This device's reminder subscription
+│       ├── push/send/       POST (scheduler secret, no session)  Send the reminders that are due
 │       └── auth/login, auth/logout   POST
 ├── components/
 │   ├── TitleCard.tsx             # Poster card with badges & quick actions
@@ -184,6 +188,11 @@ src/
 │   ├── gpayStatement.ts          # Reads a statement PDF (inflate, ToUnicode, hex/literal strings), Google Pay rows
 │   ├── paytmStatement.ts         # Paytm statement rows
 │   ├── plannerStats.ts           # Planner stats aggregation
+│   ├── plannerBackup.ts          # Planner export and import: days, daily tasks, day log, lists
+│   ├── reminders.ts              # Reminder rules shared by the planner page and the server
+│   ├── push.ts                   # Browser side of reminders: service worker, subscribing, notifications
+│   ├── pushReminders.ts          # Server side: subscriptions, working out what's due
+│   ├── webPush.ts                # VAPID signing and payload encryption with Node's crypto
 │   ├── usageStats.ts             # Database reads/writes totalled per local day
 │   ├── auth.ts                   # HMAC session cookie (Web Crypto, edge-safe)
 │   └── *.test.ts                 # Vitest unit tests
@@ -224,6 +233,31 @@ Imports use the `@/` alias for `src/`. Tailwind theme tokens: `ink` `#07070c` (b
 5. Deploy.
 
 Without a Turso database, sync on Vercel won't persist, because its filesystem is read-only and temporary.
+
+---
+
+## Install as an app
+
+The site is an installable web app. In Chrome or Edge, use the install icon in the address bar or **Add to Home screen** in the menu. On iPhone, use Share → **Add to Home Screen** in Safari; iOS only allows notifications for sites added this way.
+
+## Reminders with the app closed
+
+Turning on 🔔 Reminders in the planner subscribes that device. Each device has its own setting. If push isn't set up or the browser can't do it, reminders still fire while the page is open. Logging out stops them on that device.
+
+Vercel Hobby cron jobs only run daily, so an outside scheduler triggers the sending. To set it up:
+
+1. **Generate the keys** (once; the command is also in `.env.example`):
+   ```bash
+   node -e "const c=require('crypto').createECDH('prime256v1');c.generateKeys();console.log('VAPID_PUBLIC_KEY='+c.getPublicKey('base64url')+'\nVAPID_PRIVATE_KEY='+c.getPrivateKey('base64url'))"
+   openssl rand -hex 32   # PUSH_CRON_SECRET
+   ```
+2. **Add them to Vercel** with `VAPID_SUBJECT` (`mailto:` plus an address of yours), then redeploy.
+3. **Create the scheduled job**, for example on [cron-job.org](https://cron-job.org): `POST https://<your-app>/api/push/send`, every minute, with the header `Authorization: Bearer <PUSH_CRON_SECRET>`.
+4. **Turn on 🔔 Reminders** in the planner on each device.
+
+What a run costs, once per minute with at least one device subscribed: one function call and 3 database reads (subscriptions, daily tasks, this month), so about 43,000 calls and 130,000 reads a month, plus up to one `usage` write a minute. Each reminder sent adds one read and one write. With no devices it's one read a run. These reads show up in the usage chart on the stats page. A slower schedule costs less, but reminders can be late by up to its interval, and an interval over 5 minutes can miss "At start" reminders.
+
+Task text is encrypted so that only the device can read it; the push service sees ciphertext. Changes need about 3 seconds to reach the server, so a task added on a device that's offline only gets a reminder once that device syncs. If you replace the VAPID keys, turn Reminders off and on again on each device.
 
 ---
 

@@ -17,7 +17,6 @@ import {
   deleteSubtask,
   deleteTodo,
   dueReminders,
-  exportPlanner,
   getDailyStreak,
   getFocusSession,
   moveTodoToDate,
@@ -27,7 +26,6 @@ import {
   getAllStoredDates,
   getTodayDate,
   getUnfinishedFromYesterday,
-  importPlanner,
   loadAllTodos,
   loadDailyTasks,
   loadTodos,
@@ -499,77 +497,6 @@ describe("server sync", () => {
     expect(localStorage.getItem(`reel-radar-todos-${D1}`)).toBeNull();
     expect(localStorage.getItem("reel-radar-daily-tasks")).toBeNull();
     expect(localStorage.getItem("reel-radar-v1")).toBe("{}");
-  });
-});
-
-describe("export and import", () => {
-  const task = { id: "d1", text: "Meditate", startDate: D1 };
-  const backupFile = (backup: unknown) => new File([JSON.stringify(backup)], "planner.json");
-
-  const captureExport = async () => {
-    let blob: Blob | undefined;
-    vi.stubGlobal(
-      "URL",
-      Object.assign(URL, {
-        createObjectURL: vi.fn((b: Blob) => ((blob = b), "blob:t")),
-        revokeObjectURL: vi.fn(),
-      })
-    );
-    let name = "";
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
-      name = this.download;
-    });
-    exportPlanner();
-    const text = await new Promise<string>((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.readAsText(blob!);
-    });
-    return { name, backup: JSON.parse(text) };
-  };
-
-  it("exports every day and the daily tasks as one dated file", async () => {
-    saveTodos([todo("a")], D1);
-    saveTodos([todo("b")], "2026-04-10");
-    addTodo("Meditate", D2, undefined, undefined, true);
-    const { name, backup } = await captureExport();
-    expect(name).toBe(`planner-backup-${getTodayDate()}.json`);
-    expect(backup).toMatchObject({ app: "planner", version: 2 });
-    expect(Object.keys(backup.days).sort()).toEqual([D1, D2, "2026-04-10"]);
-    expect(backup.days[D1]).toEqual([todo("a")]);
-    expect(backup.daily).toEqual([expect.objectContaining({ text: "Meditate", startDate: D2 })]);
-  });
-
-  it("round-trips an export into an empty browser", async () => {
-    saveTodos([todo("a"), todo("b", { completed: true })], D1);
-    addTodo("Meditate", D2, undefined, undefined, true);
-    const { backup } = await captureExport();
-    localStorage.clear();
-    await importPlanner(backupFile(backup));
-    const { backup: again } = await captureExport();
-    expect(again).toEqual(backup);
-  });
-
-  it("merges a backup in without deleting anything", async () => {
-    saveTodos([todo("a"), todo("keep")], D1);
-    const r = await importPlanner(
-      backupFile({ app: "planner", version: 2, days: { [D1]: [todo("a", { text: "new" }), todo("b")], [D2]: [todo("x")] }, daily: [task] })
-    );
-    expect(r).toEqual({ todos: 3, days: 2, daily: 1 });
-    expect(loadTodos(D1).map((t) => t.text)).toEqual(["new", "keep", "b"]);
-    expect(ids(D2)).toEqual(["x"]);
-    expect(loadDailyTasks()).toEqual([task]);
-  });
-
-  it("still imports an old single-day file", async () => {
-    expect(await importPlanner(backupFile({ date: D2, todos: [todo("x")] }))).toEqual({ todos: 1, days: 1, daily: 0 });
-    expect(ids(D2)).toEqual(["x"]);
-  });
-
-  it("rejects files that aren't planner backups", async () => {
-    await expect(importPlanner(new File(["nope"], "t.json"))).rejects.toThrow("Invalid JSON backup file.");
-    await expect(importPlanner(backupFile({ todos: [] }))).rejects.toThrow("Not a planner backup file.");
-    await expect(importPlanner(backupFile({ date: D1, todos: "x" }))).rejects.toThrow("Not a planner backup file.");
   });
 });
 

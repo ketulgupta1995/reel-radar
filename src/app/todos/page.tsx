@@ -65,8 +65,6 @@ import {
   WATER_STEP,
   WATER_GOAL,
   type DayLog,
-  exportPlanner,
-  importPlanner,
   syncPlanner,
   usePlannerSync,
   DEFAULT_DURATION,
@@ -78,6 +76,9 @@ import {
   type Priority,
   type Todo,
 } from "@/lib/todos";
+import { exportPlanner, importPlanner } from "@/lib/plannerBackup";
+import { REMINDER_LEADS, reminderBody, reminderKey } from "@/lib/reminders";
+import { disablePush, enablePush, notify } from "@/lib/push";
 
 type Filter = "all" | "active" | "done";
 type MobileView = "tasks" | "schedule";
@@ -97,7 +98,6 @@ function fmtClock(totalSeconds: number): string {
 const DURATIONS = [15, 30, 45, 60, 90, 120, 180, 240];
 
 const REMINDER_KEY = "reel-radar-reminder-lead"; // minutes before a block starts; unset = off
-const REMINDER_LEADS = [0, 5, 10, 15];
 
 function repeatLabel(days?: number[]): string {
   if (!days) return "Daily";
@@ -224,7 +224,10 @@ export default function TodosPage() {
 
   useEffect(() => {
     inputRef.current?.focus();
-    setReminderLead(loadReminderLead());
+    const lead = loadReminderLead();
+    setReminderLead(lead);
+    // Keeps the server's copy current: this device's time zone, or a subscription the browser replaced.
+    if (lead !== null && typeof Notification !== "undefined" && Notification.permission === "granted") void enablePush(lead);
     setFocus(getFocusSession());
   }, []);
 
@@ -296,22 +299,17 @@ export default function TodosPage() {
     return () => clearInterval(id);
   }, [focus]);
 
-  // Notify about today's blocks as they come up (only while this page is open).
+  // Notify about today's blocks as they come up while this page is open. Pushes from the server
+  // cover the rest; they share a tag, so a block that gets both only shows once.
   useEffect(() => {
     if (reminderLead === null || now === null) return;
     if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
     const today = getTodayDate();
     for (const t of dueReminders(loadTodos(today), now, reminderLead)) {
-      const key = `${today}:${t.id}:${t.start}`;
+      const key = reminderKey(today, t);
       if (firedReminders.current.has(key)) continue;
       firedReminders.current.add(key);
-      const mins = t.start! - now;
-      const when = `${mins > 0 ? `In ${mins} min` : "Starting now"} · ${fmtTime(t.start!)}–${fmtTime(t.start! + (t.duration ?? DEFAULT_DURATION))}`;
-      try {
-        new Notification(t.text, { body: t.note ? `${when}\n${t.note}` : when, tag: key });
-      } catch {
-        // Some mobile browsers only allow notifications from a service worker.
-      }
+      notify(t.text, { body: reminderBody(t, now), tag: key });
     }
   }, [now, reminderLead]);
 
@@ -319,6 +317,7 @@ export default function TodosPage() {
     if (value === "") {
       setReminderLead(null);
       saveReminderLead(null);
+      void disablePush();
       return;
     }
     if (typeof Notification === "undefined") {
@@ -333,7 +332,8 @@ export default function TodosPage() {
     }
     setReminderLead(Number(value));
     saveReminderLead(Number(value));
-    flash("Reminders on while this page is open");
+    const everywhere = await enablePush(Number(value));
+    flash(everywhere ? "Reminders on, even with the app closed" : "Reminders on while this page is open");
   };
 
   const flash = (text: string) => {
@@ -444,6 +444,11 @@ export default function TodosPage() {
     flash(`${mode === "copy" ? "Copied" : "Moved"} to ${getRelativeDateLabel(to)}`);
   };
 
+  const handleExport = async () => {
+    const { synced } = await exportPlanner();
+    flash(synced ? "Backup saved" : "Couldn't reach the server, so the backup only has this device's copy");
+  };
+
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -452,9 +457,12 @@ export default function TodosPage() {
       const r = await importPlanner(file);
       setTodos(loadTodosWithDaily(selectedDate));
       refreshMeta();
+      setLogVersion((v) => v + 1);
       flash(
         `Imported ${r.todos} ${r.todos === 1 ? "todo" : "todos"} across ${r.days} ${r.days === 1 ? "day" : "days"}` +
-          (r.daily ? ` + ${r.daily} daily ${r.daily === 1 ? "task" : "tasks"}` : "")
+          (r.daily ? ` + ${r.daily} daily ${r.daily === 1 ? "task" : "tasks"}` : "") +
+          (r.logs ? ` + ${r.logs} day ${r.logs === 1 ? "log" : "logs"}` : "") +
+          (r.lists || r.items ? ` + ${r.items} list ${r.items === 1 ? "item" : "items"}` : "")
       );
     } catch (err) {
       flash(err instanceof Error ? err.message : "Could not import that file");
@@ -591,8 +599,8 @@ export default function TodosPage() {
               Stats →
             </Link>
             <button
-              onClick={exportPlanner}
-              title="Download a backup of every day and daily task"
+              onClick={handleExport}
+              title="Download a backup of every day, daily task, day log and list (photos and voice notes stay on the server)"
               className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-white/80 hover:border-gold/40 hover:text-gold"
             >
               Export
@@ -600,7 +608,7 @@ export default function TodosPage() {
             <input type="file" accept=".json" onChange={handleImport} className="hidden" id="import-file" />
             <label
               htmlFor="import-file"
-              title="Add todos from a planner backup; nothing here is deleted"
+              title="Add what's in a planner backup; nothing here is deleted"
               className="cursor-pointer rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-white/80 hover:border-gold/40 hover:text-gold"
             >
               Import
@@ -1077,7 +1085,7 @@ export default function TodosPage() {
                 onChange={(e) => handleReminderChange(e.target.value)}
                 className="rounded-lg border border-white/10 bg-panel px-2 py-1 text-xs text-white focus:border-gold/50 focus:outline-none"
                 aria-label="Reminders"
-                title="Browser notification before each block today (while this page is open)"
+                title="Notification on this device before each block"
               >
                 <option value="">🔕 No reminders</option>
                 {REMINDER_LEADS.map((m) => (
@@ -1778,11 +1786,7 @@ function FocusBar({
     if (!over || alerted.current === session.todoId + session.startedAt) return;
     alerted.current = session.todoId + session.startedAt;
     if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-      try {
-        new Notification(`Time's up: ${session.text}`, { body: "Your planned time for this block is over." });
-      } catch {
-        // Some mobile browsers only allow notifications from a service worker.
-      }
+      notify(`Time's up: ${session.text}`, { body: "Your planned time for this block is over." });
     }
   }, [over, session, alerted]);
 

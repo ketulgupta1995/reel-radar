@@ -25,12 +25,14 @@ export default function PlannerStatsPage() {
   const [days, setDays] = useState<Record<string, Todo[]> | null>(null);
   const [range, setRange] = useState<Range>("30");
   const [usage, setUsage] = useState<UsageBucket[] | null>(null);
+  const [offline, setOffline] = useState(false);
 
   // Show this browser's copy at once, then every month from the server (mostly unchanged, so cheap).
   useEffect(() => {
     setDays(loadAllTodos());
     syncAllPlanner().then((changed) => {
       if (changed) setDays(loadAllTodos());
+      setOffline(changed === null);
     });
     fetch("/api/usage")
       .then((r) => (r.ok ? r.json() : null))
@@ -62,7 +64,7 @@ export default function PlannerStatsPage() {
           <div>
             <h1 className="text-2xl font-bold sm:text-3xl">Planner stats</h1>
             <p className="mt-1 text-white/60">
-              {formatShortDate(from)} – {formatShortDate(today)} · from the days saved in this browser
+              {formatShortDate(from)} – {formatShortDate(today)} · {offline ? "this browser's copy (couldn't reach the server)" : "across all your devices"}
             </p>
           </div>
           <div className="flex self-start rounded-full border border-white/15 bg-white/5 p-0.5 text-sm sm:self-auto">

@@ -1,11 +1,13 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { disablePush } from "@/lib/push";
 
 export function LogoutButton() {
   if (usePathname() === "/login") return null;
 
   async function logout() {
+    await disablePush(); // needs the session; a signed-out device shouldn't get task names
     await fetch("/api/auth/logout", { method: "POST" });
     window.location.href = "/login";
   }

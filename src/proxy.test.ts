@@ -50,6 +50,12 @@ describe("proxy", () => {
 });
 
 describe("matcher", () => {
+  it("skips only the exact service worker and scheduler paths", () => {
+    const matches = (path: string) => new RegExp(`^${config.matcher[0]}$`).test(path);
+    for (const path of ["/sw.js", "/api/push/send"]) expect(matches(path)).toBe(false);
+    for (const path of ["/api/push", "/api/push/send/x", "/api/push/sender", "/sw.js/x", "/swxjs"]) expect(matches(path)).toBe(true);
+  });
+
   // Next compiles the matcher with path-to-regexp; as a plain regex the group behaves the same.
   const matches = (path: string) => new RegExp(`^${config.matcher[0]}$`).test(path);
 

@@ -156,6 +156,23 @@ describe("StorageControls", () => {
 });
 
 describe("LogoutButton", () => {
+  it("stops this device's reminders before the session ends", async () => {
+    pathname.value = "/discover";
+    const loc = stubLocation();
+    const sub = { endpoint: "https://fcm.googleapis.com/x", unsubscribe: vi.fn(async () => true) };
+    const reg = { pushManager: { getSubscription: vi.fn(async () => sub) } };
+    Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: { getRegistration: vi.fn(async () => reg) } });
+    vi.stubGlobal("PushManager", class {});
+    render(<LogoutButton />);
+    fireEvent.click(screen.getByText("Log out"));
+    await waitFor(() => expect(loc.href).toBe("/login"));
+    delete (navigator as unknown as { serviceWorker?: unknown }).serviceWorker;
+    expect(sub.unsubscribe).toHaveBeenCalled();
+    const urls = fetchMock.mock.calls.map((c) => c[0]);
+    expect(urls.indexOf("/api/push")).toBeLessThan(urls.indexOf("/api/auth/logout"));
+    expect(urls).toContain("/api/push");
+  });
+
   it("is hidden on the login page", () => {
     pathname.value = "/login";
     const { container } = render(<LogoutButton />);
@@ -167,8 +184,8 @@ describe("LogoutButton", () => {
     const loc = stubLocation();
     render(<LogoutButton />);
     fireEvent.click(screen.getByText("Log out"));
-    expect(fetchMock).toHaveBeenCalledWith("/api/auth/logout", { method: "POST" });
     await waitFor(() => expect(loc.href).toBe("/login"));
+    expect(fetchMock).toHaveBeenCalledWith("/api/auth/logout", { method: "POST" });
   });
 });
 

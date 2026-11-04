@@ -17,6 +17,8 @@ export async function proxy(req: NextRequest) {
 }
 
 // Static files skip the proxy: they hold nothing private, and each run is a billed invocation.
+// So does /api/push/send, which an outside scheduler calls every minute with its own secret, checked
+// in the route. /sw.js has to load without a session for a browser to keep its service worker.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|svg|ico|webp|txt|xml|webmanifest)$).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|sw\\.js$|api/push/send$|.*\\.(?:png|jpg|jpeg|svg|ico|webp|txt|xml|webmanifest)$).*)"],
 };

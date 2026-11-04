@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { merge3, same } from "@/lib/syncDocs";
 import { SYNC_EVENT, markDirty, registerDocs, syncKeys, watchKeys } from "@/lib/sync";
 import { addTodo, getTodayDate } from "@/lib/todos";
-import type { MediaRef } from "@/lib/media";
+import { MAX_ITEM_MEDIA, MEDIA_ID, MEDIA_TYPES, type MediaRef } from "@/lib/media";
 
 // The planner's lists: things to remember that don't belong to a day (a wishlist, gift ideas,
 // books to read). Lists and their items are one synced doc, "planner-lists". Photos and voice
@@ -92,6 +92,13 @@ function save(lists: RememberList[], items: ListItem[]): void {
 
 const allLists = () => readListsDoc().lists.map((e) => e.value);
 const allItems = () => readListsDoc().items.map((e) => e.value);
+
+// Add `incoming` to `current`: the same id takes the incoming copy, and nothing is deleted.
+export function mergeById<T extends { id: string }>(current: T[], incoming: T[]): T[] {
+  const byId = new Map(incoming.map((t) => [t.id, t]));
+  const have = new Set(current.map((t) => t.id));
+  return [...current.map((t) => byId.get(t.id) ?? t), ...incoming.filter((t) => !have.has(t.id))];
+}
 
 // Drop unset fields, so a cleared note doesn't linger as `note: undefined` in the synced copy.
 const compact = <T extends object>(o: T): T =>
@@ -269,6 +276,60 @@ export function clearDone(listId: string): MediaRef[] {
 export function planItem(item: ListItem, date = getTodayDate()): void {
   const note = [item.note, item.link].filter(Boolean).join("\n");
   addTodo(item.text, date, undefined, undefined, undefined, note || undefined);
+}
+
+// ---------------- Backup ----------------
+
+export type ListsBackup = { lists: RememberList[]; items: ListItem[] };
+
+export const listsBackup = (): ListsBackup => ({ lists: allLists(), items: allItems() });
+
+const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+
+const isMediaRef = (m: unknown): m is MediaRef => {
+  const r = m as MediaRef | null;
+  return !!r && typeof r.id === "string" && MEDIA_ID.test(r.id) && MEDIA_TYPES[r.mime] === r.kind && typeof r.size === "number";
+};
+
+// Backups are untrusted: keep only well-formed fields, and links that pass cleanLink().
+function cleanBackupList(raw: unknown): RememberList | null {
+  const l = raw as Partial<RememberList> | null;
+  if (typeof l?.id !== "string" || typeof l.name !== "string") return null;
+  return compact({ id: l.id, name: l.name, icon: str(l.icon), createdAt: num(l.createdAt) ?? Date.now() });
+}
+
+function cleanBackupItem(raw: unknown): ListItem | null {
+  const i = raw as Partial<ListItem> | null;
+  if (typeof i?.id !== "string" || typeof i.listId !== "string" || typeof i.text !== "string") return null;
+  const media = Array.isArray(i.media) ? i.media.filter(isMediaRef).slice(0, MAX_ITEM_MEDIA) : [];
+  const price = num(i.price);
+  return compact({
+    id: i.id,
+    listId: i.listId,
+    text: i.text,
+    note: str(i.note),
+    link: typeof i.link === "string" ? cleanLink(i.link) : undefined,
+    price: price !== undefined && price >= 0 ? price : undefined,
+    done: i.done === true,
+    doneAt: num(i.doneAt),
+    pinned: i.pinned === true ? true : undefined,
+    media: media.length ? media : undefined,
+    createdAt: num(i.createdAt) ?? Date.now(),
+  });
+}
+
+// Add lists and items from a backup to what's here: the same id takes the backup's copy, and
+// nothing is deleted. An item whose list is in neither place is left out.
+export function restoreLists(backup: unknown): { lists: number; items: number } {
+  const b = (backup ?? {}) as { lists?: unknown; items?: unknown };
+  const lists = (Array.isArray(b.lists) ? b.lists : []).map(cleanBackupList).filter((l): l is RememberList => !!l);
+  const items = (Array.isArray(b.items) ? b.items : []).map(cleanBackupItem).filter((i): i is ListItem => !!i);
+  const mergedLists = mergeById(allLists(), lists);
+  const known = new Set(mergedLists.map((l) => l.id));
+  const usable = items.filter((i) => known.has(i.listId));
+  save(mergedLists, mergeById(allItems(), usable));
+  return { lists: lists.length, items: usable.length };
 }
 
 // ---------------- Sync ----------------

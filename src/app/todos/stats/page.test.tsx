@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { jsonResponse } from "@/test/fixtures";
 import { routeFetch, requests } from "@/test/pages";
 import { Todo, getTodayDate, saveTodos, shiftDate } from "@/lib/todos";
 
@@ -97,5 +98,16 @@ describe("PlannerStatsPage", () => {
     expect(await screen.findByText(/Writes · 0/)).toBeTruthy();
     fireEvent.click(screen.getByText("All time"));
     expect(screen.getByText(/Reads · 0/)).toBeTruthy();
+  });
+
+  it("says the numbers cover all devices, unless the server couldn't be reached", async () => {
+    routeFetch();
+    const { unmount } = render(<PlannerStatsPage />);
+    expect(await screen.findByText(/across all your devices/)).toBeTruthy();
+    unmount();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    routeFetch({ "/api/sync": () => jsonResponse({}, { status: 500 }) });
+    render(<PlannerStatsPage />);
+    expect(await screen.findByText(/this browser's copy \(couldn't reach the server\)/)).toBeTruthy();
   });
 });

@@ -3,6 +3,9 @@
 import { useEffect } from "react";
 import { merge3 } from "@/lib/syncDocs";
 import { SYNC_EVENT, markDirty, registerDocs, syncKeys, watchKeys } from "@/lib/sync";
+import { DEFAULT_DURATION, missingDailyTasks, repeatsOn, weekday } from "@/lib/reminders";
+
+export { DEFAULT_DURATION, dueReminders, repeatsOn, weekday } from "@/lib/reminders";
 
 export type Priority = "high" | "medium" | "low";
 
@@ -54,19 +57,11 @@ export type DailyTask = {
 
 export const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 
-export const weekday = (date: string): number => new Date(date + "T00:00:00").getDay();
-
 // Sorted, de-duplicated weekdays; no days or all seven means "every day" (undefined).
 function normalizeDays(days?: number[]): number[] | undefined {
   const d = Array.from(new Set(days ?? [])).filter((n) => n >= 0 && n <= 6).sort((a, b) => a - b);
   return d.length === 0 || d.length === 7 ? undefined : d;
 }
-
-export function repeatsOn(task: DailyTask, date: string): boolean {
-  return !task.days || task.days.includes(weekday(date));
-}
-
-export const DEFAULT_DURATION = 60;
 
 export type Schedule = { start: number; duration?: number };
 
@@ -353,6 +348,11 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 export const WATER_STEP = 250; // one glass
 export const WATER_GOAL = 2500; // the daily target the progress bar fills toward
 
+export function loadAllDayLogs(): Record<string, DayLog> {
+  if (typeof window === "undefined") return {};
+  return Object.fromEntries(readDoc<LogDoc>(LOG_DOC).items.map((i) => [i.date, i.log]));
+}
+
 export function loadDayLog(date: string): DayLog {
   if (typeof window === "undefined") return {};
   return readDoc<LogDoc>(LOG_DOC).items.find((i) => i.date === date)?.log ?? {};
@@ -396,7 +396,7 @@ export function loadDailyTasks(): DailyTask[] {
   return readDaily().items.map((i) => i.task);
 }
 
-function saveDailyTasks(tasks: DailyTask[]): void {
+export function saveDailyTasks(tasks: DailyTask[]): void {
   if (typeof window === "undefined") return;
   const doc = readDaily();
   const now = Date.now();
@@ -453,10 +453,7 @@ function syncDailyFrom(todo: Todo | undefined): void {
 // Load a day's todos, adding that day's copy of every daily task it is missing.
 export function loadTodosWithDaily(date: string): Todo[] {
   const todos = loadTodos(date);
-  const present = new Set(todos.map((t) => t.dailyId).filter(Boolean));
-  const missing = loadDailyTasks().filter(
-    (d) => d.startDate <= date && repeatsOn(d, date) && !present.has(d.id) && !d.skipDates?.includes(date)
-  );
+  const missing = missingDailyTasks(loadDailyTasks(), todos, date);
   if (missing.length === 0) return todos;
   const updated = [
     ...todos,
@@ -671,13 +668,6 @@ export function addSpentTime(id: string, minutes: number, date?: string): Todo[]
   return updated;
 }
 
-// ---------------- Reminders ----------------
-
-// Unfinished scheduled todos starting within the next `lead` minutes of `now` (minutes since midnight).
-export function dueReminders(todos: Todo[], now: number, lead: number): Todo[] {
-  return todos.filter((t) => !t.completed && t.start !== undefined && now >= t.start - lead && now <= t.start);
-}
-
 export function deleteTodo(id: string, date?: string): Todo[] {
   const todos = loadTodos(date);
   const updated = todos.filter((t) => t.id !== id);
@@ -788,74 +778,4 @@ export function usePlannerSync(dates: string[], onChange: () => void): void {
     // onChange reloads from localStorage; re-subscribe only when the months change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keys]);
-}
-
-// ---------------- Backup ----------------
-
-export type PlannerBackup = { app: "planner"; version: 2; days: Record<string, Todo[]>; daily: DailyTask[] };
-export type PlannerImport = { todos: number; days: number; daily: number };
-
-export function exportPlanner(): void {
-  const backup: PlannerBackup = { app: "planner", version: 2, days: loadAllTodos(), daily: loadDailyTasks() };
-  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `planner-backup-${getTodayDate()}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-const isTodo = (t: unknown): t is Todo =>
-  !!t && typeof (t as Todo).id === "string" && typeof (t as Todo).text === "string";
-const isDailyTask = (t: unknown): t is DailyTask =>
-  !!t && typeof (t as DailyTask).id === "string" && typeof (t as DailyTask).startDate === "string";
-
-// Add imported items to what's here: a todo or task with the same id takes the imported version,
-// and nothing is deleted.
-function mergeById<T extends { id: string }>(current: T[], incoming: T[]): T[] {
-  const byId = new Map(incoming.map((t) => [t.id, t]));
-  const have = new Set(current.map((t) => t.id));
-  return [...current.map((t) => byId.get(t.id) ?? t), ...incoming.filter((t) => !have.has(t.id))];
-}
-
-function readFile(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsText(file);
-  });
-}
-
-// Import a planner backup from exportPlanner(), or an older single-day { date, todos } file.
-// Pulls every month first, so the import merges into the latest copy.
-export async function importPlanner(file: File): Promise<PlannerImport> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(await readFile(file));
-  } catch {
-    throw new Error("Invalid JSON backup file.");
-  }
-  const p = parsed as Partial<PlannerBackup> & { date?: unknown; todos?: unknown };
-  const days: Record<string, Todo[]> = {};
-  if (p && p.app === "planner" && p.days && typeof p.days === "object") {
-    for (const [date, todos] of Object.entries(p.days)) {
-      if (DATE_RE.test(date) && Array.isArray(todos)) days[date] = todos.filter(isTodo);
-    }
-  } else if (p && typeof p.date === "string" && DATE_RE.test(p.date) && Array.isArray(p.todos)) {
-    days[p.date] = p.todos.filter(isTodo);
-  } else {
-    throw new Error("Not a planner backup file.");
-  }
-  const daily = Array.isArray(p.daily) ? p.daily.filter(isDailyTask) : [];
-
-  await syncAllPlanner();
-  for (const [date, todos] of Object.entries(days)) saveTodos(mergeById(loadTodos(date), todos), date);
-  if (daily.length) saveDailyTasks(mergeById(loadDailyTasks(), daily));
-  return {
-    todos: Object.values(days).reduce((n, t) => n + t.length, 0),
-    days: Object.values(days).filter((t) => t.length > 0).length,
-    daily: daily.length,
-  };
 }

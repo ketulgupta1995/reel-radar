@@ -42,6 +42,7 @@ Copy `.env.example` to `.env.local`. Never commit `.env.local` or print its valu
 | `AUTH_SECRET` | yes | HMAC key for the session cookie |
 | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | no | Turns on Turso storage; without the URL, storage falls back to `data/` |
 | `MONEY_ENCRYPTION_KEY` | for Money | 32 bytes, base64. `docStore` encrypts `money-*` docs with it; money reads and writes fail without it |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`, `PUSH_CRON_SECRET` | no | Closed-app reminders. The public key reaches the browser through `GET /api/push` behind the login; don't make any of these `NEXT_PUBLIC_` |
 | `MONEY_MY_NAMES`, `MONEY_FAMILY` | no | Starter family for Money (`lib/moneyFamily.ts`), served by `api/money/family` and added once by `seedFamily()`. Keeps real names out of the public repo; never make them `NEXT_PUBLIC_` (static bundles aren't behind the login) |
 
 ## Keep away from live data
@@ -63,7 +64,7 @@ src/
                          person/[id], todos, todos/stats, todos/lists, money, money/import, money/settings, login
                          (api/money/family: starter family from the env)
   app/api/               Route handlers: discover, recommendations, similar, search, title,
-                         person/[id], sync, media/[id], usage, auth/login, auth/logout
+                         person/[id], sync, media/[id], usage, push, push/send, auth/login, auth/logout
   components/            TitleCard, TitleDetailsModal, StorageControls, LogoutButton, AppSwitcher
   lib/
     apps.ts              App registry (home page cards + AppSwitcher menu)
@@ -72,7 +73,12 @@ src/
     region.ts            Indian vs Global rule (isIndianTitle, isSouthIndianTitle)
     analysis.ts          Analytics aggregation
     storage.ts           Reel Radar state: load/save, merge, export/import, useStorageSync()
-    todos.ts             Todo and daily-task model and logic, planner sync and backup ("use client")
+    todos.ts             Todo and daily-task model and logic, planner sync ("use client")
+    plannerBackup.ts     Planner export/import: days, daily tasks, day log, lists ("use client")
+    reminders.ts         Reminder rules shared by the page and the server (no "use client")
+    push.ts              Browser side of reminders: service worker, subscribing, notify()
+    pushReminders.ts     Server side of reminders: subscriptions, what's due, sending
+    webPush.ts           VAPID signing and RFC 8291 encryption with Node crypto (server only)
     lists.ts             Planner lists (wishlist, things to remember): items, quick-add parsing, sync ("use client")
     media.ts             Photo/voice-note uploads to /api/media: shrinking, type and size limits
     money.ts             Money model: transactions, people, limits, categories, import plan, sync ("use client")
@@ -110,9 +116,10 @@ The repo is indexed by CodeGraph (`.codegraph/`). Use `codegraph explore "<symbo
   - `money-*` docs are encrypted at rest in `docStore` (`seal`/`unseal`: AES-256-GCM, `enc:v1:<iv>:<ciphertext+tag>`, the doc key as AAD), in Turso and `data/` alike. Etags hash the stored (encrypted) text. Never add a path that stores them unsealed or falls back to plain text when the key is missing. Plain legacy docs are sealed on read (the read query returns their body even for a matching etag). Tests set the key with `vi.stubEnv("MONEY_ENCRYPTION_KEY", ...)`.
   - `readDoc`/`writeDoc` count every call per half hour (`flushUsage()` saves the counts to the `usage` table, or `data/usage.json`; `/api/usage` serves them to the stats page). Any new code path that queries the `docs` table must go through them so it is counted.
 - **Media** (list photos and voice notes): one `media-<id>` doc each, through `readDoc`/`writeDoc`/`deleteDoc` in `api/media/[id]`, never `/api/sync` (they stay out of `DOC_KEY` and out of `localStorage`). Ids are random and files are never rewritten, so GET answers `private, immutable`. Only the types in `MEDIA_TYPES` are stored or served (no SVG or HTML), up to `MAX_MEDIA_BYTES`. List items keep `MediaRef`s; whoever drops an item, photo or list deletes its media. Links on items go through `cleanLink()` (http/https only) before they reach an `href`. `next.config.mjs` allows `microphone=(self)` for voice notes.
+- **Reminders**: `public/sw.js` shows pushes and has no `fetch` handler, so private pages are never cached. An outside scheduler calls `POST /api/push/send` every minute with `PUSH_CRON_SECRET`. It's the one data route `proxy.ts` skips, so it must check that secret itself, stay shut when the secret is unset, answer with counts only, and never log task text or endpoints. `push-subscriptions` goes through `readDoc`/`writeDoc` and stays out of `DOC_KEY`. Stored endpoints are limited to known push services (`PUSH_HOST`), because the server POSTs to them. The server works out what's due from the docs, so it counts today's repeating tasks that have no copy yet (`missingDailyTasks`). Code it shares with `lib/todos.ts` belongs in `lib/reminders.ts`, because a `"use client"` module can't be called from a route.
 - **Vercel usage**: TMDB GET routes answer through `cachedJson()` and every route sets `maxDuration`. Keep new routes the same.
 - **Todos** are stored one doc per month (`planner-YYYY-MM`), plus `planner-daily` for repeating tasks. `loadTodos`/`saveTodos` keep the per-day API on top of that.
-- **Auth**: `lib/auth.ts` must stay Web Crypto–only (no Node `crypto`) so it stays portable between the proxy and route handlers. New API routes are protected automatically by the proxy matcher. Unauthenticated `/api/*` requests get a 401 JSON response, and unauthenticated pages redirect to `/login?next=...`. Login guesses are capped (`beginLoginAttempt()`/`forgetLoginAttempt()` in `docStore`, `login_attempts` table or `data/login-attempts.json`): 10 failures an hour across all clients, then 429 even for the right password. Each attempt is recorded before the password is checked so parallel guesses count; if it can't be recorded, login answers 503 rather than skipping the cap.
+- **Auth**: `lib/auth.ts` must stay Web Crypto–only (no Node `crypto`) so it stays portable between the proxy and route handlers. New API routes are protected automatically by the proxy matcher (`/api/push/send` is the exception, with its own secret). Unauthenticated `/api/*` requests get a 401 JSON response, and unauthenticated pages redirect to `/login?next=...`. Login guesses are capped (`beginLoginAttempt()`/`forgetLoginAttempt()` in `docStore`, `login_attempts` table or `data/login-attempts.json`): 10 failures an hour across all clients, then 429 even for the right password. Each attempt is recorded before the password is checked so parallel guesses count; if it can't be recorded, login answers 503 rather than skipping the cap.
 - **Recommendations**: ranking in `lib/recommend.ts` must stay deterministic and must exclude watched, watchlisted, and dismissed titles. If you change scoring weights, update the formula in the README and add or adjust a test.
 - **Indian vs Global**: defined once in `lib/region.ts` (origin country `IN` or an Indian original language). Always call `isIndianTitle` / `isSouthIndianTitle`. Never write language lists inline. (`originCountry: "IN"` passed to `discover()` is a TMDB query filter, which is a separate thing.)
 - **TMDB**: call it only from server code via `lib/tmdb.ts` (it has the timeout, retry, and data-cache TTLs: 6 h for lists, 7 days for details). Posters load from `image.tmdb.org`, the only allowed remote image host in `next.config.mjs`.

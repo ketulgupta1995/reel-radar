@@ -758,6 +758,60 @@ describe("the focus timer", () => {
 });
 
 describe("reminders", () => {
+  const fakeWorker = (subscribe = vi.fn(async () => ({ endpoint: "https://fcm.googleapis.com/x", toJSON: () => ({ endpoint: "https://fcm.googleapis.com/x" }) }))) => {
+    const reg = { pushManager: { getSubscription: vi.fn(async () => null), subscribe }, showNotification: vi.fn(async (_title: string) => {}) };
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { register: vi.fn(async () => reg), ready: Promise.resolve(reg), getRegistration: vi.fn(async () => reg) },
+    });
+    vi.stubGlobal("PushManager", class {});
+    return reg;
+  };
+  afterEach(() => {
+    delete (navigator as unknown as { serviceWorker?: unknown }).serviceWorker;
+  });
+
+  it("subscribes the device when reminders go on, and says they work with the app closed", async () => {
+    vi.stubGlobal("Notification", FakeNotification);
+    fakeWorker();
+    fetch = routeFetch({ "/api/push": { publicKey: "AQAB" } });
+    render(<TodosPage />);
+    fireEvent.change(screen.getByLabelText("Reminders"), { target: { value: "10" } });
+    expect(await flashed("Reminders on, even with the app closed")).toBeTruthy();
+    const post = requests(fetch, "/api/push").find((r) => r.init?.method === "POST")!;
+    expect(JSON.parse(post.init!.body as string)).toMatchObject({ lead: 10, timeZone: expect.any(String) });
+  });
+
+  it("falls back to the open page when the server has no push set up", async () => {
+    vi.stubGlobal("Notification", FakeNotification);
+    fakeWorker();
+    routeFetch({ "/api/push": () => jsonResponse({}, { status: 503 }) });
+    render(<TodosPage />);
+    fireEvent.change(screen.getByLabelText("Reminders"), { target: { value: "5" } });
+    expect(await flashed("Reminders on while this page is open")).toBeTruthy();
+  });
+
+  it("refreshes the subscription on open when reminders were already on", async () => {
+    vi.stubGlobal("Notification", FakeNotification);
+    fakeWorker();
+    fetch = routeFetch({ "/api/push": { publicKey: "AQAB" } });
+    localStorage.setItem("reel-radar-reminder-lead", "5");
+    render(<TodosPage />);
+    await waitFor(() => expect(requests(fetch, "/api/push").some((r) => r.init?.method === "POST")).toBe(true));
+  });
+
+  it("shows page reminders through the service worker when there is one", async () => {
+    vi.stubGlobal("Notification", FakeNotification);
+    const reg = fakeWorker();
+    routeFetch({ "/api/push": { publicKey: "AQAB" } });
+    saveTodos([todo("Meeting", { start: Math.min(nowMinutes() + 3, 24 * 60 - 1), duration: 30 })], T);
+    localStorage.setItem("reel-radar-reminder-lead", "5");
+    render(<TodosPage />);
+    await waitFor(() => expect(reg.showNotification).toHaveBeenCalled());
+    expect(reg.showNotification.mock.calls[0][0]).toBe("Meeting");
+    expect(FakeNotification.sent).toEqual([]);
+  });
+
   it("turns reminders on or explains why it can't", async () => {
     render(<TodosPage />);
     const select = screen.getByLabelText("Reminders");
@@ -791,13 +845,40 @@ describe("reminders", () => {
 });
 
 describe("backup and sync", () => {
-  it("exports the planner", () => {
+  it("exports the planner", async () => {
     saveTodos([todo("A")], T);
     vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:x"), revokeObjectURL: vi.fn() }));
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
     render(<TodosPage />);
     fireEvent.click(screen.getByText("Export"));
+    expect(await flashed("Backup saved")).toBeTruthy();
     expect(click).toHaveBeenCalled();
+  });
+
+  it("warns when a backup couldn't pull from the server", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    routeFetch({ "/api/sync": () => jsonResponse({}, { status: 500 }) });
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:x"), revokeObjectURL: vi.fn() }));
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    render(<TodosPage />);
+    fireEvent.click(screen.getByText("Export"));
+    expect(await flashed("Couldn't reach the server, so the backup only has this device's copy")).toBeTruthy();
+    expect(click).toHaveBeenCalled();
+  });
+
+  it("reports the day logs and list items an import added, and shows the log", async () => {
+    const { container } = render(<TodosPage />);
+    const backup = {
+      app: "planner",
+      version: 3,
+      days: { [T]: [todo("A")] },
+      daily: [],
+      log: { [T]: { weight: 71 }, [Y]: { water: 500 } },
+      lists: { lists: [{ id: "l", name: "Gifts", createdAt: 1 }], items: [{ id: "i", listId: "l", text: "Scarf", done: false, createdAt: 1 }] },
+    };
+    fireEvent.change(container.querySelector("#import-file")!, { target: { files: [new File([JSON.stringify(backup)], "b.json")] } });
+    expect(await flashed("Imported 1 todo across 1 day + 2 day logs + 1 list item")).toBeTruthy();
+    expect(loadDayLog(T).weight).toBe(71);
   });
 
   it("imports a backup and reports what it added, or why it couldn't", async () => {

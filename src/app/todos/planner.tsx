@@ -4,6 +4,9 @@
 
 import { useRef, useState } from "react";
 import { DEFAULT_DURATION, getTodayDate, shiftDate, type Priority, type TagId, type Todo } from "@/lib/todos";
+import { fmtTime } from "@/lib/reminders";
+
+export { fmtTime };
 
 export const HOUR_PX = 64;
 export const SNAP = 15; // minutes
@@ -48,11 +51,6 @@ export function getRelativeDateLabel(dateStr: string): string {
   return formatDate(dateStr);
 }
 
-export const fmtTime = (mins: number): string => {
-  const h = Math.floor(mins / 60) % 24;
-  const m = mins % 60;
-  return `${h % 12 || 12}${m ? ":" + String(m).padStart(2, "0") : ""} ${h < 12 ? "AM" : "PM"}`;
-};
 export const fmtDuration = (mins: number): string =>
   mins % 60 === 0 ? `${mins / 60}h` : mins > 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
 export const snap = (mins: number) => Math.round(mins / SNAP) * SNAP;
