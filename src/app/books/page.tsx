@@ -1,34 +1,52 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { AppSwitcher } from "@/components/AppSwitcher";
-import { BookEntry, addBook, addUpload, errorText, loadLibrary } from "@/lib/books";
-import { downloadFound, searchCatalogue, sourceName } from "@/lib/catalogue";
+import { AddResult, BookEntry, addBook, addUpload, errorText, loadLibrary, localIds, purgeRemoved, removeBook } from "@/lib/books";
+import { syncBooks, useBooksSync } from "@/lib/booksDoc";
+import { downloadFound, foundFromEntry, searchCatalogue, sourceName } from "@/lib/catalogue";
 import type { Found } from "@/lib/sources";
+
+const added = (r: AddResult, expectedId?: string) => {
+  const title = `“${r.entry.title}”`;
+  if (r.restored) return `Added the file for ${title}. Your place is kept.`;
+  if (r.existing) return `${title} is already in your library.`;
+  return expectedId && expectedId !== r.entry.id ? `That's a different edition, so ${title} was added as a new book.` : `Added ${title}.`;
+};
 
 export default function BooksPage() {
   const [books, setBooks] = useState<BookEntry[]>([]);
+  const [here, setHere] = useState<Set<string> | null>(null); // books whose file is on this device
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [searched, setSearched] = useState("");
   const [results, setResults] = useState<Found[] | null>(null);
+  const [problems, setProblems] = useState<string[]>([]);
   const [searching, setSearching] = useState(false);
   const [adding, setAdding] = useState("");
-  const [problems, setProblems] = useState<string[]>([]);
+  const [removing, setRemoving] = useState("");
 
-  // Read after mount, so the first render matches the prerendered page.
-  useEffect(() => setBooks(loadLibrary()), []);
+  const refresh = useCallback(() => {
+    setBooks(loadLibrary());
+    localIds().then(setHere, () => setHere(new Set()));
+  }, []);
 
-  async function upload(file: File | undefined) {
+  // Read after mount, so the first render matches the prerendered page. Then pick up other devices' changes.
+  useEffect(() => {
+    refresh();
+    void syncBooks().then(() => purgeRemoved()).then(refresh);
+  }, [refresh]);
+  useBooksSync(() => void purgeRemoved().then(refresh));
+
+  async function upload(file: File | undefined, expectedId?: string) {
     if (!file) return;
     setBusy(true);
     setMessage("");
     try {
-      const { entry, existing } = await addUpload(file);
-      setBooks(loadLibrary());
-      setMessage(existing ? `“${entry.title}” is already in your library.` : `Added “${entry.title}”.`);
+      setMessage(added(await addUpload(file), expectedId));
+      refresh();
     } catch (err) {
       setMessage(errorText(err));
     }
@@ -58,13 +76,19 @@ export default function BooksPage() {
     setAdding(found.sourceId);
     setMessage("");
     try {
-      const { entry, existing } = await addBook(await downloadFound(found), found.source, found.sourceId);
-      setBooks(loadLibrary());
-      setMessage(existing ? `“${entry.title}” is already in your library.` : `Added “${entry.title}”.`);
+      setMessage(added(await addBook(await downloadFound(found), found.source, found.sourceId)));
+      refresh();
     } catch (err) {
       setMessage(errorText(err));
     }
     setAdding("");
+  }
+
+  async function remove(id: string) {
+    setRemoving("");
+    await removeBook(id);
+    setMessage("Removed from your library on every device.");
+    refresh();
   }
 
   const owned = new Set(books.map((b) => b.sourceId));
@@ -134,7 +158,9 @@ export default function BooksPage() {
               <div key={r.sourceId} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[.04] px-4 py-3">
                 <div className="min-w-0">
                   <span className="block font-semibold">{r.title}</span>
-                  <span className="block text-sm text-white/60">{r.author} · {sourceName(r)}</span>
+                  <span className="block text-sm text-white/60">
+                    {r.author} · {sourceName(r)}
+                  </span>
                 </div>
                 {owned.has(r.sourceId) ? (
                   <span className="shrink-0 text-sm text-white/50">In your library</span>
@@ -164,17 +190,79 @@ export default function BooksPage() {
           </section>
         ) : (
           <ul className="space-y-2" aria-label="Your library">
-            {books.map((b) => (
-              <li key={b.id}>
-                <Link
-                  href={`/books/${b.id}`}
-                  className="block rounded-2xl border border-white/10 bg-white/[.04] px-4 py-3 transition hover:border-gold/40"
-                >
-                  <span className="block font-semibold">{b.title}</span>
-                  <span className="block text-sm text-white/60">{b.author}</span>
-                </Link>
-              </li>
-            ))}
+            {books.map((b) => {
+              const onDevice = here?.has(b.id) ?? true;
+              const source = foundFromEntry(b);
+              return (
+                <li key={b.id} className="rounded-2xl border border-white/10 bg-white/[.04] px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    {onDevice ? (
+                      <Link href={`/books/${b.id}`} className="min-w-0 flex-1 transition hover:text-gold">
+                        <span className="block font-semibold">{b.title}</span>
+                        <span className="block text-sm text-white/60">{b.author}</span>
+                      </Link>
+                    ) : (
+                      <div className="min-w-0 flex-1">
+                        <span className="block font-semibold">{b.title}</span>
+                        <span className="block text-sm text-white/60">{b.author}</span>
+                        <span className="block text-xs text-white/45">The file isn&apos;t on this device.</span>
+                      </div>
+                    )}
+                    {!onDevice &&
+                      (source ? (
+                        <button
+                          onClick={() => add(source)}
+                          disabled={!!adding}
+                          aria-label={`Download ${b.title}`}
+                          className="shrink-0 rounded-full bg-gold px-3 py-1.5 text-sm font-semibold text-ink transition hover:bg-amber-300 disabled:opacity-50"
+                        >
+                          {adding === source.sourceId ? "Downloading…" : "Download"}
+                        </button>
+                      ) : (
+                        <>
+                          <label
+                            htmlFor={`file-${b.id}`}
+                            className="shrink-0 cursor-pointer rounded-full bg-gold px-3 py-1.5 text-sm font-semibold text-ink transition hover:bg-amber-300"
+                          >
+                            Add the file on this device
+                          </label>
+                          <input
+                            id={`file-${b.id}`}
+                            type="file"
+                            accept=".epub,application/epub+zip"
+                            aria-label={`Add the file for ${b.title}`}
+                            className="sr-only"
+                            onChange={(e) => {
+                              void upload(e.target.files?.[0], b.id);
+                              e.target.value = "";
+                            }}
+                          />
+                        </>
+                      ))}
+                    {removing !== b.id && (
+                      <button
+                        onClick={() => setRemoving(b.id)}
+                        aria-label={`Remove ${b.title}`}
+                        className="shrink-0 rounded-full border border-white/10 px-3 py-1.5 text-sm text-white/65 transition hover:border-white/30 hover:text-white"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  {removing === b.id && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+                      <span className="text-white/75">Remove it from every device?</span>
+                      <button onClick={() => remove(b.id)} className="rounded-full bg-red-400/90 px-3 py-1 font-semibold text-ink">
+                        Yes, remove
+                      </button>
+                      <button onClick={() => setRemoving("")} className="rounded-full border border-white/15 px-3 py-1 text-white/80">
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

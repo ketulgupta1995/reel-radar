@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { loadPosition, openBook, savePosition } from "@/lib/books";
+import { commitPosition, pushPosition, syncBooks, useBooksSync } from "@/lib/booksDoc";
 import type { ParsedBook } from "@/lib/epub";
 import { usePlayer } from "@/lib/usePlayer";
 import { useWakeLock } from "@/lib/useWakeLock";
@@ -21,6 +22,9 @@ export default function BookPage() {
   // Where to start the chapter that is about to load, and whether to start speaking at once.
   const start = useRef({ index: 0, play: false });
   const currentRef = useRef<HTMLButtonElement>(null);
+  const savedChapter = useRef<number | null>(null);
+  const latest = useRef({ chapter, status: player.state.status, index: player.state.index });
+  latest.current = { chapter, status: player.state.status, index: player.state.index };
 
   useEffect(() => {
     openBook(id).then(
@@ -31,6 +35,7 @@ export default function BookPage() {
         setChapter(at?.chapter ?? 0);
         setBook(b);
         setLoadState(b ? "ready" : "missing");
+        void syncBooks();
       },
       () => setLoadState("missing")
     );
@@ -43,10 +48,41 @@ export default function BookPage() {
     start.current = { index: 0, play: false };
   }, [book, chapter]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Save the position after every sentence, once the player holds this chapter.
+  // Save the position after every sentence, once the player holds this chapter. It is queued for
+  // syncing when the chapter changes, when playback stops, and when the page is left or hidden.
   useEffect(() => {
-    if (book && state.key === String(chapter)) savePosition(id, chapter, state.index);
+    if (!book || state.key !== String(chapter)) return;
+    savePosition(id, chapter, state.index);
+    if (savedChapter.current !== null && savedChapter.current !== chapter) commitPosition();
+    savedChapter.current = chapter;
   }, [id, book, chapter, state.key, state.index]);
+  useEffect(() => {
+    if (state.status !== "playing") commitPosition();
+  }, [state.status]);
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === "hidden") pushPosition();
+    };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", pushPosition);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", pushPosition);
+      pushPosition();
+    };
+  }, []);
+
+  // Another device moved on: follow it, unless this one is playing.
+  useBooksSync(() => {
+    const saved = loadPosition(id);
+    const now = latest.current;
+    if (!saved || now.status === "playing" || (saved.chapter === now.chapter && saved.sentence === now.index)) return;
+    if (saved.chapter === now.chapter) player.jump(saved.sentence);
+    else {
+      start.current = { index: saved.sentence, play: false };
+      setChapter(saved.chapter);
+    }
+  });
 
   // At the end of a chapter, carry on into the next one.
   useEffect(() => {

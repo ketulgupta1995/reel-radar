@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, configure, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, configure, waitFor, within } from "@testing-library/react";
 import { getApp } from "@/lib/apps";
 import { epubFile, makeEpub } from "@/test/epub";
 import { opdsFeed } from "@/test/gutenberg";
+import { jsonResponse } from "@/test/fixtures";
+import { routeFetch } from "@/test/pages";
 import { bytesResponse, resultsPage, textResponse } from "@/test/standardEbooks";
-import { loadLibrary } from "@/lib/books";
+import { addUpload, loadLibrary, loadPosition, savePosition } from "@/lib/books";
+import { addEntry, removeEntry } from "@/lib/booksDoc";
 
 import BooksPage from "./page";
 
@@ -15,6 +18,7 @@ configure({ asyncUtilTimeout: 5000 });
 
 beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
+  routeFetch(); // an empty sync server, unless a test stubs its own
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -68,13 +72,13 @@ describe("Books page", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("lists the books already saved on this device", () => {
-    localStorage.setItem(
-      "books-library-v1",
-      JSON.stringify([{ id: "abc", title: "Saved Book", author: "Someone", source: "upload", hash: "abc", addedAt: 1 }])
-    );
+  it("lists the books already saved on this device, newest first", async () => {
+    await addUpload(await epubFile({ title: "First Book" }));
+    await new Promise((r) => setTimeout(r, 5));
+    await addUpload(await epubFile({ title: "Second Book", chapters: [["One", ["Different text."]]] }));
     render(<BooksPage />);
-    expect(screen.getByRole("link", { name: /Saved Book/ }).getAttribute("href")).toBe("/books/abc");
+    const list = await screen.findByLabelText("Your library");
+    expect(within(list).getAllByRole("link").map((l) => l.textContent)).toEqual(["Second BookA. Writer", "First BookA. Writer"]);
   });
 });
 
@@ -150,7 +154,7 @@ describe("Searching for books", () => {
     const fetch = stub(() => textResponse(page));
     render(<BooksPage />);
     search("   ");
-    expect(fetch).not.toHaveBeenCalled();
+    expect(fetch.mock.calls.filter(([url]) => !String(url).startsWith("/api/sync"))).toEqual([]);
   });
 
   const pgFeed = () => textResponse(opdsFeed([[1342, "Pride and Prejudice", "Jane Austen"], [158, "Emma", "Jane Austen"]]));
@@ -206,5 +210,95 @@ describe("Searching for books", () => {
     search("austen");
     await screen.findByText(/Couldn't reach/);
     expect(screen.queryByLabelText("Search results")).toBeNull();
+  });
+});
+
+describe("A library shared between devices", () => {
+  const entry = (id: string, extra = {}) => ({ id, title: `Book ${id}`, author: "A. Writer", source: "upload" as const, hash: id, addedAt: Date.now(), ...extra });
+  const serverWith = (items: object[]) => {
+    const fetch = vi.fn(async (url: string) =>
+      String(url).startsWith("/api/sync") ? jsonResponse({ docs: { books: { etag: '"s1"', data: { items } } } }) : jsonResponse({})
+    );
+    vi.stubGlobal("fetch", fetch);
+    return fetch;
+  };
+
+  it("shows a book from another device and asks for its file", async () => {
+    serverWith([{ entry: entry("abc", { title: "From The Laptop" }), updatedAt: 5 }]);
+    render(<BooksPage />);
+    await screen.findByText("From The Laptop");
+    await screen.findByText("The file isn't on this device.");
+    expect(screen.getByText("Add the file on this device")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /From The Laptop/ })).toBeNull();
+  });
+
+  it("restores the file and keeps your place when you add the same file", async () => {
+    const file = await epubFile();
+    const { entry: made } = await addUpload(file);
+    savePosition(made.id, 1, 2);
+    // This device has the library entry and place, but not the file.
+    const db = await new Promise<IDBDatabase>((r) => (indexedDB.open("books", 1).onsuccess = (e) => r((e.target as IDBOpenDBRequest).result)));
+    await new Promise((r) => (db.transaction("files", "readwrite").objectStore("files").delete(made.id).onsuccess = r));
+    db.close();
+
+    render(<BooksPage />);
+    await screen.findByText("The file isn't on this device.");
+    fireEvent.change(screen.getByLabelText(`Add the file for ${made.title}`), { target: { files: [await epubFile()] } });
+    await screen.findByText(`Added the file for “${made.title}”. Your place is kept.`);
+    await waitFor(() => expect(screen.getByRole("link", { name: new RegExp(made.title) })).toBeTruthy());
+    expect(loadPosition(made.id)).toMatchObject({ chapter: 1, sentence: 2 });
+  });
+
+  it("says when the file added is a different edition, which becomes a new book", async () => {
+    serverWith([{ entry: entry("abc", { title: "Old Edition" }), updatedAt: 5 }]);
+    render(<BooksPage />);
+    await screen.findByText("The file isn't on this device.");
+    fireEvent.change(screen.getByLabelText("Add the file for Old Edition"), { target: { files: [await epubFile()] } });
+    await screen.findByText(/different edition/);
+    expect(loadLibrary()).toHaveLength(2);
+  });
+
+  it("downloads a catalogue book again with one tap", async () => {
+    const epub = await makeEpub({ title: "Emma", author: "Jane Austen" });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => (String(url).includes("/downloads/") ? bytesResponse(epub) : jsonResponse({ docs: {} }))));
+    addEntry(entry("zzz", { title: "Emma", source: "standard-ebooks", sourceId: "standard-ebooks:jane-austen/emma" }));
+    render(<BooksPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Download Emma" }));
+    await screen.findByText(/Added the file for “Emma”/);
+    await waitFor(() => expect(screen.getByRole("link", { name: /Emma/ })).toBeTruthy());
+    expect(loadLibrary()).toHaveLength(1);
+  });
+
+  it("removes a book after asking, from the library and this device", async () => {
+    const { entry: made } = await addUpload(await epubFile());
+    render(<BooksPage />);
+    fireEvent.click(await screen.findByRole("button", { name: `Remove ${made.title}` }));
+    fireEvent.click(screen.getByText("Cancel"));
+    expect(screen.getByRole("link", { name: new RegExp(made.title) })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: `Remove ${made.title}` }));
+    expect(screen.getByText("Remove it from every device?")).toBeTruthy();
+    fireEvent.click(screen.getByText("Yes, remove"));
+    await screen.findByText("Your library is empty");
+    expect(screen.getByText("Removed from your library on every device.")).toBeTruthy();
+    expect(loadLibrary()).toEqual([]);
+  });
+
+  it("deletes the file of a book that was removed on another device", async () => {
+    const { entry: made } = await addUpload(await epubFile());
+    serverWith([{ entry: made, removed: true, updatedAt: Date.now() + 1000 }]);
+    render(<BooksPage />);
+    await screen.findByText("Your library is empty");
+    const { localIds } = await import("@/lib/books");
+    await waitFor(async () => expect((await localIds()).has(made.id)).toBe(false));
+  });
+
+  it("updates when another device's changes arrive while the page is open", async () => {
+    render(<BooksPage />);
+    await screen.findByText("Your library is empty");
+    addEntry(entry("new", { title: "Just Arrived" }));
+    act(() => void window.dispatchEvent(new CustomEvent("reel-radar-sync", { detail: { keys: ["books"] } })));
+    await screen.findByText("Just Arrived");
+    removeEntry("new");
   });
 });

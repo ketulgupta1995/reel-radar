@@ -38,6 +38,32 @@ afterEach(async () => {
   await fs.rm(tmp, { recursive: true, force: true });
 });
 
+describe("the Books doc", () => {
+  const books = { items: [{ entry: { id: "a1b2", title: "Emma" }, position: { chapter: 1, sentence: 2 }, updatedAt: 5 }] };
+
+  it("is stored like the other docs, with no copy of any book file in it", async () => {
+    const route = await load();
+    expect((await (await route.GET(getReq("books"))).json()).docs.books).toBeNull();
+    const { etag } = await (await route.POST(post({ key: "books", data: books }))).json();
+    expect(await readTmp("books.json")).toEqual(books);
+    expect((await (await route.GET(getReq("books"))).json()).docs.books).toEqual({ etag, data: books });
+    expect((await (await route.GET(getReq(`books:${etag}`))).json()).docs.books).toEqual({ etag, unchanged: true });
+  });
+
+  it("refuses a write that no longer matches what's stored", async () => {
+    const route = await load();
+    await route.POST(post({ key: "books", data: books }));
+    const stale = await route.POST(post({ key: "books", data: { items: [] } }));
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).data).toEqual(books);
+  });
+
+  it("answers only to the exact key", async () => {
+    const route = await load();
+    for (const key of ["book", "books-2026", "mybooks"]) expect((await route.GET(getReq(key))).status).toBe(400);
+  });
+});
+
 describe("/api/sync with local files", () => {
   it("returns null for docs that don't exist yet, and rejects unknown keys", async () => {
     const route = await load();

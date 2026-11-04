@@ -2,12 +2,23 @@
 import { IDBFactory } from "fake-indexeddb";
 import { beforeEach, describe, expect, it } from "vitest";
 import { epubFile } from "@/test/epub";
-import { MAX_EPUB_BYTES, addUpload, errorText, loadLibrary, loadPosition, loadVoicePrefs, openBook, savePosition, saveVoicePrefs } from "./books";
+import { MAX_EPUB_BYTES, addBook, addUpload, errorText, loadLibrary, loadPosition, loadVoicePrefs, localIds, openBook, purgeRemoved, removeBook, savePosition, saveVoicePrefs } from "./books";
+import { removeEntry } from "./booksDoc";
 import { EpubError } from "./epub";
 
 beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
 });
+
+// What another device sees: the book in the library, without its file.
+async function removeFileOnly(id: string) {
+  const db = await new Promise<IDBDatabase>((resolve) => {
+    const req = indexedDB.open("books", 1);
+    req.onsuccess = () => resolve(req.result);
+  });
+  await new Promise((resolve) => (db.transaction("files", "readwrite").objectStore("files").delete(id).onsuccess = resolve));
+  db.close();
+}
 
 describe("books on this device", () => {
   it("adds an uploaded EPUB to the library and keeps its text readable", async () => {
@@ -56,22 +67,63 @@ describe("books on this device", () => {
   });
 });
 
-describe("saved position", () => {
-  it("remembers where you stopped in each book", () => {
-    expect(loadPosition("a")).toBeUndefined();
-    savePosition("a", 2, 14);
-    savePosition("b", 0, 3);
-    expect(loadPosition("a")).toMatchObject({ chapter: 2, sentence: 14 });
-    expect(loadPosition("b")).toMatchObject({ chapter: 0, sentence: 3 });
-    expect(loadPosition("a")!.updatedAt).toBeGreaterThan(0);
+describe("books that arrive from another device", () => {
+  it("lists the book without its file, and adding the same file restores it with its place", async () => {
+    const { entry } = await addUpload(await epubFile());
+    savePosition(entry.id, 1, 2);
+    await removeFileOnly(entry.id);
+    expect((await localIds()).has(entry.id)).toBe(false);
+    expect(loadLibrary()).toHaveLength(1);
+
+    const again = await addUpload(await epubFile());
+    expect(again).toEqual({ entry, existing: false, restored: true });
+    expect((await localIds()).has(entry.id)).toBe(true);
+    expect(loadPosition(entry.id)).toMatchObject({ chapter: 1, sentence: 2 });
+    expect(loadLibrary()).toHaveLength(1);
   });
 
-  it("starts fresh when the saved positions are damaged", () => {
-    localStorage.setItem("books-position-v1", "{oops");
-    expect(loadPosition("a")).toBeUndefined();
-    localStorage.setItem("books-position-v1", "[1]");
-    savePosition("a", 1, 1);
-    expect(loadPosition("a")).toMatchObject({ chapter: 1, sentence: 1 });
+  it("treats a different edition as a new book with no place", async () => {
+    const { entry } = await addUpload(await epubFile());
+    savePosition(entry.id, 1, 2);
+    const other = await addUpload(await epubFile({ chapters: [["One", ["Another edition entirely."]]] }));
+    expect(other.entry.id).not.toBe(entry.id);
+    expect(loadPosition(other.entry.id)).toBeUndefined();
+    expect(loadLibrary()).toHaveLength(2);
+  });
+
+  it("matches a downloaded book by its catalogue id when the edition has changed", async () => {
+    const first = await addBook(await (await epubFile()).arrayBuffer(), "standard-ebooks", "standard-ebooks:a/b");
+    await removeFileOnly(first.entry.id);
+    const newer = await epubFile({ chapters: [["One", ["A corrected edition."]]] });
+    const again = await addBook(await newer.arrayBuffer(), "standard-ebooks", "standard-ebooks:a/b");
+    expect(again).toMatchObject({ restored: true, entry: { id: first.entry.id } });
+    expect(loadLibrary()).toHaveLength(1);
+    expect((await openBook(first.entry.id))?.chapters[0].sentences).toContain("A corrected edition.");
+  });
+});
+
+describe("removing books", () => {
+  it("takes the book out of the library and deletes its file here", async () => {
+    const { entry } = await addUpload(await epubFile());
+    await removeBook(entry.id);
+    expect(loadLibrary()).toEqual([]);
+    expect(await openBook(entry.id)).toBeNull();
+  });
+
+  it("deletes the files of books removed on another device, and only those", async () => {
+    const keep = await addUpload(await epubFile());
+    const gone = await addUpload(await epubFile({ chapters: [["One", ["Other book."]]] }));
+    removeEntry(gone.entry.id); // as if the removal had arrived from another device
+    await purgeRemoved();
+    expect(await openBook(gone.entry.id)).toBeNull();
+    expect(await openBook(keep.entry.id)).not.toBeNull();
+    await purgeRemoved(); // nothing left to do
+  });
+
+  it("does nothing when nothing was removed", async () => {
+    const { entry } = await addUpload(await epubFile());
+    await purgeRemoved();
+    expect(await openBook(entry.id)).not.toBeNull();
   });
 });
 

@@ -8,8 +8,8 @@ import path from "path";
 // JSON as stored, kept in its own column so an unchanged doc is answered without reading its body.
 
 // Reel Radar's library and history, one doc per planner month, the daily tasks, the lists, tags and day templates, and the Money
-// app's settings and months.
-export const DOC_KEY = /^(library|history|planner-daily|planner-log|planner-lists|planner-settings|planner-\d{4}-\d{2}|money-settings|money-\d{4}-\d{2})$/;
+// app's settings and months, and the Books library with where you stopped in each book.
+export const DOC_KEY = /^(library|history|planner-daily|planner-log|planner-lists|planner-settings|planner-\d{4}-\d{2}|money-settings|money-\d{4}-\d{2}|books)$/;
 
 // Photos and voice notes attached to list items are one doc each ("media-<id>"). They are written
 // once and served by /api/media, never through /api/sync, so DOC_KEY leaves them out.

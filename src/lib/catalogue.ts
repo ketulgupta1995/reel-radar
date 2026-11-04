@@ -1,8 +1,9 @@
 // One search across the book catalogues. Standard Ebooks comes first, so when both have the same book
 // its better-formatted edition is the one listed.
-import { downloadGutenberg, searchGutenberg } from "./gutenberg";
+import type { BookEntry } from "./booksDoc";
+import { downloadGutenberg, gutenbergPath, searchGutenberg } from "./gutenberg";
 import { Found, SOURCE_NAMES, SourceError } from "./sources";
-import { downloadEpub, searchStandardEbooks } from "./standardEbooks";
+import { downloadEpub, epubUrlOf, searchStandardEbooks } from "./standardEbooks";
 
 const words = (s: string) => s.toLowerCase().replaceAll("&", " and ").replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean);
 const titleKey = (t: string) => words(t).filter((w, i) => !(i === 0 && w === "the")).join(" ");
@@ -35,3 +36,15 @@ export async function searchCatalogue(query: string): Promise<CatalogueResult> {
 
 export const downloadFound = (found: Found) => (found.source === "gutenberg" ? downloadGutenberg(found.epubUrl) : downloadEpub(found.epubUrl));
 export const sourceName = (found: Found) => SOURCE_NAMES[found.source];
+
+// Where to download a catalogue book again, from its saved catalogue id. Uploads have no catalogue.
+export function foundFromEntry(entry: BookEntry): Found | null {
+  const [site, rest = ""] = (entry.sourceId ?? "").split(":");
+  if (site === "standard-ebooks" && /^[a-z0-9-]+(\/[a-z0-9-]+)+$/.test(rest)) {
+    return { source: "standard-ebooks", sourceId: entry.sourceId!, title: entry.title, author: entry.author, epubUrl: epubUrlOf(rest) };
+  }
+  if (site === "gutenberg" && /^\d{1,7}$/.test(rest)) {
+    return { source: "gutenberg", sourceId: entry.sourceId!, title: entry.title, author: entry.author, epubUrl: gutenbergPath(rest) };
+  }
+  return null;
+}

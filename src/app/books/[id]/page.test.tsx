@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor, configure } from "@testing-lib
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addUpload, loadPosition, savePosition } from "@/lib/books";
 import { epubFile } from "@/test/epub";
+import { requests, routeFetch } from "@/test/pages";
 
 const nav = vi.hoisted(() => ({ params: { id: "" } as Record<string, string> }));
 vi.mock("next/navigation", () => ({ useParams: () => nav.params }));
@@ -41,6 +42,7 @@ const sentence = (text: string) => screen.getByRole("button", { name: text });
 
 beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
+  routeFetch();
   synth.spoken = [];
   synth.speak.mockReset().mockImplementation((u: FakeUtterance) => synth.spoken.push(u));
   synth.cancel.mockReset();
@@ -353,5 +355,87 @@ describe("Keeping the screen on", () => {
     fireEvent.click(screen.getByRole("button", { name: "Pause" }));
     await act(async () => grant(late));
     expect(late.release).toHaveBeenCalled();
+  });
+});
+
+describe("Keeping your place across devices", () => {
+  const META = "reel-radar-sync:books";
+  const dirty = () => JSON.parse(localStorage.getItem(META) || "{}").dirty === true;
+  const settle = () => localStorage.setItem(META, JSON.stringify({ dirty: false }));
+
+  it("queues the place for syncing when you pause, not after every sentence", async () => {
+    await openUploaded();
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    settle();
+    finishSpeaking();
+    finishSpeaking();
+    await waitFor(() => expect(loadPosition(nav.params.id)).toMatchObject({ sentence: 2 }));
+    expect(dirty()).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    await waitFor(() => expect(dirty()).toBe(true));
+  });
+
+  it("queues the place when you change chapter", async () => {
+    await openUploaded();
+    settle();
+    fireEvent.click(sentence("Nobody argued."));
+    await waitFor(() => expect(loadPosition(nav.params.id)).toMatchObject({ sentence: 2 }));
+    fireEvent.change(screen.getByLabelText("Chapter"), { target: { value: "1" } });
+    await waitFor(() => expect(dirty()).toBe(true));
+  });
+
+  it("sends the place to the server when the page is hidden or closed", async () => {
+    const fetch = routeFetch();
+    await openUploaded();
+    fireEvent.click(sentence("Nobody argued."));
+    await waitFor(() => expect(loadPosition(nav.params.id)).toMatchObject({ sentence: 2 }));
+    const state = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    act(() => void document.dispatchEvent(new Event("visibilitychange")));
+    await waitFor(() => expect(requests(fetch, "/api/sync").some((r) => r.init?.method === "POST")).toBe(true));
+    const posted = requests(fetch, "/api/sync").find((r) => r.init?.method === "POST")!;
+    expect(JSON.parse(posted.init!.body as string)).toMatchObject({ key: "books" });
+    state.mockRestore();
+
+    fetch.mockClear();
+    fireEvent.click(sentence("Mr. Rao kept the clock fast."));
+    act(() => void window.dispatchEvent(new Event("pagehide")));
+    await waitFor(() => expect(requests(fetch, "/api/sync").some((r) => r.init?.method === "POST")).toBe(true));
+  });
+
+  it("sends the place when you leave the page", async () => {
+    const fetch = routeFetch();
+    const { unmount } = await openUploaded();
+    fireEvent.click(sentence("Nobody argued."));
+    await waitFor(() => expect(loadPosition(nav.params.id)).toMatchObject({ sentence: 2 }));
+    fetch.mockClear();
+    unmount();
+    await waitFor(() => expect(requests(fetch, "/api/sync").some((r) => r.init?.method === "POST")).toBe(true));
+  });
+
+  const arrive = (position: { chapter: number; sentence: number }) => {
+    const doc = JSON.parse(localStorage.getItem("reel-radar-books")!);
+    doc.items[0] = { ...doc.items[0], position, updatedAt: Date.now() + 10_000 };
+    localStorage.setItem("reel-radar-books", JSON.stringify(doc));
+    act(() => void window.dispatchEvent(new CustomEvent("reel-radar-sync", { detail: { keys: ["books"] } })));
+  };
+
+  it("follows a newer place from another device, in this chapter or another", async () => {
+    await openUploaded();
+    arrive({ chapter: 0, sentence: 2 });
+    await waitFor(() => expect(sentence("Nobody argued.").getAttribute("aria-current")).toBe("true"));
+    arrive({ chapter: 1, sentence: 1 });
+    await waitFor(() => expect(sentence("The rain began at the far end.").getAttribute("aria-current")).toBe("true"));
+    expect((screen.getByLabelText("Chapter") as HTMLSelectElement).value).toBe("1");
+    arrive({ chapter: 1, sentence: 1 }); // already there: nothing to do
+    expect(sentence("The rain began at the far end.").getAttribute("aria-current")).toBe("true");
+  });
+
+  it("doesn't move you while you are listening", async () => {
+    await openUploaded();
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    arrive({ chapter: 1, sentence: 1 });
+    expect(sentence("Chapter One").getAttribute("aria-current")).toBe("true");
+    expect((screen.getByLabelText("Chapter") as HTMLSelectElement).value).toBe("0");
   });
 });
