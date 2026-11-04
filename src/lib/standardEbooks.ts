@@ -3,23 +3,14 @@
 // its search page; if that page's layout changes, search fails with a clear message instead of
 // showing an empty list.
 
-export type Found = {
-  sourceId: string; // "standard-ebooks:<author>/<title>"
-  title: string;
-  author: string;
-  epubUrl: string;
-};
-
-export class SourceError extends Error {}
+import { Found, MAX_DOWNLOAD_BYTES, SEARCH_TIMEOUT_MS, SourceError } from "./sources";
 
 const SITE = "https://standardebooks.org";
 const PATH = /^[a-z0-9-]+(\/[a-z0-9-]+)+$/;
-const TIMEOUT_MS = 15_000;
-const MAX_BYTES = 50_000_000;
 const DOWN = "Couldn't reach Standard Ebooks. Check your connection and try again.";
 
 async function get(url: string): Promise<Response> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) }).catch(() => null);
+  const res = await fetch(url, { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) }).catch(() => null);
   if (!res?.ok) throw new SourceError(DOWN);
   return res;
 }
@@ -40,7 +31,7 @@ export function parseResults(html: string): Found[] {
       .map((a) => a.textContent?.trim())
       .filter(Boolean)
       .join(", ");
-    found.push({ sourceId: `standard-ebooks:${path}`, title, author: author || "Unknown author", epubUrl: epubUrlOf(path) });
+    found.push({ source: "standard-ebooks", sourceId: `standard-ebooks:${path}`, title, author: author || "Unknown author", epubUrl: epubUrlOf(path) });
   }
   return found;
 }
@@ -54,6 +45,6 @@ export async function downloadEpub(url: string): Promise<ArrayBuffer> {
   if (!url.startsWith(`${SITE}/ebooks/`)) throw new SourceError(DOWN);
   const res = await get(url);
   const bytes = await res.arrayBuffer();
-  if (bytes.byteLength > MAX_BYTES) throw new SourceError("That book is too big to download (max 50 MB).");
+  if (bytes.byteLength > MAX_DOWNLOAD_BYTES) throw new SourceError("That book is too big to download (max 50 MB).");
   return bytes;
 }

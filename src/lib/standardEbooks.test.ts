@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bytesResponse, resultsPage, textResponse } from "@/test/standardEbooks";
-import { SourceError, downloadEpub, epubUrlOf, parseResults, searchStandardEbooks } from "./standardEbooks";
+import { SourceError } from "./sources";
+import { downloadEpub, epubUrlOf, parseResults, searchStandardEbooks } from "./standardEbooks";
 
 afterEach(() => vi.unstubAllGlobals());
 const stubFetch = (impl: (url: string) => Promise<Response> | Response) => {
@@ -20,6 +21,7 @@ describe("Standard Ebooks", () => {
     );
     expect(found).toEqual([
       {
+        source: "standard-ebooks",
         sourceId: "standard-ebooks:jane-austen/emma",
         title: "Emma",
         author: "Jane Austen",

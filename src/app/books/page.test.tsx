@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, configure } from "@testing-library/react";
+import { fireEvent, render, screen, configure, within } from "@testing-library/react";
 import { getApp } from "@/lib/apps";
 import { epubFile, makeEpub } from "@/test/epub";
+import { opdsFeed } from "@/test/gutenberg";
 import { bytesResponse, resultsPage, textResponse } from "@/test/standardEbooks";
 import { loadLibrary } from "@/lib/books";
 
@@ -77,7 +78,7 @@ describe("Books page", () => {
   });
 });
 
-describe("Searching Standard Ebooks", () => {
+describe("Searching for books", () => {
   const page = resultsPage([
     ["jane-austen/emma", "Emma", ["Jane Austen"]],
     ["jane-austen/persuasion", "Persuasion", ["Jane Austen"]],
@@ -86,8 +87,9 @@ describe("Searching Standard Ebooks", () => {
     fireEvent.change(screen.getByLabelText("Search for a book"), { target: { value: text } });
     fireEvent.submit(screen.getByRole("search"));
   };
-  const stub = (handler: (url: string) => Response | Promise<Response>) => {
-    const fetch = vi.fn(async (url: string) => handler(url));
+  // Standard Ebooks is `handler`; Gutenberg answers with an empty feed unless `gutenberg` says otherwise.
+  const stub = (handler: (url: string) => Response | Promise<Response>, gutenberg: (url: string) => Response | Promise<Response> = () => textResponse(opdsFeed([]))) => {
+    const fetch = vi.fn(async (url: string) => (url.includes("gutenberg.org/ebooks/search") || url.startsWith("/api/books/gutenberg/") ? gutenberg(url) : handler(url)));
     vi.stubGlobal("fetch", fetch);
     return fetch;
   };
@@ -116,8 +118,8 @@ describe("Searching Standard Ebooks", () => {
     await screen.findByText(/No books found/);
   });
 
-  it("shows a plain message when the site is down, and a search can be retried", async () => {
-    stub(() => Promise.reject(new Error("offline")));
+  it("shows a plain message when the sources are down, and a search can be retried", async () => {
+    stub(() => Promise.reject(new Error("offline")), () => Promise.reject(new Error("offline")));
     render(<BooksPage />);
     search("austen");
     await screen.findByText(/Couldn't reach Standard Ebooks/);
@@ -149,5 +151,60 @@ describe("Searching Standard Ebooks", () => {
     render(<BooksPage />);
     search("   ");
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  const pgFeed = () => textResponse(opdsFeed([[1342, "Pride and Prejudice", "Jane Austen"], [158, "Emma", "Jane Austen"]]));
+
+  it("lists both sources together, with duplicates left out and Standard Ebooks first", async () => {
+    stub(() => textResponse(page), pgFeed);
+    render(<BooksPage />);
+    search("austen");
+    await screen.findByText("Results for “austen”");
+    const rows = within(screen.getByLabelText("Search results")).getAllByText(/ · /).map((r) => r.textContent);
+    expect(rows).toEqual(["Jane Austen · Standard Ebooks", "Jane Austen · Standard Ebooks", "Jane Austen · Project Gutenberg"]);
+    expect(screen.getAllByText("Emma")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Add Pride and Prejudice" })).toBeTruthy();
+  });
+
+  it("adds a Gutenberg book through our download route", async () => {
+    const epub = await makeEpub({ title: "Pride and Prejudice", author: "Jane Austen" });
+    const fetch = stub(() => textResponse(resultsPage([])), (url) => (url.startsWith("/api/books/gutenberg/") ? bytesResponse(epub) : pgFeed()));
+    render(<BooksPage />);
+    search("pride");
+    await screen.findByText("Results for “pride”");
+    fireEvent.click(screen.getByRole("button", { name: "Add Pride and Prejudice" }));
+    await screen.findByText("Added “Pride and Prejudice”.");
+    expect(fetch.mock.calls.at(-1)![0]).toBe("/api/books/gutenberg/1342");
+    expect(loadLibrary()[0]).toMatchObject({ source: "gutenberg", sourceId: "gutenberg:1342" });
+  });
+
+  it("explains a Gutenberg book that is too big, and adds nothing", async () => {
+    stub(
+      () => textResponse(resultsPage([])),
+      (url) => (url.startsWith("/api/books/gutenberg/") ? ({ ok: false, status: 413, json: async () => ({ error: "That book is too big to download here (over 4.5 MB)." }) } as Response) : pgFeed())
+    );
+    render(<BooksPage />);
+    search("pride");
+    await screen.findByText("Results for “pride”");
+    fireEvent.click(screen.getByRole("button", { name: "Add Emma" }));
+    await screen.findByText(/over 4.5 MB/);
+    expect(loadLibrary()).toEqual([]);
+  });
+
+  it("still shows one source when the other is down, and says so", async () => {
+    stub(() => textResponse(page), () => Promise.reject(new Error("slow")));
+    render(<BooksPage />);
+    search("austen");
+    await screen.findByText("Results for “austen”");
+    expect(screen.getByText(/Couldn't reach Project Gutenberg\. Check your connection and try again\. Showing the other source only\./)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Add Emma" })).toBeTruthy();
+  });
+
+  it("fails with one message when both sources are down", async () => {
+    stub(() => Promise.reject(new Error("a")), () => Promise.reject(new Error("b")));
+    render(<BooksPage />);
+    search("austen");
+    await screen.findByText(/Couldn't reach/);
+    expect(screen.queryByLabelText("Search results")).toBeNull();
   });
 });

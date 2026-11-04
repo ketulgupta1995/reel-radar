@@ -4,7 +4,8 @@ import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { BookEntry, addBook, addUpload, errorText, loadLibrary } from "@/lib/books";
-import { Found, downloadEpub, searchStandardEbooks } from "@/lib/standardEbooks";
+import { downloadFound, searchCatalogue, sourceName } from "@/lib/catalogue";
+import type { Found } from "@/lib/sources";
 
 export default function BooksPage() {
   const [books, setBooks] = useState<BookEntry[]>([]);
@@ -15,6 +16,7 @@ export default function BooksPage() {
   const [results, setResults] = useState<Found[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [adding, setAdding] = useState("");
+  const [problems, setProblems] = useState<string[]>([]);
 
   // Read after mount, so the first render matches the prerendered page.
   useEffect(() => setBooks(loadLibrary()), []);
@@ -40,8 +42,11 @@ export default function BooksPage() {
     setSearching(true);
     setMessage("");
     setSearched(q);
+    setProblems([]);
     try {
-      setResults(await searchStandardEbooks(q));
+      const found = await searchCatalogue(q);
+      setResults(found.results);
+      setProblems(found.problems);
     } catch (err) {
       setResults(null);
       setMessage(errorText(err));
@@ -53,7 +58,7 @@ export default function BooksPage() {
     setAdding(found.sourceId);
     setMessage("");
     try {
-      const { entry, existing } = await addBook(await downloadEpub(found.epubUrl), "standard-ebooks", found.sourceId);
+      const { entry, existing } = await addBook(await downloadFound(found), found.source, found.sourceId);
       setBooks(loadLibrary());
       setMessage(existing ? `“${entry.title}” is already in your library.` : `Added “${entry.title}”.`);
     } catch (err) {
@@ -119,12 +124,17 @@ export default function BooksPage() {
         {results && (
           <section aria-label="Search results" className="space-y-2">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-white/45">Results for “{searched}”</h2>
+            {problems.map((p) => (
+              <p key={p} role="status" className="text-sm text-white/65">
+                {p} Showing the other source only.
+              </p>
+            ))}
             {results.length === 0 && <p className="text-sm text-white/65">No books found. Try another title or author.</p>}
             {results.map((r) => (
               <div key={r.sourceId} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[.04] px-4 py-3">
                 <div className="min-w-0">
                   <span className="block font-semibold">{r.title}</span>
-                  <span className="block text-sm text-white/60">{r.author} · Standard Ebooks</span>
+                  <span className="block text-sm text-white/60">{r.author} · {sourceName(r)}</span>
                 </div>
                 {owned.has(r.sourceId) ? (
                   <span className="shrink-0 text-sm text-white/50">In your library</span>
