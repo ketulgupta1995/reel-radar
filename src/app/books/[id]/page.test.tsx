@@ -2,7 +2,8 @@
 import { IDBFactory } from "fake-indexeddb";
 import { act, fireEvent, render, screen, waitFor, configure } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { addUpload, loadPosition, savePosition } from "@/lib/books";
+import { addUpload, loadPosition, loadVoicePrefs, savePosition } from "@/lib/books";
+import { loadRecording, setRecording } from "@/lib/booksDoc";
 import { epubFile } from "@/test/epub";
 import { requests, routeFetch } from "@/test/pages";
 
@@ -13,6 +14,7 @@ import BookPage from "./page";
 
 // Reading an EPUB (build, hash, parse) is slow when the machine is busy, as it is under coverage.
 configure({ asyncUtilTimeout: 5000 });
+vi.setConfig({ testTimeout: 20_000 });
 
 // A speech engine that speaks nothing, so each test decides when a sentence has been read out.
 class FakeUtterance {
@@ -437,5 +439,225 @@ describe("Keeping your place across devices", () => {
     arrive({ chapter: 1, sentence: 1 });
     expect(sentence("Chapter One").getAttribute("aria-current")).toBe("true");
     expect((screen.getByLabelText("Chapter") as HTMLSelectElement).value).toBe("0");
+  });
+});
+
+describe("LibriVox recordings", () => {
+  const SECTIONS = [
+    { title: "Chapters 1-3", url: "https://www.archive.org/download/pp/1.mp3", seconds: 1132 },
+    { title: "Chapters 4-6", url: "https://www.archive.org/download/pp/2.mp3", seconds: 1500 },
+    { title: "Chapters 7-9", url: "https://www.archive.org/download/pp/3.mp3", seconds: 900 },
+  ];
+  const FOUND = {
+    id: "253", title: "Pride and Prejudice", authors: ["Jane Austen"], language: "English", duration: "13:06:44",
+    seconds: 47204, readers: ["Chris Goringe", "Ann"], sectionCount: SECTIONS.length,
+  };
+  let play: ReturnType<typeof vi.fn>;
+  let api: ReturnType<typeof routeFetch>;
+
+  beforeEach(() => {
+    play = vi.fn(() => Promise.resolve());
+    HTMLMediaElement.prototype.play = play as unknown as () => Promise<void>;
+    HTMLMediaElement.prototype.pause = vi.fn();
+    api = routeFetch({
+      "/api/books/librivox": (url: URL) => ({ recordings: url.searchParams.has("id") ? [{ ...FOUND, sections: SECTIONS }] : [FOUND] }),
+    });
+  });
+
+  const audio = () => document.querySelector("audio") as HTMLAudioElement;
+  const section = () => (screen.getByLabelText("Section") as HTMLSelectElement).value;
+
+  async function chooseRecording() {
+    const view = await openUploaded();
+    fireEvent.click(screen.getByRole("button", { name: "Find a recording" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Choose Pride and Prejudice, read by Chris Goringe, Ann/ }));
+    await screen.findByLabelText("Section");
+    return view;
+  }
+
+  it("finds recordings for the book, shows who read them, and plays the one you choose", async () => {
+    await openUploaded();
+    fireEvent.click(screen.getByRole("button", { name: "Find a recording" }));
+    await screen.findByText("Chris Goringe, Ann · 13 h 6 min · 3 sections");
+    const search = requests(api, "/api/books/librivox")[0].url.searchParams;
+    expect(search.get("title")).toBe("The Station Clock");
+    expect(search.get("author")).toBe("A. Writer");
+
+    fireEvent.click(screen.getByRole("button", { name: /Choose Pride and Prejudice/ }));
+    await screen.findByLabelText("Section");
+    expect(loadRecording(nav.params.id)).toEqual({ id: "253", title: "Pride and Prejudice" });
+    expect(screen.getByRole("button", { name: "The recording" }).getAttribute("aria-pressed")).toBe("true");
+    expect(audio().getAttribute("src")).toBe(SECTIONS[0].url);
+    expect(screen.queryByLabelText("Chapter text")).toBeNull(); // the recording has no sentence timings
+    expect(screen.queryByRole("button", { name: "Play" })).toBeNull();
+  });
+
+  it("goes through the sections with the buttons, the list, and when one ends", async () => {
+    await chooseRecording();
+    expect((screen.getByRole("button", { name: "Previous section" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Next section" }));
+    expect(section()).toBe("1");
+    expect(audio().getAttribute("src")).toBe(SECTIONS[1].url);
+    await waitFor(() => expect(loadPosition(nav.params.id)).toMatchObject({ chapter: 1 }));
+
+    fireEvent.change(screen.getByLabelText("Section"), { target: { value: "0" } });
+    expect(audio().getAttribute("src")).toBe(SECTIONS[0].url);
+
+    // Playing: the next section starts by itself when one ends, and the last one just stops.
+    fireEvent.play(audio());
+    fireEvent.ended(audio());
+    expect(section()).toBe("1");
+    await waitFor(() => expect(play).toHaveBeenCalled());
+    fireEvent.ended(audio());
+    expect(section()).toBe("2");
+    expect((screen.getByRole("button", { name: "Next section" }) as HTMLButtonElement).disabled).toBe(true);
+    play.mockClear();
+    fireEvent.ended(audio());
+    expect(section()).toBe("2");
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it("doesn't start the next section by itself when you moved on while paused", async () => {
+    await chooseRecording();
+    fireEvent.click(screen.getByRole("button", { name: "Next section" }));
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it("queues your place for syncing when you pause", async () => {
+    await chooseRecording();
+    localStorage.setItem("reel-radar-sync:books", JSON.stringify({ dirty: false }));
+    fireEvent.click(screen.getByRole("button", { name: "Next section" }));
+    fireEvent.pause(audio());
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("reel-radar-sync:books")!).dirty).toBe(true));
+  });
+
+  it("plays at the speed you pick, which is remembered", async () => {
+    await chooseRecording();
+    fireEvent.click(screen.getByRole("button", { name: "1.5×" }));
+    expect(audio().playbackRate).toBe(1.5);
+    expect(screen.getByRole("button", { name: "1.5×" }).getAttribute("aria-pressed")).toBe("true");
+    expect(loadVoicePrefs().rate).toBe(1.5);
+    fireEvent.click(screen.getByRole("button", { name: "Next section" }));
+    expect(audio().playbackRate).toBe(1.5);
+  });
+
+  it("switches between the recording and the phone reading it, keeping the chapter", async () => {
+    await chooseRecording();
+    fireEvent.change(screen.getByLabelText("Section"), { target: { value: "2" } }); // three sections, two chapters
+    fireEvent.click(screen.getByRole("button", { name: "Read aloud by the phone" }));
+    expect(screen.getByLabelText("Chapter text")).toBeTruthy();
+    await waitFor(() => expect((screen.getByLabelText("Chapter") as HTMLSelectElement).value).toBe("1"));
+
+    fireEvent.click(screen.getByRole("button", { name: "The recording" }));
+    await screen.findByLabelText("Section");
+    expect(section()).toBe("1");
+  });
+
+  it("stops the phone's voice when you switch to the recording", async () => {
+    await openUploaded();
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    fireEvent.click(screen.getByRole("button", { name: "Find a recording" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Choose Pride and Prejudice/ }));
+    await screen.findByLabelText("Section");
+    expect(synth.cancel).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Read aloud by the phone" }));
+    expect(screen.getByRole("button", { name: "Play" })).toBeTruthy(); // paused, not playing
+  });
+
+  it("remembers the recording and how you listen, and can remove it", async () => {
+    const { unmount } = await chooseRecording();
+    unmount();
+    render(<BookPage />);
+    await screen.findByRole("heading", { name: "The Station Clock" });
+    await screen.findByLabelText("Section");
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove recording" }));
+    expect(loadRecording(nav.params.id)).toBeNull();
+    expect(screen.getByRole("button", { name: "Find a recording" })).toBeTruthy();
+    expect(screen.getByLabelText("Chapter text")).toBeTruthy();
+  });
+
+  it("opens read aloud when you last used the phone's voice", async () => {
+    const { id, unmount } = await chooseRecording();
+    fireEvent.click(screen.getByRole("button", { name: "Read aloud by the phone" }));
+    unmount();
+    render(<BookPage />);
+    await screen.findByRole("heading", { name: "The Station Clock" });
+    expect(await screen.findByLabelText("Chapter text")).toBeTruthy();
+    expect(screen.getByText("Pride and Prejudice")).toBeTruthy();
+    expect(loadRecording(id)).not.toBeNull();
+  });
+
+  it("lets you change the recording", async () => {
+    await chooseRecording();
+    fireEvent.click(screen.getByRole("button", { name: "Change recording" }));
+    await screen.findByRole("button", { name: /Choose Pride and Prejudice/ });
+    expect(requests(api, "/api/books/librivox").filter((r) => r.url.searchParams.has("title"))).toHaveLength(2); // once to choose, once to change
+  });
+
+  it("says when there is no recording, and when LibriVox can't be reached", async () => {
+    routeFetch({ "/api/books/librivox": { recordings: [] } });
+    await openUploaded();
+    fireEvent.click(screen.getByRole("button", { name: "Find a recording" }));
+    await screen.findByText(/No recordings found/);
+
+    routeFetch({ "/api/books/librivox": () => new Response(JSON.stringify({ error: "Couldn't reach LibriVox. Try again in a moment." }), { status: 502 }) });
+    fireEvent.click(screen.getByRole("button", { name: "Find a recording" }));
+    await screen.findByText("Couldn't reach LibriVox. Try again in a moment.");
+    expect(screen.queryByText(/No recordings found/)).toBeNull();
+  });
+
+  it("explains a recording that can't be loaded or played", async () => {
+    await chooseRecording();
+    fireEvent.error(audio());
+    expect((await screen.findByRole("alert")).textContent).toMatch(/couldn't be played/);
+  });
+
+  it("explains a recording whose sections can't be loaded", async () => {
+    routeFetch({
+      "/api/books/librivox": (url: URL) => (url.searchParams.has("id") ? new Response("{}", { status: 502 }) : { recordings: [FOUND] }),
+    });
+    await openUploaded();
+    fireEvent.click(screen.getByRole("button", { name: "Find a recording" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Choose Pride and Prejudice/ }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/Couldn't reach LibriVox/);
+
+    routeFetch({ "/api/books/librivox": (url: URL) => ({ recordings: url.searchParams.has("id") ? [] : [FOUND] }) });
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/no audio/));
+
+    routeFetch({ "/api/books/librivox": (url: URL) => ({ recordings: [{ ...FOUND, ...(url.searchParams.has("id") && { sections: SECTIONS }) }] }) });
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByLabelText("Section");
+  });
+
+  it("stays within a recording that has fewer sections than the place saved", async () => {
+    routeFetch({
+      "/api/books/librivox": (url: URL) => ({ recordings: [{ ...FOUND, ...(url.searchParams.has("id") && { sections: [SECTIONS[0]] }) }] }),
+    });
+    const { id } = await openUploaded();
+    savePosition(id, 1, 0);
+    fireEvent.change(screen.getByLabelText("Chapter"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Find a recording" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Choose Pride and Prejudice/ }));
+    await screen.findByLabelText("Section");
+    expect(section()).toBe("0");
+    await waitFor(() => expect(loadPosition(id)).toMatchObject({ chapter: 0 }));
+  });
+
+  it("shows a recording chosen on another device, and drops it when it is cleared there", async () => {
+    const { id } = await openUploaded();
+    expect(screen.getByRole("button", { name: "Find a recording" })).toBeTruthy();
+    setRecording(id, { id: "253", title: "Pride and Prejudice" }); // as if it arrived by sync
+    act(() => void window.dispatchEvent(new CustomEvent("reel-radar-sync", { detail: { keys: ["books"] } })));
+    await screen.findByText("Pride and Prejudice");
+    expect(screen.getByLabelText("Chapter text")).toBeTruthy(); // still read aloud here until you switch
+
+    fireEvent.click(screen.getByRole("button", { name: "The recording" }));
+    await screen.findByLabelText("Section");
+    setRecording(id, null);
+    act(() => void window.dispatchEvent(new CustomEvent("reel-radar-sync", { detail: { keys: ["books"] } })));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Find a recording" })).toBeTruthy());
+    expect(screen.getByLabelText("Chapter text")).toBeTruthy();
   });
 });

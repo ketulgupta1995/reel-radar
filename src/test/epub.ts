@@ -19,8 +19,9 @@ const DEFAULT_CHAPTERS: [string, string[]][] = [
 export async function makeEpub(options: Options = {}): Promise<Uint8Array> {
   const { title = "The Station Clock", author = "A. Writer", chapters = DEFAULT_CHAPTERS } = options;
   const zip = new JSZip();
-  // A fixed date, so the same options always give the same bytes (a ZIP stores the time it was made).
-  const put = (name: string, content: string) => zip.file(name, content, { date: new Date(0) });
+  // A fixed date and no folder entries (JSZip stamps those with the current time), so the same options
+  // always give the same bytes. Uploading "the same file" twice depends on that.
+  const put = (name: string, content: string) => zip.file(name, content, { date: new Date(0), createFolders: false });
   put("mimetype", "application/epub+zip");
   if (!options.noContainer) {
     put(

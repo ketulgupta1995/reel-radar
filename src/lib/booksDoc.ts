@@ -21,7 +21,17 @@ export type BookEntry = {
 };
 export type Position = { chapter: number; sentence: number; updatedAt: number };
 
-type Item = { entry: BookEntry; removed?: true; position?: { chapter: number; sentence: number }; updatedAt: number };
+export type RecordingChoice = { id: string; title: string }; // the LibriVox recording chosen for a book
+// `recordingAt` is when the recording was chosen (or cleared, when `recording` is null). It is kept apart
+// from `updatedAt`, so choosing a recording on one device and moving your place on another keeps both.
+type Item = {
+  entry: BookEntry;
+  removed?: true;
+  position?: { chapter: number; sentence: number };
+  recording?: RecordingChoice | null;
+  recordingAt?: number;
+  updatedAt: number;
+};
 export type BooksDoc = { items: Item[] };
 
 export const BOOKS_DOC = "books";
@@ -73,10 +83,17 @@ function readDoc(): BooksDoc {
 
 const writeDoc = (doc: BooksDoc) => localStorage.setItem(STORAGE_KEY, JSON.stringify(doc));
 
-// The newest change wins, but a removal is final: it can't be undone by an older copy of the book.
+// The newest change wins, but a removal is final: it can't be undone by an older or newer copy of the book.
+// The chosen recording is decided separately, by when it was chosen.
+const withRecording = (item: Item, from: Item): Item => {
+  const { recording: _recording, recordingAt: _at, ...rest } = item;
+  return from.recordingAt === undefined ? rest : { ...rest, recording: from.recording, recordingAt: from.recordingAt };
+};
+
 const both = (local: Item, server: Item): Item => {
   const winner = server.updatedAt > local.updatedAt ? server : local;
-  return local.removed || server.removed ? { entry: winner.entry, removed: true, updatedAt: winner.updatedAt } : winner;
+  if (local.removed || server.removed) return { entry: winner.entry, removed: true, updatedAt: winner.updatedAt };
+  return withRecording(winner, (server.recordingAt ?? 0) > (local.recordingAt ?? 0) ? server : local);
 };
 
 export const mergeBooks = (local: BooksDoc, server: BooksDoc, base?: BooksDoc): BooksDoc => ({
@@ -113,6 +130,21 @@ export const loadPosition = (id: string): Position | undefined => {
   const item = readDoc().items.find((i) => i.entry.id === id);
   return item && !item.removed && item.position ? { ...item.position, updatedAt: item.updatedAt } : undefined;
 };
+
+/** The LibriVox recording chosen for a book, if any. */
+export const loadRecording = (id: string): RecordingChoice | null => {
+  const item = readDoc().items.find((i) => i.entry.id === id);
+  return item && !item.removed ? (item.recording ?? null) : null;
+};
+
+/** Choose a recording for a book, or clear it with null. Syncs like any library change. */
+export function setRecording(id: string, recording: RecordingChoice | null): void {
+  const doc = readDoc();
+  const item = doc.items.find((i) => i.entry.id === id);
+  if (!item || item.removed) return;
+  writeDoc({ items: doc.items.map((i) => (i === item ? { ...i, recording, recordingAt: Date.now() } : i)) });
+  markDirty(BOOKS_DOC);
+}
 
 let pending = false; // a position changed here that hasn't been queued for syncing yet
 

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { jsonResponse } from "@/test/fixtures";
-import { BOOKS_DOC, BookEntry, addEntry, commitPosition, loadLibrary, loadPosition, mergeBooks, pushPosition, removeEntry, removedIds, savePosition, syncBooks } from "./booksDoc";
+import { BOOKS_DOC, BookEntry, addEntry, commitPosition, loadLibrary, loadPosition, loadRecording, mergeBooks, pushPosition, removeEntry, removedIds, savePosition, setRecording, syncBooks } from "./booksDoc";
 
 const entry = (id: string, extra: Partial<BookEntry> = {}): BookEntry => ({ id, title: `Book ${id}`, author: "A. Writer", source: "upload", hash: id.repeat(4), addedAt: 100, ...extra });
 const META = `reel-radar-sync:${BOOKS_DOC}`;
@@ -91,6 +91,24 @@ describe("library and positions", () => {
   });
 });
 
+describe("chosen recording", () => {
+  it("is remembered per book, can be cleared, and syncs", () => {
+    addEntry(entry("a"));
+    expect(loadRecording("a")).toBeNull();
+    localStorage.setItem(META, JSON.stringify({ dirty: false }));
+    setRecording("a", { id: "253", title: "Pride and Prejudice" });
+    expect(loadRecording("a")).toEqual({ id: "253", title: "Pride and Prejudice" });
+    expect(dirty()).toBe(true);
+    setRecording("a", null);
+    expect(loadRecording("a")).toBeNull();
+    setRecording("missing", { id: "1", title: "x" }); // no such book: nothing happens
+    expect(loadRecording("missing")).toBeNull();
+    removeEntry("a");
+    setRecording("a", { id: "1", title: "x" });
+    expect(loadRecording("a")).toBeNull();
+  });
+});
+
 describe("books saved before syncing existed", () => {
   it("moves the old library and places into the synced doc, once", () => {
     localStorage.setItem("books-library-v1", JSON.stringify([entry("a", { addedAt: 5 }), entry("b", { addedAt: 9 })]));
@@ -121,6 +139,24 @@ describe("mergeBooks", () => {
     const base = doc(item("a", 5));
     expect(mergeBooks(local, server, base).items[0].position).toEqual({ chapter: 4, sentence: 9 });
     expect(mergeBooks(server, local, base).items[0].position).toEqual({ chapter: 4, sentence: 9 });
+  });
+
+  it("keeps a recording chosen on one device and a place saved later on another", () => {
+    const chosen = item("a", 10, { recording: { id: "253", title: "P&P" }, recordingAt: 20 });
+    const moved = item("a", 30, { position: { chapter: 4, sentence: 1 } });
+    for (const merged of [mergeBooks(doc(chosen), doc(moved)), mergeBooks(doc(moved), doc(chosen))]) {
+      expect(merged.items[0]).toMatchObject({ recording: { id: "253" }, position: { chapter: 4, sentence: 1 }, updatedAt: 30 });
+    }
+  });
+
+  it("takes the later choice of recording, including clearing it", () => {
+    const first = item("a", 10, { recording: { id: "1", title: "One" }, recordingAt: 20 });
+    const later = item("a", 10, { recording: { id: "2", title: "Two" }, recordingAt: 40 });
+    const cleared = item("a", 10, { recording: null, recordingAt: 50 });
+    expect(mergeBooks(doc(first), doc(later)).items[0].recording).toEqual({ id: "2", title: "Two" });
+    expect(mergeBooks(doc(later), doc(first)).items[0].recording).toEqual({ id: "2", title: "Two" });
+    expect(mergeBooks(doc(later), doc(cleared)).items[0].recording).toBeNull();
+    expect(mergeBooks(doc(item("a", 1)), doc(item("a", 2, { position: { chapter: 1, sentence: 1 } }))).items[0]).not.toHaveProperty("recordingAt");
   });
 
   it("keeps books that only one side has, and a removal can't be undone by an older or newer copy", () => {

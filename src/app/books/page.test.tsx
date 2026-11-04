@@ -15,6 +15,7 @@ import BooksPage from "./page";
 
 // Reading an EPUB (build, hash, parse) is slow when the machine is busy, as it is under coverage.
 configure({ asyncUtilTimeout: 5000 });
+vi.setConfig({ testTimeout: 20_000 });
 
 beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
