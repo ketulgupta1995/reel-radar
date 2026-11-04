@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { OverdueTodo, Todo } from "@/lib/todos";
 import { DAY_NAMES, formatShortDate } from "./planner";
 
@@ -42,12 +43,23 @@ export function DueTray({
   onToday: (item: OverdueTodo) => void;
   onOpen: (date: string) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const soonest = items[0];
   return (
     <section aria-label="Deadlines" className="mb-5 rounded-xl border border-gold/30 bg-gold/5 text-sm">
-      <h2 className="px-4 pt-3 font-semibold text-white/85">
-        {items.length} {items.length === 1 ? "deadline" : "deadlines"} coming up
-      </h2>
-      <ul className="mt-1 divide-y divide-white/5">
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 px-4 py-3 text-left text-white/85 hover:text-white">
+        <span aria-hidden className={`text-gold transition ${open ? "rotate-90" : ""}`}>›</span>
+        <span className="font-semibold">
+          {items.length} {items.length === 1 ? "deadline" : "deadlines"} coming up
+        </span>
+        {!open && (
+          <span className={`min-w-0 truncate rounded-full border px-2 py-0.5 text-xs ${dueTone(soonest.todo, soonest.date, today)}`}>
+            {dueLabel(soonest.todo.due!, today)}
+          </span>
+        )}
+      </button>
+      {open && (
+      <ul className="divide-y divide-white/5 border-t border-gold/20">
         {items.map((item) => (
           <li key={item.todo.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2">
             <button
@@ -74,6 +86,7 @@ export function DueTray({
           </li>
         ))}
       </ul>
+      )}
     </section>
   );
 }

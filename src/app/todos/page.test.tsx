@@ -39,6 +39,8 @@ const drag = (kind: "dragOver" | "drop", el: HTMLElement, id: string, clientY: n
   fireEvent(el, event);
 };
 
+const openDayLog = () => fireEvent.click(screen.getByText("Day log"));
+
 // Pick a time on the clock face: hour, then minute, then AM/PM, then Done.
 const setClock = (label: string, hour: number, minute: number, period: "AM" | "PM") => {
   fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${label}:`) }));
@@ -167,8 +169,23 @@ describe("arranging tasks", () => {
 
 describe("day log", () => {
 
+  it("stays one line until opened, showing the day so far, with a glass of water to hand", () => {
+    updateDayLog(T, { wake: "07:15", weight: 72.5 });
+    render(<TodosPage />);
+    expect(screen.queryByLabelText("Weight in kg")).toBeNull();
+    expect(screen.getByText("Woke 7:15 AM · 72.5 kg · 0 L")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("More water"));
+    expect(loadDayLog(T).water).toBe(250);
+    expect(screen.getByText("Woke 7:15 AM · 72.5 kg · 0.25 L")).toBeTruthy();
+    openDayLog();
+    expect(screen.getByLabelText("Weight in kg")).toBeTruthy();
+    openDayLog();
+    expect(screen.queryByLabelText("Weight in kg")).toBeNull();
+  });
+
   it("records wake time, sleep time and water for the day shown", async () => {
     render(<TodosPage />);
+    openDayLog();
     expect(screen.getAllByText("Set time")).toHaveLength(2);
     setClock("Woke up", 6, 45, "AM");
     setClock("Went to sleep", 11, 15, "PM");
@@ -205,6 +222,7 @@ describe("day log", () => {
 
   it("records and clears body weight for the day shown", async () => {
     render(<TodosPage />);
+    openDayLog();
     const input = screen.getByLabelText("Weight in kg") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "72.5" } });
     expect(loadDayLog(T)).toEqual({ weight: 72.5 });
@@ -215,12 +233,14 @@ describe("day log", () => {
     await waitFor(() => expect((screen.getByLabelText("Weight in kg") as HTMLInputElement).value).toBe(""));
   });
 
-  it("opens a day that already has notes with them showing, and caps the goal bar", () => {
+  it("flags a day's notes on the closed log, shows them when opened, and caps the goal bar", () => {
     localStorage.setItem(
       "reel-radar-planner-log",
       JSON.stringify({ items: [{ date: T, updatedAt: 1, log: { improve: "Sleep earlier", water: 3000 } }] })
     );
     render(<TodosPage />);
+    expect(screen.getByLabelText("has notes")).toBeTruthy();
+    openDayLog();
     expect((screen.getByLabelText("What to improve") as HTMLTextAreaElement).value).toBe("Sleep earlier");
     expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("2500");
   });
@@ -710,6 +730,33 @@ describe("days", () => {
     fireEvent.click(screen.getByLabelText("Previous day"));
   });
 
+  it("closes the tray on another day or view, but not when its last task is dropped and undone", async () => {
+    saveTodos([todo("Stale")], Y);
+    render(<TodosPage />);
+    fireEvent.click(await screen.findByText("1 overdue task"));
+    fireEvent.click(screen.getByLabelText("Drop “Stale”"));
+    expect(screen.queryByText(/overdue task/)).toBeNull();
+    fireEvent.click(await screen.findByText("Undo"));
+    expect(screen.getByText("Hide")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("week"));
+    fireEvent.click(screen.getByText("day"));
+    expect(await screen.findByText("Choose")).toBeTruthy();
+  });
+
+  it("closes the carry-over tray when moving between days that both have one", async () => {
+    saveTodos([todo("Two back")], shiftDate(T, -2));
+    saveTodos([todo("Three back")], shiftDate(T, -3));
+    render(<TodosPage />);
+    fireEvent.click(screen.getByLabelText("Previous day"));
+    fireEvent.click(await screen.findByText(/1 unfinished task from/));
+    expect(screen.getByText("Hide")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Previous day"));
+    await screen.findByText(/unfinished task from/);
+    expect(screen.getByText("Choose")).toBeTruthy();
+    expect(screen.queryByText("Hide")).toBeNull();
+  });
+
   it("pulls past months once, so older overdue tasks are found on a new device", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(2027, 0, 15, 12, 0));
@@ -788,6 +835,38 @@ describe("days", () => {
     render(<TodosPage />);
     fireEvent.click(inItem("Daily").getByLabelText("Move or copy to another day"));
     expect((screen.getByText("Move") as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("next up", () => {
+  const card = () => screen.queryByRole("region", { name: "Next up" });
+
+  it("shows today's next task, and finishes or starts it from the card", async () => {
+    const later = (nowMinutes() + 30) % 1440;
+    saveTodos([todo("Inbox"), todo("Timed", { start: later, duration: 15 })], T);
+    render(<TodosPage />);
+    await waitFor(() => expect(card()).toBeTruthy());
+    const first = within(card()!).getByLabelText(/^Finish/).getAttribute("aria-label")!;
+    const name = first.includes("Timed") ? "Timed" : "Inbox";
+    const other = name === "Timed" ? "Inbox" : "Timed";
+
+    fireEvent.click(within(card()!).getByLabelText(`Finish “${name}”`));
+    expect(loadTodos(T).find((t) => t.id === name)!.completed).toBe(true);
+    expect(within(card()!).getByText(other)).toBeTruthy();
+
+    // While focusing, the focus bar takes over.
+    fireEvent.click(within(card()!).getByLabelText(`Focus on “${other}”`));
+    expect(card()).toBeNull();
+  });
+
+  it("isn't shown on another day, or when nothing's left", async () => {
+    saveTodos([todo("Tomorrow's")], shiftDate(T, 1));
+    render(<TodosPage />);
+    await waitFor(() => expect(screen.getByText(/nothing planned|Nothing planned/)).toBeTruthy());
+    expect(card()).toBeNull();
+    fireEvent.click(screen.getByLabelText("Next day"));
+    await screen.findByText("Tomorrow's", { selector: "p" });
+    expect(card()).toBeNull();
   });
 });
 
@@ -1334,6 +1413,24 @@ describe("task groups", () => {
 });
 
 describe("task creator options", () => {
+  it("keeps a half-written task when switching to another view and back", async () => {
+    render(<TodosPage />);
+    const box = () => screen.getByPlaceholderText("What needs to be done today?") as HTMLInputElement;
+    fireEvent.change(box(), { target: { value: "Half written" } });
+    fireEvent.click(screen.getByText("⋯ Options"));
+    fireEvent.change(screen.getByLabelText("Priority"), { target: { value: "high" } });
+
+    fireEvent.click(screen.getByText("week"));
+    expect(screen.queryByPlaceholderText("What needs to be done today?")).toBeNull();
+    fireEvent.click(screen.getByText("day"));
+
+    await waitFor(() => expect(box().value).toBe("Half written"));
+    expect((screen.getByLabelText("Priority") as HTMLSelectElement).value).toBe("high");
+    fireEvent.click(screen.getByText("Add"));
+    await waitFor(() => expect(loadTodos(T).map((t) => t.text)).toContain("Half written"));
+    expect(loadTodos(T).find((t) => t.text === "Half written")!.priority).toBe("high");
+  });
+
   it("keeps priority, tag, time, note and repeat behind Options until asked for or in use", () => {
     render(<TodosPage />);
     const toggle = screen.getByText("⋯ Options");
@@ -1357,6 +1454,7 @@ describe("schedule day marks", () => {
     try {
       render(<TodosPage />);
       expect(screen.queryAllByTestId("day-mark")).toHaveLength(0);
+      openDayLog();
       setClock("Woke up", 6, 30, "AM");
       setClock("Went to sleep", 10, 30, "PM");
       fireEvent.click(screen.getByLabelText("More water"));
@@ -1495,6 +1593,10 @@ describe("deadlines", () => {
     render(<TodosPage />);
     await screen.findByRole("region", { name: "Deadlines" });
     expect(tray().getByText("3 deadlines coming up")).toBeTruthy();
+    // Closed, it shows only how soon the first one is.
+    expect(tray().getByText("2 days late")).toBeTruthy();
+    expect(tray().queryByText("Due today")).toBeNull();
+    fireEvent.click(tray().getByRole("button", { name: /coming up/, expanded: false }));
     expect(tray().getByText("2 days late")).toBeTruthy();
     expect(tray().getByText("Due today")).toBeTruthy();
     expect(tray().getByText("Due tomorrow")).toBeTruthy();
@@ -1519,6 +1621,7 @@ describe("deadlines", () => {
     render(<TodosPage />);
     await screen.findByRole("region", { name: "Deadlines" });
     expect(tray().getByText("1 deadline coming up")).toBeTruthy();
+    fireEvent.click(tray().getByRole("button", { name: /coming up/ }));
     fireEvent.click(tray().getByText(/^Planned /));
     expect(await screen.findByText("Soon", { selector: "p" })).toBeTruthy();
     expect(screen.queryByRole("region", { name: "Deadlines" })).toBeNull();

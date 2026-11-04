@@ -84,6 +84,21 @@ describe("sync engine", () => {
     expect(read().items).toEqual(["a", "b"]);
   });
 
+  it("merges with the server's copy when a doc it never pulled already exists there", async () => {
+    fetchMock.mockRejectedValueOnce(new Error("offline"));
+    expect(await syncKeys(["library"], { force: true })).toBeNull();
+    edit(["mine"]);
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ etag: '"e1"', data: { items: ["other device"] } }, { status: 409 }))
+      .mockResolvedValueOnce(jsonResponse({ etag: '"e2"' }));
+    await flush(["library"]);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).baseEtag).toBeUndefined();
+    const retry = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(retry.baseEtag).toBe('"e1"');
+    expect([...retry.data.items].sort()).toEqual(["mine", "other device"]);
+    expect([...read().items].sort()).toEqual(["mine", "other device"]);
+  });
+
   it("leaves a failed push dirty for the next try", async () => {
     edit(["a"]);
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: "x" }, { status: 500 }));

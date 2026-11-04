@@ -55,7 +55,8 @@ export async function GET(req: Request) {
 }
 
 // POST /api/sync { key, data, baseEtag }
-// Writes one doc if the stored copy still has `baseEtag`. Otherwise answers 409 with the current
+// Writes one doc if the stored copy still has `baseEtag`, or with no `baseEtag`, if there's no stored
+// copy: a device that never pulled a doc can't replace it. Otherwise answers 409 with the current
 // copy ({ etag, data }, or nulls if it's gone) so the client can merge and retry.
 export async function POST(req: Request) {
   const { key, data, baseEtag } = await req.json().catch(() => ({}));
@@ -64,7 +65,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const etag = await writeDoc(key, data, typeof baseEtag === "string" && baseEtag ? baseEtag : undefined);
+    const etag = await writeDoc(key, data, typeof baseEtag === "string" && baseEtag ? baseEtag : null);
     return Response.json({ etag }, { headers: noStore });
   } catch (err) {
     if (err instanceof ConflictError) {

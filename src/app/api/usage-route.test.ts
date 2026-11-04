@@ -48,10 +48,10 @@ describe("/api/usage with local files", () => {
   it("saves the counts to data/usage.json after a write, and keeps adding to them", async () => {
     const { sync, usage } = await load();
     await sync.GET(getReq("library"));
-    await sync.POST(post({ key: "library", data: { watched: [], watchlist: [], dismissed: [] } }));
+    const { etag } = await (await sync.POST(post({ key: "library", data: { watched: [], watchlist: [], dismissed: [] } }))).json();
     const saved = JSON.parse(await fs.readFile(path.join(tmp, "data", "usage.json"), "utf-8"));
     expect(Object.values(saved)).toEqual([{ reads: 1, writes: 1 }]);
-    await sync.POST(post({ key: "library", data: { watched: [], watchlist: [], dismissed: [] } }));
+    await sync.POST(post({ key: "library", data: { watched: [], watchlist: [], dismissed: [] }, baseEtag: etag }));
     expect(await totals(usage)).toEqual({ reads: 1, writes: 2 });
   });
 

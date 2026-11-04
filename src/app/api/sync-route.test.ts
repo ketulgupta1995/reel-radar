@@ -68,6 +68,15 @@ describe("/api/sync with local files", () => {
     expect(await stale.json()).toEqual({ etag: second.etag, data: { displayed: ["b"], shown: [] } });
   });
 
+  it("won't let a write with no etag replace a doc that exists", async () => {
+    const route = await load();
+    const first = await (await route.POST(post({ key: "planner-2026-10", data: { items: [{ x: 1 }] } }))).json();
+    const unpulled = await route.POST(post({ key: "planner-2026-10", data: { items: [{ y: 2 }] } }));
+    expect(unpulled.status).toBe(409);
+    expect(await unpulled.json()).toEqual({ etag: first.etag, data: { items: [{ x: 1 }] } });
+    expect(await readTmp("planner-2026-10.json")).toEqual({ items: [{ x: 1 }] });
+  });
+
   it("rejects invalid writes", async () => {
     const route = await load();
     expect((await route.POST(post({ key: "nope", data: {} }))).status).toBe(400);
@@ -97,6 +106,15 @@ describe("/api/sync with local files", () => {
 
 describe("/api/sync with Turso", () => {
   const stored = async (key: string) => (await db.execute({ sql: "SELECT * FROM docs WHERE key = ?", args: [key] })).rows[0];
+
+  it("won't let a write with no etag replace a doc that exists", async () => {
+    const route = await load("libsql://test");
+    const first = await (await route.POST(post({ key: "planner-2026-10", data: { items: [{ x: 1 }] } }))).json();
+    const unpulled = await route.POST(post({ key: "planner-2026-10", data: { items: [{ y: 2 }] } }));
+    expect(unpulled.status).toBe(409);
+    expect(await unpulled.json()).toEqual({ etag: first.etag, data: { items: [{ x: 1 }] } });
+    expect(JSON.parse(String((await stored("planner-2026-10")).data))).toEqual({ items: [{ x: 1 }] });
+  });
 
   it("creates the table, then writes a doc and reads it back", async () => {
     const route = await load("libsql://test");
@@ -176,7 +194,7 @@ describe("/api/sync encrypts the Money docs", () => {
     expect((await (await route.GET(getReq(`money-2026-10:${etag}`))).json()).docs["money-2026-10"]).toEqual({ etag, unchanged: true });
 
     // The same data written again is encrypted afresh, so the stored text never repeats.
-    await route.POST(post({ key: "money-2026-10", data: month }));
+    await route.POST(post({ key: "money-2026-10", data: month, baseEtag: etag }));
     expect(await stored("money-2026-10")).not.toBe(raw);
   });
 
@@ -226,10 +244,10 @@ describe("/api/sync encrypts the Money docs", () => {
   });
 
   it("refuses to store or read them without the right key", async () => {
-    for (const key of ["", "too-short"]) {
+    for (const [key, other] of [["", "planner-2026-01"], ["too-short", "planner-2026-02"]]) {
       const route = await loadWithKey("libsql://test", key);
       expect((await route.POST(post({ key: "money-2026-10", data: month }))).status).toBe(500);
-      expect((await route.POST(post({ key: "library", data: library }))).status).toBe(200); // other docs don't need it
+      expect((await route.POST(post({ key: other, data: { items: [] } }))).status).toBe(200); // other docs don't need it
     }
     expect((await db.execute("SELECT key FROM docs WHERE key LIKE 'money-%'")).rows).toEqual([]);
 

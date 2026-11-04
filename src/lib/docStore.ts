@@ -211,8 +211,9 @@ export async function readDoc(key: string, ifNoneMatch?: string): Promise<ReadRe
 }
 
 // Write a doc and return its new etag. With `ifMatch`, only if the stored copy still has that
-// etag; otherwise this throws ConflictError and the caller merges.
-export async function writeDoc(key: string, data: unknown, ifMatch?: string): Promise<string> {
+// etag; otherwise this throws ConflictError and the caller merges. With null, only if the doc doesn't
+// exist yet, the same way.
+export async function writeDoc(key: string, data: unknown, ifMatch?: string | null): Promise<string> {
   count("writes");
   const text = seal(key, JSON.stringify(data));
   const etag = etagOf(text);
@@ -223,7 +224,9 @@ export async function writeDoc(key: string, data: unknown, ifMatch?: string): Pr
       if (current === null || etagOf(current) !== ifMatch) throw new ConflictError();
     }
     await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file, text, "utf-8");
+    await fs.writeFile(file, text, { encoding: "utf-8", flag: ifMatch === null ? "wx" : "w" }).catch((err) => {
+      throw err.code === "EEXIST" ? new ConflictError() : err;
+    });
     return etag;
   }
   const c = await client();
@@ -231,6 +234,12 @@ export async function writeDoc(key: string, data: unknown, ifMatch?: string): Pr
     const { rowsAffected } = await c.execute({
       sql: "UPDATE docs SET data = ?, etag = ? WHERE key = ? AND etag = ?",
       args: [text, etag, key, ifMatch],
+    });
+    if (!rowsAffected) throw new ConflictError();
+  } else if (ifMatch === null) {
+    const { rowsAffected } = await c.execute({
+      sql: "INSERT INTO docs (key, data, etag) VALUES (?, ?, ?) ON CONFLICT(key) DO NOTHING",
+      args: [key, text, etag],
     });
     if (!rowsAffected) throw new ConflictError();
   } else {
