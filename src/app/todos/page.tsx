@@ -42,7 +42,7 @@ import {
   getOverdueTodos,
   carryOverdueTo,
   loadAllTodos,
-  syncPastPlanner,
+  syncTrayPlanner,
   type OverdueTodo,
   carryOverFromYesterday,
   loadTodosWithDaily,
@@ -55,6 +55,9 @@ import {
   deleteSubtask,
   dueReminders,
   setTodoTag,
+  setTodoDue,
+  setTodoGoal,
+  getDueTodos,
   moveTodoToDate,
   copyTodoToDate,
   getFocusSession,
@@ -89,12 +92,13 @@ import {
 import { exportPlanner, importPlanner } from "@/lib/plannerBackup";
 import { computeTimeFit, suggestBlockLength } from "@/lib/plannerInsights";
 import { SlippingHint } from "./Slipping";
+import { DueTray, dueLabel, dueTone } from "./Deadlines";
 import { AutoSchedulePanel } from "./AutoSchedule";
 import MonthView from "./MonthView";
 import { PlannerTools } from "./PlannerTools";
 import { RepeatPicker, repeatLabel } from "./RepeatPicker";
 import { canAutoSchedule, dayWindow, planDay, type DayPlan, type DayWindow, type PlannedBlock } from "@/lib/autoSchedule";
-import { activeTags, allTags, tagColor, tagLabel, useTags } from "@/lib/plannerSettings";
+import { activeTags, allTags, loadGoals, tagColor, tagLabel, useGoals, useTags } from "@/lib/plannerSettings";
 import { REMINDER_LEADS, reminderBody, reminderKey } from "@/lib/reminders";
 import { disablePush, enablePush, notify } from "@/lib/push";
 
@@ -158,6 +162,10 @@ export default function TodosPage() {
   const tags = useTags();
   const [plan, setPlan] = useState<{ plan: DayPlan; window: DayWindow } | null>(null);
   const [newTag, setNewTag] = useState<TagId | "">("");
+  const [newDue, setNewDue] = useState("");
+  const [newGoal, setNewGoal] = useState("");
+  const goals = useGoals();
+  const activeGoals = goals.filter((g) => !g.doneAt);
   const [tagFilter, setTagFilter] = useState<TagId | "all">("all");
   const [view, setView] = useState<View>("day");
   const [focus, setFocus] = useState<FocusSession | null>(null);
@@ -174,6 +182,7 @@ export default function TodosPage() {
   const [yesterdayTodos, setYesterdayTodos] = useState<Todo[]>([]);
   const [showYesterday, setShowYesterday] = useState(false);
   const [overdue, setOverdue] = useState<OverdueTodo[]>([]);
+  const [dueSoon, setDueSoon] = useState<OverdueTodo[]>([]);
   const [reviewDue, setReviewDue] = useState(false);
   const [deletedFrom, setDeletedFrom] = useState<string | null>(null);
   const pastSynced = useRef(false);
@@ -209,7 +218,10 @@ export default function TodosPage() {
   const refreshMeta = (date = selectedDate) => {
     const today = getTodayDate();
     setYesterdayTodos(date === today ? [] : getUnfinishedFromYesterday(date));
-    setOverdue(date === today ? getOverdueTodos(today) : []);
+    // A task with a deadline coming up shows there, not in both trays.
+    const due = date === today ? getDueTodos(today) : [];
+    setDueSoon(due);
+    setOverdue(date === today ? getOverdueTodos(today).filter((o) => !due.some((d) => d.todo.id === o.todo.id)) : []);
     setReviewDue(weekday(today) === 0 && !loadDayLog(today).reviewedAt);
     setDailyTasks(loadDailyTasks());
   };
@@ -231,10 +243,10 @@ export default function TodosPage() {
       setTodos(loadTodosWithDaily(selectedDate));
       refreshMeta(selectedDate);
       setLogVersion((v) => v + 1);
-      // Overdue tasks can be in any past month, which this device may not have yet. Once per visit.
+      // Overdue and due-soon tasks can be in a month this device doesn't have yet. Once per visit.
       if (pastSynced.current) return;
       pastSynced.current = true;
-      syncPastPlanner().then((changed) => {
+      syncTrayPlanner().then((changed) => {
         if (changed && !cancelled) refreshMeta(selectedDate);
       });
     });
@@ -255,6 +267,10 @@ export default function TodosPage() {
   });
 
   useEffect(() => {
+    // Search and Goals link straight to a day.
+    const linked = new URLSearchParams(window.location.search).get("date");
+    if (linked && /^\d{4}-\d{2}-\d{2}$/.test(linked) && !Number.isNaN(new Date(linked + "T00:00:00").getTime())) setSelectedDate(linked);
+    if (linked) window.history.replaceState(null, "", "/todos"); // a later reload goes back to today
     inputRef.current?.focus();
     const lead = loadReminderLead();
     setReminderLead(lead);
@@ -384,6 +400,9 @@ export default function TodosPage() {
     const priority = quick.priority ?? (newPriority || undefined);
     const tag = quick.tag ?? (newTag || undefined);
     const schedule = start !== null ? { start, duration: quick.duration ?? newDuration } : undefined;
+    const extra = { due: quick.due ?? (newDue || undefined), goalId: newGoal || undefined };
+    setNewDue("");
+    setNewGoal("");
     setNewRepeat({});
     setNewTodoText("");
     setNewNote("");
@@ -393,7 +412,7 @@ export default function TodosPage() {
     inputRef.current?.focus();
     // Another day's month may not be on this device yet, and pushing it unpulled would replace the server's copy.
     if (date !== selectedDate) await syncPlanner([date]);
-    const updated = addTodo(text, date, priority, schedule, repeat, note, tag);
+    const updated = addTodo(text, date, priority, schedule, repeat, note, tag, extra);
     if (date === selectedDate) apply(updated);
     else refreshMeta();
     const stored = repeat ? normalizeRepeat(repeat) : null;
@@ -456,6 +475,18 @@ export default function TodosPage() {
     undoTimer.current = setTimeout(() => setDeleted(null), 6000);
   };
 
+  const handleDueDone = ({ todo, date }: OverdueTodo) => {
+    toggleTodo(todo.id, date);
+    apply(loadTodos(selectedDate));
+    flash(`Done: ${todo.text}`);
+  };
+
+  const handleDueToday = ({ todo, date }: OverdueTodo) => {
+    moveTodoToDate(todo.id, date, selectedDate);
+    apply(loadTodos(selectedDate));
+    flash("Moved to today");
+  };
+
   const handleCarryOver = (ids?: string[]) => {
     const count = ids ? ids.length : yesterdayTodos.length;
     apply(carryOverFromYesterday(selectedDate, ids));
@@ -500,7 +531,8 @@ export default function TodosPage() {
     }
     if (mode === "move" && selectedBlock === t.id) setSelectedBlock(null);
     apply(loadTodos(selectedDate));
-    flash(`${mode === "copy" ? "Copied" : "Moved"} to ${getRelativeDateLabel(to)}`);
+    const late = mode === "move" && t.due && to > t.due ? `, past its ${formatShortDate(t.due)} deadline` : "";
+    flash(`${mode === "copy" ? "Copied" : "Moved"} to ${getRelativeDateLabel(to)}${late}`);
   };
 
   const handleExport = async () => {
@@ -522,7 +554,8 @@ export default function TodosPage() {
           (r.daily ? ` + ${r.daily} daily ${r.daily === 1 ? "task" : "tasks"}` : "") +
           (r.logs ? ` + ${r.logs} day ${r.logs === 1 ? "log" : "logs"}` : "") +
           (r.lists || r.items ? ` + ${r.items} list ${r.items === 1 ? "item" : "items"}` : "") +
-          (r.templates ? ` + ${r.templates} ${r.templates === 1 ? "template" : "templates"}` : "")
+          (r.templates ? ` + ${r.templates} ${r.templates === 1 ? "template" : "templates"}` : "") +
+          (r.goals ? ` + ${r.goals} ${r.goals === 1 ? "goal" : "goals"}` : "")
       );
     } catch (err) {
       flash(err instanceof Error ? err.message : "Could not import that file");
@@ -617,7 +650,7 @@ export default function TodosPage() {
     );
   }, [todos, filter, query, tagFilter]);
 
-  const hasOptions = Boolean(newPriority || newTag || newTime || newNote.trim() || newDaily);
+  const hasOptions = Boolean(newPriority || newTag || newTime || newDue || newGoal || newNote.trim() || newDaily);
   const optionsOpen = showOptions || hasOptions;
   const quickPreview = useMemo(() => parseQuickAdd(newTodoText), [newTodoText]);
 
@@ -659,6 +692,18 @@ export default function TodosPage() {
                 Clear completed
               </button>
             )}
+            <Link
+              href="/todos/search"
+              className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-white/80 hover:border-gold/40 hover:text-gold"
+            >
+              Search →
+            </Link>
+            <Link
+              href="/todos/goals"
+              className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-white/80 hover:border-gold/40 hover:text-gold"
+            >
+              Goals →
+            </Link>
             <Link
               href="/todos/lists"
               className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-white/80 hover:border-gold/40 hover:text-gold"
@@ -824,6 +869,8 @@ export default function TodosPage() {
           </Link>
         )}
 
+        {dueSoon.length > 0 && <DueTray items={dueSoon} today={selectedDate} onDone={handleDueDone} onToday={handleDueToday} onOpen={setSelectedDate} />}
+
         {/* Overdue: unfinished tasks from every past day */}
         {overdue.length > 0 && (
           <div className="mb-5 rounded-xl border border-gold/30 bg-gold/5 text-sm">
@@ -860,6 +907,7 @@ export default function TodosPage() {
                         className={`h-2 w-2 shrink-0 rounded-full ${o.todo.priority ? PRIORITY_STYLE[o.todo.priority].dot : "border border-white/30"}`}
                       />
                       <span className="min-w-0 flex-1 basis-32 break-words text-white/80">{o.todo.text}</span>
+                      {o.todo.due && <span className={`rounded-full border px-2 py-0.5 text-xs ${dueTone(o.todo, o.date, selectedDate)}`}>{dueLabel(o.todo.due, selectedDate)}</span>}
                       <span className="text-xs text-white/50">{formatShortDate(o.date)}</span>
                       <button
                         onClick={() => handleDropOverdue(o)}
@@ -981,7 +1029,7 @@ export default function TodosPage() {
                   type="button"
                   onClick={() => setShowOptions((v) => !v)}
                   aria-expanded={optionsOpen}
-                  title="Priority, tag, time, note, repeat"
+                  title="Priority, tag, time, deadline, goal, note, repeat"
                   className={`shrink-0 rounded-full border px-3 py-1.5 text-xs transition ${
                     optionsOpen || hasOptions ? "border-gold/60 bg-gold/15 text-gold" : "border-white/15 text-white/60 hover:text-white"
                   }`}
@@ -1030,6 +1078,32 @@ export default function TodosPage() {
                   aria-label="Start time (optional)"
                   title="Start time (optional) - places it in the planner"
                 />
+                <label className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-white/60 sm:flex-none" title="The day it must be done by, however often the task moves">
+                  Due
+                  <input
+                    type="date"
+                    value={newDue}
+                    onChange={(e) => setNewDue(e.target.value)}
+                    disabled={newDaily}
+                    className="min-w-0 flex-1 rounded-lg border border-white/10 bg-ink px-2.5 py-1.5 text-xs text-white [color-scheme:dark] focus:border-gold/50 focus:outline-none disabled:opacity-40"
+                    aria-label="Deadline (optional)"
+                  />
+                </label>
+                {activeGoals.length > 0 && (
+                  <select
+                    value={newGoal}
+                    onChange={(e) => setNewGoal(e.target.value)}
+                    className="min-w-0 flex-1 rounded-lg border border-white/10 bg-ink px-2.5 py-1.5 text-xs text-white focus:border-gold/50 focus:outline-none sm:flex-none"
+                    aria-label="Goal"
+                  >
+                    <option value="">No goal</option>
+                    {activeGoals.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 {newTime && (
                   <select
                     value={newDuration}
@@ -1115,7 +1189,7 @@ export default function TodosPage() {
                   type="search"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search tasks"
+                  placeholder="Filter this day"
                   className="min-w-0 flex-1 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-sm text-white placeholder-white/40 focus:border-gold/50 focus:outline-none"
                 />
                 {usedTags.length > 0 && (
@@ -1167,6 +1241,14 @@ export default function TodosPage() {
             ) : visible.length === 0 ? (
               <p className="rounded-2xl border border-white/10 bg-white/[.04] p-6 text-center text-sm text-white/50">
                 No tasks match this filter.
+                {query.trim() && (
+                  <>
+                    {" "}
+                    <Link href={`/todos/search?q=${encodeURIComponent(query.trim())}`} className="text-gold hover:underline">
+                      Search every day →
+                    </Link>
+                  </>
+                )}
               </p>
             ) : (
               <div ref={reorder.listRef} className="space-y-2">
@@ -1214,6 +1296,8 @@ export default function TodosPage() {
                     onToggleSubtask={(t, subId) => apply(toggleSubtask(t.id, subId, selectedDate))}
                     onDeleteSubtask={(t, subId) => apply(deleteSubtask(t.id, subId, selectedDate))}
                     onSetTag={(t, tag) => apply(setTodoTag(t.id, tag, selectedDate))}
+                    onSetDue={(t, due) => apply(setTodoDue(t.id, due, selectedDate))}
+                    onSetGoal={(t, goalId) => apply(setTodoGoal(t.id, goalId, selectedDate))}
                     focusing={focus?.todoId === todo.id}
                     onStartFocus={handleStartFocus}
                     date={selectedDate}
@@ -1498,6 +1582,8 @@ function TodoItem({
   onToggleSubtask,
   onDeleteSubtask,
   onSetTag,
+  onSetDue,
+  onSetGoal,
   focusing,
   onStartFocus,
   date,
@@ -1528,6 +1614,8 @@ function TodoItem({
   onToggleSubtask: (todo: Todo, subtaskId: string) => void;
   onDeleteSubtask: (todo: Todo, subtaskId: string) => void;
   onSetTag: (todo: Todo, tag: TagId | undefined) => void;
+  onSetDue: (todo: Todo, due: string | undefined) => void;
+  onSetGoal: (todo: Todo, goalId: string | undefined) => void;
   focusing: boolean;
   onStartFocus: (todo: Todo) => void;
   date: string;
@@ -1536,6 +1624,7 @@ function TodoItem({
   const inputRef = useRef<HTMLInputElement>(null);
   const [showRepeat, setShowRepeat] = useState(false);
   const [showSend, setShowSend] = useState(false);
+  const [showDue, setShowDue] = useState(false);
   const [sendDate, setSendDate] = useState("");
   const [addingSubtask, setAddingSubtask] = useState(false);
   const [subtaskText, setSubtaskText] = useState("");
@@ -1595,6 +1684,9 @@ function TodoItem({
   const subtasks = todo.subtasks ?? [];
   const subtasksDone = subtasks.filter((st) => st.done).length;
   const lifted = reorder.drag?.id === todo.id;
+  const today = getTodayDate();
+  const goalChoices = loadGoals().filter((g) => !g.doneAt || g.id === todo.goalId);
+  const goal = goalChoices.find((g) => g.id === todo.goalId);
 
   return (
     <div
@@ -1769,6 +1861,37 @@ function TodoItem({
                 ))}
               </select>
             </label>
+            {goalChoices.length > 0 && (
+              <label
+                className="relative inline-flex cursor-pointer items-center gap-1 rounded-full border border-white/15 px-2 py-0.5 text-white/60 focus-within:border-gold/50 hover:border-white/30 hover:text-white"
+                title="The goal this task works towards"
+              >
+                🎯 {goal ? goal.name : "+ Goal"}
+                <select
+                  value={goal?.id ?? ""}
+                  onChange={(e) => onSetGoal(todo, e.target.value || undefined)}
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                  aria-label="Goal"
+                >
+                  <option value="">No goal</option>
+                  {goalChoices.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {!todo.dailyId && (
+              <button
+                onClick={() => setShowDue((v) => !v)}
+                aria-expanded={showDue}
+                title="The day it must be done by, however often the task moves"
+                className={`rounded-full border px-2 py-0.5 hover:border-gold/50 ${todo.due ? dueTone(todo, date, today) : "border-dashed border-white/25 text-white/55 hover:text-gold"}`}
+              >
+                {todo.due ? `🏁 ${todo.completed ? `Due ${formatShortDate(todo.due)}` : dueLabel(todo.due, today)}${!todo.completed && date > todo.due && todo.due >= today ? " · planned after it" : ""}` : "+ Due"}
+              </button>
+            )}
             {focusing ? (
               <span className="flex items-center gap-1.5 rounded-full bg-gold/15 px-2 py-0.5 text-gold">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-gold" /> Focusing
@@ -1823,6 +1946,26 @@ function TodoItem({
             )}
           </p>
           <SlippingHint todo={todo} onDrop={() => onDelete(todo.id)} onAddStep={(text) => onAddSubtask(todo, text)} />
+          {showDue && !todo.dailyId && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-white/55">
+              <input
+                type="date"
+                value={todo.due ?? ""}
+                onChange={(e) => onSetDue(todo, e.target.value || undefined)}
+                className="rounded-lg border border-white/10 bg-panel px-2 py-1 text-white [color-scheme:dark] focus:border-gold/50 focus:outline-none"
+                aria-label={`Deadline for “${todo.text}”`}
+              />
+              {todo.due && (
+                <button onClick={() => onSetDue(todo, undefined)} className="text-white/45 hover:text-white">
+                  Remove deadline
+                </button>
+              )}
+              <button onClick={() => setShowDue(false)} className="text-white/45 hover:text-white">
+                Close
+              </button>
+              <span className="basis-full text-white/40">Stays the same when the task moves to another day.</span>
+            </div>
+          )}
           {showSend && (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-white/55">
               <input
@@ -2348,6 +2491,7 @@ function QuickAddHint({ quick, typed }: { quick: QuickAdd; typed: boolean }) {
   if (quick.priority) chips.push(`⚑ ${quick.priority[0].toUpperCase()}${quick.priority.slice(1)}`);
   if (quick.tag) chips.push(`# ${tagLabel(quick.tag)}`);
   if (quick.date) chips.push(`📅 ${longDay(quick.date)}`);
+  if (quick.due && !quick.repeat && !quick.daily) chips.push(`🏁 Due ${longDay(quick.due)}`);
   if (quick.repeat) chips.push(`↻ ${repeatLabel(quick.repeat)}`);
   else if (quick.daily) chips.push("↻ Every day");
   if (!chips.length)
@@ -2355,7 +2499,7 @@ function QuickAddHint({ quick, typed }: { quick: QuickAdd; typed: boolean }) {
       <p className="basis-full px-1 text-[11px] text-white/35">
         Shorthand: <span className="text-white/55">6pm</span> · <span className="text-white/55">45m</span> ·{" "}
         <span className="text-white/55">#work</span> · <span className="text-white/55">!high</span> ·{" "}
-        <span className="text-white/55">fri</span> · <span className="text-white/55">daily</span>
+        <span className="text-white/55">fri</span> · <span className="text-white/55">by fri</span> · <span className="text-white/55">daily</span>
       </p>
     );
   return (

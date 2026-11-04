@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { computeLogTrends, computeMonth, computePatterns, computeTimeFit, heatLevel, reviewWeek, sleepHours, suggestBlockLength } from "./plannerInsights";
-import type { DayLog, Todo } from "./todos";
+import { computeGoalProgress, computeLogTrends, computeMonth, computePatterns, computeTimeFit, heatLevel, reviewWeek, sleepHours, suggestBlockLength } from "./plannerInsights";
+import type { DailyTask, DayLog, Todo } from "./todos";
 
 const todo = (id: string, extra: Partial<Todo> = {}): Todo => ({ id, text: id, completed: false, createdAt: "", ...extra });
 
@@ -196,5 +196,59 @@ describe("computeMonth", () => {
 describe("heatLevel", () => {
   it("uses fixed steps", () => {
     expect([0, 1, 2, 3, 4, 5, 7, 8, 30].map(heatLevel)).toEqual([0, 1, 1, 2, 2, 3, 3, 4, 4]);
+  });
+});
+
+describe("computeGoalProgress", () => {
+  const WEEK = ["2026-03-02", "2026-03-08"] as const;
+  const noon = (y: number, m: number, d: number) => new Date(y, m - 1, d, 12).getTime();
+
+  it("is empty for a goal with nothing linked", () => {
+    expect(computeGoalProgress("g", { "2026-03-02": [todo("Other", { goalId: "h" })] }, [], ...WEEK)).toEqual({ done: 0, doneInRange: 0, percent: null, open: [], repeats: [], focused: 0, lastDone: null });
+  });
+
+  it("counts one-off tasks, on the day they were finished, with the earliest open one first", () => {
+    const p = computeGoalProgress(
+      "g",
+      {
+        "2026-03-01": [todo("Moved late", { goalId: "g", completed: true, doneAt: noon(2026, 3, 3), spent: 20 })],
+        "2026-03-09": [todo("Later", { goalId: "g" })],
+        "2026-03-04": [todo("Sooner", { goalId: "g" }), todo("No stamp", { goalId: "g", completed: true })],
+        "2026-02-01": [todo("Old", { goalId: "g", completed: true, spent: 10 })],
+      },
+      [],
+      ...WEEK
+    );
+    expect(p.done).toBe(3);
+    expect(p.doneInRange).toBe(2);
+    expect(p.percent).toBe(60);
+    expect(p.open.map((s) => s.todo.text)).toEqual(["Sooner", "Later"]);
+    expect(p.focused).toBe(30);
+    expect(p.lastDone).toBe("2026-03-04");
+  });
+
+  it("counts every finished copy of a repeat, cleared ones and those from before the link too, but not missed ones", () => {
+    const run: DailyTask = { id: "d", text: "Run", startDate: "2026-02-01", goalId: "g", doneDates: ["2026-03-05"] };
+    const p = computeGoalProgress(
+      "g",
+      {
+        "2026-03-02": [todo("Run", { dailyId: "d", completed: true })],
+        "2026-03-03": [todo("Run", { dailyId: "d" })],
+      },
+      [run, { id: "x", text: "Other", startDate: "2026-02-01" }],
+      ...WEEK
+    );
+    expect(p.done).toBe(2);
+    expect(p.doneInRange).toBe(2);
+    expect(p.percent).toBeNull(); // repeats have no end
+    expect(p.open).toEqual([]);
+    expect(p.repeats).toEqual([run]);
+    expect(p.lastDone).toBe("2026-03-05");
+  });
+
+  it("still counts copies of a stopped repeat that carry the goal", () => {
+    const p = computeGoalProgress("g", { "2026-03-02": [todo("Run", { dailyId: "gone", goalId: "g", completed: true }), todo("Run", { dailyId: "gone", goalId: "g" })] }, [], ...WEEK);
+    expect(p.done).toBe(1);
+    expect(p.open).toEqual([]);
   });
 });

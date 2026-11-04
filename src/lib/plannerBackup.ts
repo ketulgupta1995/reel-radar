@@ -18,19 +18,19 @@ import {
 } from "@/lib/todos";
 
 // The planner's backup file: every day's tasks, the repeating tasks, the day log, the lists, and
-// the tags and day templates.
+// the tags, day templates and goals.
 // Photos and voice notes stay on the server; list items hold references to them.
 
 export type PlannerBackup = {
   app: "planner";
-  version: 4;
+  version: 5;
   days: Record<string, Todo[]>;
   daily: DailyTask[];
   log: Record<string, DayLog>;
   lists: ListsBackup;
   settings: SettingsBackup;
 };
-export type PlannerImport = { todos: number; days: number; daily: number; logs: number; lists: number; items: number; tags: number; templates: number };
+export type PlannerImport = { todos: number; days: number; daily: number; logs: number; lists: number; items: number; tags: number; templates: number; goals: number };
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -40,7 +40,7 @@ export async function exportPlanner(): Promise<{ synced: boolean }> {
   const pulled = await Promise.all([syncAllPlanner(), syncLists()]);
   const backup: PlannerBackup = {
     app: "planner",
-    version: 4,
+    version: 5,
     days: loadAllTodos(),
     daily: loadDailyTasks(),
     log: loadAllDayLogs(),
@@ -59,6 +59,12 @@ export async function exportPlanner(): Promise<{ synced: boolean }> {
 
 const isTodo = (t: unknown): t is Todo =>
   !!t && typeof (t as Todo).id === "string" && typeof (t as Todo).text === "string";
+// Deadlines are compared and shown as dates, so one that isn't a date is left out.
+const cleanTodo = (t: Todo): Todo => {
+  if (t.due === undefined || (typeof t.due === "string" && DATE_RE.test(t.due))) return t;
+  const { due: _due, ...rest } = t;
+  return rest;
+};
 const isDailyTask = (t: unknown): t is DailyTask =>
   !!t && typeof (t as DailyTask).id === "string" && typeof (t as DailyTask).startDate === "string";
 
@@ -103,10 +109,10 @@ export async function importPlanner(file: File): Promise<PlannerImport> {
   const days: Record<string, Todo[]> = {};
   if (p && p.app === "planner" && p.days && typeof p.days === "object") {
     for (const [date, todos] of Object.entries(p.days)) {
-      if (DATE_RE.test(date) && Array.isArray(todos)) days[date] = todos.filter(isTodo);
+      if (DATE_RE.test(date) && Array.isArray(todos)) days[date] = todos.filter(isTodo).map(cleanTodo);
     }
   } else if (p && typeof p.date === "string" && DATE_RE.test(p.date) && Array.isArray(p.todos)) {
-    days[p.date] = p.todos.filter(isTodo);
+    days[p.date] = p.todos.filter(isTodo).map(cleanTodo);
   } else {
     throw new Error("Not a planner backup file.");
   }
@@ -118,7 +124,7 @@ export async function importPlanner(file: File): Promise<PlannerImport> {
   if (daily.length) saveDailyTasks(mergeById(loadDailyTasks(), daily));
   for (const [date, log] of logs) updateDayLog(date, cleanDayLog(log));
   const { lists, items } = restoreLists(p.lists);
-  const { tags, templates } = restoreSettings(p.settings);
+  const { tags, templates, goals } = restoreSettings(p.settings);
   return {
     todos: Object.values(days).reduce((n, t) => n + t.length, 0),
     days: Object.values(days).filter((t) => t.length > 0).length,
@@ -128,5 +134,6 @@ export async function importPlanner(file: File): Promise<PlannerImport> {
     items,
     tags,
     templates,
+    goals,
   };
 }

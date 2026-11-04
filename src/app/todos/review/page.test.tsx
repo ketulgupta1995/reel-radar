@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { routeFetch } from "@/test/pages";
 import { addList, loadItems, loadLists } from "@/lib/lists";
+import { addGoal, loadGoals, setGoalDone } from "@/lib/plannerSettings";
 import { type Todo, addTodo, loadDayLog, loadTodos, saveTodos, updateDayLog } from "@/lib/todos";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/todos/review" }));
@@ -189,5 +190,59 @@ describe("WeeklyReviewPage", () => {
     fireEvent.click(screen.getByText("Drop"));
     act(() => void vi.advanceTimersByTime(6000));
     await waitFor(() => expect(screen.queryByText("Undo")).toBeNull());
+  });
+});
+
+describe("goals in the weekly review", () => {
+  it("shows how each goal went, and which have no next step", async () => {
+    addGoal("Run");
+    addGoal("Read");
+    addGoal("Write");
+    addGoal("Old");
+    const [run, read, , old] = loadGoals();
+    setGoalDone(old.id, true);
+    saveTodos([todo("Ran", { goalId: run.id, completed: true, doneAt: new Date(2026, 2, 3, 12).getTime() }), todo("Run more", { goalId: run.id })], MON);
+    saveTodos([todo("Chapter", { goalId: read.id })], NEXT_MON);
+    await open();
+    expect(screen.getByText("Your goals")).toBeTruthy();
+    expect(screen.queryByText("Old")).toBeNull();
+    const card = (name: string) => within(screen.getByText(name).closest("li") as HTMLElement);
+    expect(card("Run").getByText("1 done this week · 1 open")).toBeTruthy();
+    expect(card("Run").getByRole("progressbar").getAttribute("aria-valuenow")).toBe("50");
+    expect(card("Read").getByText("Nothing moved this week.")).toBeTruthy();
+    expect(card("Write").getByText(/No next step planned/)).toBeTruthy();
+    expect(card("Write").queryByRole("progressbar")).toBeNull();
+  });
+
+  it("shows the deadline of an unfinished task", async () => {
+    saveTodos([todo("Tax", { due: "2026-03-07" })], MON);
+    await open();
+    goTo("Unfinished tasks");
+    expect(screen.getByText("1 day late")).toBeTruthy();
+  });
+
+  it("links tasks you plan to a goal, and reads a deadline from the shorthand", async () => {
+    addGoal("Run");
+    const goalId = loadGoals()[0].id;
+    await open();
+    goTo("Plan ahead");
+    fireEvent.change(await screen.findByLabelText(/Tasks you add work towards/), { target: { value: goalId } });
+    const box = screen.getByLabelText("Add a task for Mar 9");
+    fireEvent.change(box, { target: { value: "Long run by wed" } });
+    fireEvent.submit(box);
+    await waitFor(() => expect(loadTodos(NEXT_MON)).toHaveLength(1));
+    expect(loadTodos(NEXT_MON)[0]).toMatchObject({ text: "Long run", goalId, due: "2026-03-11" });
+  });
+
+  it("offers no goal choice without goals", async () => {
+    await open();
+    expect(screen.queryByText("Your goals")).toBeNull();
+    goTo("Plan ahead");
+    expect(screen.queryByLabelText(/Tasks you add work towards/)).toBeNull();
+    const box = screen.getByLabelText("Add a task for Mar 9");
+    fireEvent.change(box, { target: { value: "Plain" } });
+    fireEvent.submit(box);
+    await waitFor(() => expect(loadTodos(NEXT_MON)).toHaveLength(1));
+    expect(loadTodos(NEXT_MON)[0].goalId).toBeUndefined();
   });
 });

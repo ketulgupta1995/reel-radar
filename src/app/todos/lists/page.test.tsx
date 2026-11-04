@@ -387,3 +387,22 @@ describe("ListsPage", () => {
     expect(screen.getByRole("heading", { name: /From phone/ })).toBeTruthy();
   });
 });
+
+describe("links from search", () => {
+  it("opens the named list and item, in the Done section if it's done", async () => {
+    addList("Other");
+    const list = addList("Gifts");
+    const item = addItem(list.id, "Headphones");
+    window.history.replaceState(null, "", `/todos/lists?list=${list.id}&item=${item.id}`);
+    const first = render(<ListsPage />);
+    expect(await screen.findByRole("heading", { name: /Gifts/ })).toBeTruthy();
+    expect(screen.getAllByText("Headphones").length).toBeGreaterThan(0);
+    first.unmount();
+
+    const finished = addItem(list.id, "Wrapped", { done: true });
+    window.history.replaceState(null, "", `/todos/lists?list=${list.id}&item=${finished.id}`);
+    render(<ListsPage />);
+    expect(await screen.findByText("Wrapped")).toBeTruthy();
+    window.history.replaceState(null, "", "/");
+  });
+});

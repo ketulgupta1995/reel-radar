@@ -62,9 +62,9 @@ src/
   proxy.ts               Auth gate for every route except /login, /api/auth/*, /api/push/send (own secret) and static files
   app/                   Pages: / (app launcher), reel-radar (Reel Radar landing), discover,
                          recommendations, analysis, watched, watchlist, dismissed, search, similar,
-                         person/[id], todos, todos/stats, todos/lists, todos/review, money, money/import, money/settings, login
+                         person/[id], todos, todos/stats, todos/lists, todos/review, todos/goals, todos/search, money, money/import, money/settings, login
   app/todos/             Planner page parts: WeekView, MonthView, AutoSchedule, RepeatPicker, PlannerTools, Slipping,
-                         ClockTimePicker, shared planner.tsx
+                         Deadlines, ClockTimePicker, shared planner.tsx
   app/money/             Money page parts: ReviewQueue, shared.tsx
   app/api/               Route handlers: discover, recommendations, similar, search, title,
                          person/[id], sync, media/[id], usage, push, push/send, money/family (starter family from the env),
@@ -78,7 +78,7 @@ src/
     analysis.ts          Analytics aggregation
     storage.ts           Reel Radar state: load/save, merge, export/import, useStorageSync()
     todos.ts             Todo and daily-task model and logic, planner sync ("use client")
-    plannerBackup.ts     Planner export/import: days, daily tasks, day log, lists ("use client")
+    plannerBackup.ts     Planner export/import: days, daily tasks, day log, lists, tags, templates, goals ("use client")
     reminders.ts         Reminder rules shared by the page and the server (no "use client")
     push.ts              Browser side of reminders: service worker, subscribing, notify()
     pushReminders.ts     Server side of reminders: subscriptions, what's due, sending
@@ -94,10 +94,11 @@ src/
     docStore.ts          Server-only doc storage: one Turso row per doc, or data/ locally
     http.ts              cachedJson() for browser-cacheable API responses
     plannerStats.ts      Planner stats aggregation (pure; used by /todos/stats)
-    plannerInsights.ts   Sleep hours, day log trends and patterns, planned vs. actual time, review week, month data (pure)
-    plannerSettings.ts   Tags and day templates: a synced doc, useTags(), tagLabel(), tagColor() ("use client")
+    plannerInsights.ts   Sleep hours, day log trends and patterns, planned vs. actual time, review week, month data, goal progress (pure)
+    plannerSearch.ts     Finds text in every day's tasks and day notes (pure; used by /todos/search)
+    plannerSettings.ts   Tags, day templates and goals: a synced doc, useTags(), useGoals(), tagLabel(), tagColor() ("use client")
     autoSchedule.ts      Proposes a day's plan from free time, priority and length (pure)
-    quickAdd.ts          Reads the add-box shorthand: time, length, tag, priority, date, repeat
+    quickAdd.ts          Reads the add-box shorthand: time, length, tag, priority, date, deadline, repeat
     usageStats.ts        Database reads/writes per local day (pure; used by /todos/stats)
     auth.ts              Session signing/verification via Web Crypto
   types/title.ts         Title / MediaType types and keyOf()
@@ -126,6 +127,9 @@ The repo is indexed by CodeGraph (`.codegraph/`). Use `codegraph explore "<symbo
   - `readDoc`/`writeDoc` count every call per half hour (`flushUsage()` saves the counts to the `usage` table, or `data/usage.json`; `/api/usage` serves them to the stats page). Any new code path that queries the `docs` table must go through them so it is counted.
 - **Media** (list photos and voice notes): one `media-<id>` doc each, through `readDoc`/`writeDoc`/`deleteDoc` in `api/media/[id]`, never `/api/sync` (they stay out of `DOC_KEY` and out of `localStorage`). Ids are random and files are never rewritten, so GET answers `private, immutable`. Only the types in `MEDIA_TYPES` are stored or served (no SVG or HTML), up to `MAX_MEDIA_BYTES`. List items keep `MediaRef`s; whoever drops an item, photo or list deletes its media. Links on items go through `cleanLink()` (http/https only) before they reach an `href`. `next.config.mjs` allows `microphone=(self)` for voice notes.
 - **Postponing**: `postponeCount()` is the one reader of a todo's `postponed` (tasks older than that field count once if they have `carriedFrom`). `carryOverdueTo()` and `moveTodoToDate()` raise it; a move only counts when an unfinished task leaves today or a past day for a later one, not when future plans are rearranged. Overdue covers one-off tasks only, because every day gets its own daily copy. Todo ids are unique across a month doc: `saveTodos` treats the same id on another day as a move.
+- **Deadlines**: a todo's `due` is separate from the day it's planned on, so moving or carrying a task keeps it. Only one-off tasks have one: `addTodo`, `setTodoDue` and `makeTodoDaily` enforce that, and `copyTodoToDate` drops it. `getDueTodos()` feeds the tray, and the page leaves those tasks out of Overdue so each shows once. That tray can hold tasks planned ahead, so `syncTrayPlanner()` pulls next month as well as every past one.
+- **Goals**: live in `planner-settings` (no extra doc to read). Todos and daily tasks hold a `goalId`, which each day's copy of a repeat inherits, and `syncDailyFrom` carries a change to later days. A deleted goal's id stays on its tasks and just stops matching. `computeGoalProgress()` is the one place that decides what counts. The percentage covers one-off tasks only, because repeats have no end; every finished copy of a linked repeat counts, including cleared ones (`doneDates`), and missed copies don't.
+- **Search**: `/todos/search` pulls everything once on open, then filters this browser's copy, so keep it free of per-keystroke requests. `/todos?date=YYYY-MM-DD` and `/todos/lists?list=<id>&item=<id>` open what a result links to; the planner clears its parameter so a later reload goes back to today.
 - **Repeats**: `RepeatRule` (`lib/reminders.ts`) holds one kind at a time on a `DailyTask`: `days`, `every`, `monthDay` or `timesPerWeek`; none means daily. `normalizeRepeat()` enforces that. `repeatsOn()` only knows the calendar; a `timesPerWeek` task also depends on what's done that week, so go through `missingDailyTasks()` with a `doneInWeek` count. Its streak counts weeks, not days. Giving a repeating task's copy a time sets it for later days too (`syncDailyFrom`), which is why auto-schedule skips repeating tasks.
 - **Adding to another day**: pull its month first (`syncPlanner([date])`). A device that never pulled a month pushes it with no etag, which replaces the server's copy.
 - **Tags**: a `TagId` is any string. Read names and colours with `tagLabel()`/`tagColor()`, and offer choices with `useTags()` (it starts on the built-ins, so the first render matches the prerendered page). Colours come only from `TAG_PALETTE`, validated together, which is why tags stop at `MAX_TAGS`. Removing a tag keeps its entry so old tasks and stats still show it.

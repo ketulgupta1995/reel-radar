@@ -20,7 +20,7 @@ import {
   timesDone,
   getOverdueTodos,
   postponeCount,
-  syncPastPlanner,
+  syncTrayPlanner,
   copyTodoToDate,
   clearCompletedTodos,
   deleteSubtask,
@@ -30,6 +30,9 @@ import {
   getFocusSession,
   moveTodoToDate,
   setTodoTag,
+  setTodoDue,
+  setTodoGoal,
+  getDueTodos,
   startFocus,
   stopFocus,
   getAllStoredDates,
@@ -380,20 +383,20 @@ describe("overdue and postponing", () => {
     expect(postponeCount(todo("x", { postponed: 4, carriedFrom: D1 }))).toBe(4);
   });
 
-  it("pulls past months but not future ones for overdue tasks", async () => {
+  it("pulls past months and the next one for the trays, but not further ahead", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(2026, 10, 4, 12));
     fetchMock.mockImplementation(async () => docsResponse({}));
-    expect(await syncPastPlanner()).toBe(false);
+    expect(await syncTrayPlanner()).toBe(false);
     const asked = decodeURIComponent(String(fetchMock.mock.calls[0][0]));
     expect(asked).toContain("planner-2026-10");
-    expect(asked).toContain("planner-2026-11");
-    expect(asked).not.toContain("planner-2026-12");
+    expect(asked).toContain("planner-2026-12");
+    expect(asked).not.toContain("planner-2027-01");
   });
 
   it("pulls past months and reports offline", async () => {
     fetchMock.mockRejectedValue(new Error("offline"));
-    expect(await syncPastPlanner()).toBeNull();
+    expect(await syncTrayPlanner()).toBeNull();
   });
 });
 
@@ -976,5 +979,81 @@ describe("done times", () => {
     const copy = copyTodoToDate(id, D1, D2).find((x) => x.text === "Report")!;
     expect(copy.completed).toBe(false);
     expect(copy.doneAt).toBeUndefined();
+  });
+});
+
+describe("deadlines", () => {
+  const A = "2026-03-02";
+  const B = "2026-03-05";
+  const add = (date = A, extra: { due?: string; goalId?: string } = { due: "2026-03-10" }) => addTodo("Tax", date, undefined, undefined, undefined, undefined, undefined, extra)[0];
+
+  it("sets and clears a deadline", () => {
+    const t = add(A, {});
+    expect(t.due).toBeUndefined();
+    expect(setTodoDue(t.id, "2026-03-09", A)[0].due).toBe("2026-03-09");
+    expect(setTodoDue(t.id, undefined, A)[0]).not.toHaveProperty("due");
+  });
+
+  it("keeps the deadline when the task moves or is carried over, but not on a copy", () => {
+    const t = add();
+    expect(moveTodoToDate(t.id, A, B)![0].due).toBe("2026-03-10");
+    carryOverdueTo("2026-03-06", [{ date: B, todo: t }]);
+    expect(loadTodos("2026-03-06")[0].due).toBe("2026-03-10");
+    expect(copyTodoToDate(t.id, "2026-03-06", "2026-03-07")[0]).not.toHaveProperty("due");
+  });
+
+  it("doesn't give repeating tasks one", () => {
+    const repeating = addTodo("Gym", A, undefined, undefined, true, undefined, undefined, { due: "2026-03-10" })[0];
+    expect(repeating.due).toBeUndefined();
+    expect(setTodoDue(repeating.id, "2026-03-10", A)[0].due).toBeUndefined();
+    const t = add(B);
+    expect(makeTodoDaily(t.id, B).find((x) => x.id === t.id)).not.toHaveProperty("due");
+  });
+
+  it("lists late and coming deadlines, soonest first, wherever they're planned", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 2, 5, 12));
+    const today = "2026-03-05";
+    addTodo("Late", "2026-03-01", undefined, undefined, undefined, undefined, undefined, { due: "2026-03-04" });
+    addTodo("Next week", "2026-03-20", undefined, undefined, undefined, undefined, undefined, { due: "2026-03-12" });
+    addTodo("Too far", today, undefined, undefined, undefined, undefined, undefined, { due: "2026-03-13" });
+    addTodo("No deadline", today);
+    const done = addTodo("Done", today, undefined, undefined, undefined, undefined, undefined, { due: today }).find((t) => t.text === "Done")!;
+    toggleTodo(done.id, today);
+    expect(getDueTodos(today).map((d) => [d.todo.text, d.date])).toEqual([
+      ["Late", "2026-03-01"],
+      ["Next week", "2026-03-20"],
+    ]);
+    addTodo("Same day", "2026-03-01", undefined, undefined, undefined, undefined, undefined, { due: "2026-03-12" });
+    expect(getDueTodos(today).map((d) => d.todo.text)).toEqual(["Late", "Same day", "Next week"]);
+    vi.useRealTimers();
+  });
+});
+
+describe("goal links", () => {
+  const A = "2026-03-02";
+
+  it("sets and clears a task's goal", () => {
+    const t = addTodo("Run", A, undefined, undefined, undefined, undefined, undefined, { goalId: "g" })[0];
+    expect(t.goalId).toBe("g");
+    expect(setTodoGoal(t.id, undefined, A)[0]).not.toHaveProperty("goalId");
+    expect(setTodoGoal(t.id, "h", A)[0].goalId).toBe("h");
+  });
+
+  it("carries a repeating task's goal to later days, and changes it there too", () => {
+    const t = addTodo("Run", A, undefined, undefined, true, undefined, undefined, { goalId: "g" })[0];
+    expect(loadDailyTasks()[0].goalId).toBe("g");
+    expect(loadTodosWithDaily("2026-03-03")[0].goalId).toBe("g");
+    setTodoGoal(t.id, "h", A);
+    expect(loadDailyTasks()[0].goalId).toBe("h");
+    setTodoGoal(t.id, undefined, A);
+    expect(loadDailyTasks()[0]).not.toHaveProperty("goalId");
+  });
+
+  it("keeps the goal when a task becomes repeating, or is copied", () => {
+    const t = addTodo("Run", A, undefined, undefined, undefined, undefined, undefined, { goalId: "g" })[0];
+    expect(copyTodoToDate(t.id, A, "2026-03-03")[0].goalId).toBe("g");
+    makeTodoDaily(t.id, A);
+    expect(loadDailyTasks()[0].goalId).toBe("g");
   });
 });

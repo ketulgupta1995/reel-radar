@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen } from "@testing-library/react";
-import { MAX_TAGS, TAG_PALETTE, activeTags, addTag, allTags, deleteTemplate, loadTemplates, mergeSettings, removeTag, renameTag, restoreSettings, saveTemplate, settingsBackup, tagColor, tagLabel, useTags } from "./plannerSettings";
+import { MAX_TAGS, TAG_PALETTE, activeTags, addGoal, addTag, allTags, deleteGoal, deleteTemplate, loadGoals, loadTemplates, mergeSettings, removeTag, renameTag, restoreSettings, saveTemplate, setGoalDone, settingsBackup, tagColor, tagLabel, updateGoal, useGoals, useTags } from "./plannerSettings";
 import { SYNC_EVENT, syncKeys } from "./sync";
 import { jsonResponse } from "@/test/fixtures";
 
@@ -126,12 +126,12 @@ describe("templates", () => {
 describe("sync", () => {
   it("merges by item, with the later edit winning, and carries deletes", () => {
     const entry = (id: string, label: string, updatedAt: number) => ({ value: { id, label, color: "#3987e5" }, updatedAt });
-    const base = { tags: [entry("a", "A", 1), entry("gone", "G", 1)], templates: [] };
-    const local = { tags: [entry("a", "Local", 5), entry("mine", "M", 2)], templates: [] };
-    const server = { tags: [entry("a", "Server", 3), entry("gone", "G", 1), entry("theirs", "T", 2)], templates: [] };
+    const base = { tags: [entry("a", "A", 1), entry("gone", "G", 1)], templates: [], goals: [] };
+    const local = { tags: [entry("a", "Local", 5), entry("mine", "M", 2)], templates: [], goals: [] };
+    const server = { tags: [entry("a", "Server", 3), entry("gone", "G", 1), entry("theirs", "T", 2)], templates: [], goals: [] };
     const merged = mergeSettings(local, server, base);
     expect(merged.tags.map((e) => e.value.label).sort()).toEqual(["Local", "M", "T"]);
-    expect(mergeSettings({} as never, {} as never)).toEqual({ tags: [], templates: [] });
+    expect(mergeSettings({} as never, {} as never)).toEqual({ tags: [], templates: [], goals: [] });
   });
 
   it("is a synced doc that pushes after a change", async () => {
@@ -170,7 +170,7 @@ describe("restoring from a backup", () => {
         null,
       ],
     });
-    expect(r).toEqual({ tags: 3, templates: 2 });
+    expect(r).toEqual({ tags: 3, templates: 2, goals: 0 });
     expect(tagColor("evil")).toBe(TAG_PALETTE[0]);
     expect(allTags().find((t) => t.id === "off")).toMatchObject({ removed: true, color: TAG_PALETTE[0] });
     const day = loadTemplates().find((t) => t.id === "t")!;
@@ -192,7 +192,83 @@ describe("restoring from a backup", () => {
   });
 
   it("ignores a missing or misshapen section", () => {
-    expect(restoreSettings(undefined)).toEqual({ tags: 0, templates: 0 });
-    expect(restoreSettings({ tags: "x", templates: 3 })).toEqual({ tags: 0, templates: 0 });
+    expect(restoreSettings(undefined)).toEqual({ tags: 0, templates: 0, goals: 0 });
+    expect(restoreSettings({ tags: "x", templates: 3 })).toEqual({ tags: 0, templates: 0, goals: 0 });
+  });
+});
+
+describe("goals", () => {
+  const only = () => loadGoals()[0];
+
+  it("adds a goal, and says why it can't", () => {
+    expect(addGoal("  ")).toBe("Give the goal a name");
+    expect(addGoal(" Run 10K ", "2027-03-01")).toBeNull();
+    expect(only()).toMatchObject({ name: "Run 10K", by: "2027-03-01" });
+    expect(addGoal("run 10k")).toMatch(/already a goal/);
+    setGoalDone(only().id, true);
+    expect(addGoal("Run 10K")).toBeNull(); // an achieved goal can be set again
+  });
+
+  it("changes the name and date, and an empty date removes it", () => {
+    addGoal("Run", "2027-03-01");
+    updateGoal(only().id, { name: " Run far " });
+    expect(only()).toMatchObject({ name: "Run far", by: "2027-03-01" });
+    updateGoal(only().id, { name: " " });
+    expect(only().name).toBe("Run far");
+    updateGoal(only().id, { by: "" });
+    expect(only().by).toBeUndefined();
+    updateGoal("other", { name: "No" });
+    expect(only().name).toBe("Run far");
+  });
+
+  it("marks one achieved, reopens it and deletes it", () => {
+    addGoal("Run");
+    addGoal("Read");
+    const [run] = loadGoals();
+    setGoalDone(run.id, true);
+    expect(only().doneAt).toBeTypeOf("number");
+    setGoalDone(run.id, false);
+    expect(only().doneAt).toBeUndefined();
+    deleteGoal(run.id);
+    expect(loadGoals().map((g) => g.name)).toEqual(["Read"]);
+  });
+
+  it("merges goals by item and keeps them when tags change", () => {
+    const goal = (id: string, updatedAt: number) => ({ value: { id, name: id, createdAt: 1 }, updatedAt });
+    const merged = mergeSettings({ tags: [], templates: [], goals: [goal("mine", 2)] }, { tags: [], templates: [], goals: [goal("gone", 1), goal("theirs", 2)] }, { tags: [], templates: [], goals: [goal("gone", 1)] });
+    expect(merged.goals.map((e) => e.value.id).sort()).toEqual(["mine", "theirs"]);
+    addGoal("Run");
+    addTag("Deep work");
+    expect(only().name).toBe("Run");
+  });
+
+  it("restores well-formed goals from a backup and skips the rest", () => {
+    addGoal("Here");
+    const r = restoreSettings({
+      goals: [{ id: "a", name: " Run ", by: "2027-01-01", doneAt: 5, createdAt: 9 }, { id: "b", name: "Bad date", by: "soon", doneAt: "x" }, { id: "c" }, { id: "d", name: " " }, null],
+    });
+    expect(r.goals).toBe(2);
+    expect(loadGoals().find((g) => g.id === "a")).toEqual({ id: "a", name: "Run", by: "2027-01-01", doneAt: 5, createdAt: 9 });
+    const bad = loadGoals().find((g) => g.id === "b")!;
+    expect(bad.by).toBeUndefined();
+    expect(bad.doneAt).toBeUndefined();
+    expect(loadGoals().some((g) => g.name === "Here")).toBe(true);
+    expect(settingsBackup().goals).toHaveLength(3);
+  });
+
+  it("useGoals starts empty, then follows changes", () => {
+    addGoal("Run");
+    const seen: string[][] = [];
+    function Show() {
+      const goals = useGoals();
+      seen.push(goals.map((g) => g.name));
+      return <p>{goals.map((g) => g.name).join()}</p>;
+    }
+    const { unmount } = render(<Show />);
+    expect(seen[0]).toEqual([]);
+    expect(screen.getByText("Run")).toBeTruthy();
+    act(() => void addGoal("Read"));
+    expect(screen.getByText("Run,Read")).toBeTruthy();
+    unmount();
   });
 });

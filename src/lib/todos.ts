@@ -31,6 +31,8 @@ export type Todo = {
   tag?: TagId;
   spent?: number; // minutes recorded with the focus timer
   order?: number; // place in the list after the user dragged tasks into their own order
+  due?: string; // YYYY-MM-DD the task must be done by; one-off tasks only, and moving the task keeps it
+  goalId?: string; // the goal this task works towards; see lib/plannerSettings.ts
 };
 
 // A task that repeats every day. Each day gets its own Todo copy, so completion is per day.
@@ -50,6 +52,7 @@ export type DailyTask = {
   subtasks?: string[]; // checklist items each day's copy starts with, unticked
   skipDates?: string[]; // days the user removed it from
   doneDates?: string[]; // days whose finished copy was cleared, so streaks still count them
+  goalId?: string; // each day's copy works towards this goal
 };
 
 export const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
@@ -229,7 +232,8 @@ export function addTodo(
   schedule?: Schedule,
   daily?: boolean | number[] | RepeatRule, // true = every day, the weekdays to repeat on, or any other rule
   note?: string,
-  tag?: TagId
+  tag?: TagId,
+  extra: { due?: string; goalId?: string } = {}
 ): Todo[] {
   const todos = loadTodos(date);
   const newTodo: Todo = {
@@ -241,6 +245,9 @@ export function addTodo(
     ...(priority ? { priority } : {}),
     ...(tag ? { tag } : {}),
     ...(schedule ? { start: schedule.start, duration: schedule.duration ?? DEFAULT_DURATION } : {}),
+    ...(extra.goalId ? { goalId: extra.goalId } : {}),
+    // A repeating task comes round again, so it has no one date to be done by.
+    ...(extra.due && !daily ? { due: extra.due } : {}),
   };
   if (daily) {
     const rule = daily === true ? {} : Array.isArray(daily) ? { days: daily } : daily;
@@ -284,6 +291,30 @@ export function setTodoPriority(id: string, priority: Priority | undefined, date
     if (t.id !== id) return t;
     const { priority: _old, ...rest } = t;
     return priority ? { ...rest, priority } : rest;
+  });
+  saveTodos(updated, date);
+  syncDailyFrom(updated.find((t) => t.id === id));
+  return updated;
+}
+
+// Set or clear a one-off todo's deadline. Repeating tasks don't have one.
+export function setTodoDue(id: string, due: string | undefined, date?: string): Todo[] {
+  const todos = loadTodos(date);
+  const updated = todos.map((t) => {
+    if (t.id !== id || t.dailyId) return t;
+    const { due: _old, ...rest } = t;
+    return due ? { ...rest, due } : rest;
+  });
+  saveTodos(updated, date);
+  return updated;
+}
+
+export function setTodoGoal(id: string, goalId: string | undefined, date?: string): Todo[] {
+  const todos = loadTodos(date);
+  const updated = todos.map((t) => {
+    if (t.id !== id) return t;
+    const { goalId: _old, ...rest } = t;
+    return goalId ? { ...rest, goalId } : rest;
   });
   saveTodos(updated, date);
   syncDailyFrom(updated.find((t) => t.id === id));
@@ -337,6 +368,17 @@ export function getOverdueTodos(before: string): OverdueTodo[] {
     .filter((date) => date < before)
     .reverse()
     .flatMap((date) => loadTodos(date).filter((t) => !t.completed && !t.dailyId).map((todo) => ({ date, todo })));
+}
+
+export const DUE_SOON_DAYS = 7;
+
+// Unfinished one-off todos with a deadline already gone or within DUE_SOON_DAYS of `today`, soonest
+// first, whichever day they're planned on.
+export function getDueTodos(today: string): OverdueTodo[] {
+  const until = shiftDate(today, DUE_SOON_DAYS);
+  return getAllStoredDates()
+    .flatMap((date) => loadTodos(date).filter((t) => !t.completed && !t.dailyId && t.due && t.due <= until).map((todo) => ({ date, todo })))
+    .sort((a, b) => a.todo.due!.localeCompare(b.todo.due!) || a.date.localeCompare(b.date));
 }
 
 // Move overdue todos onto `date`. Like carrying over from yesterday, they lose their time slot.
@@ -472,15 +514,16 @@ function templateFrom(todo: Todo, startDate: string, rule?: RepeatRule): DailyTa
     ...(todo.subtasks?.length ? { subtasks: todo.subtasks.map((st) => st.text) } : {}),
     ...(todo.priority ? { priority: todo.priority } : {}),
     ...(todo.tag ? { tag: todo.tag } : {}),
+    ...(todo.goalId ? { goalId: todo.goalId } : {}),
     ...(todo.start !== undefined ? { start: todo.start, duration: todo.duration ?? DEFAULT_DURATION } : {}),
   };
 }
 
-// Edits to a daily task's copy (text, note, checklist, priority, tag, time slot) carry over to future days.
+// Edits to a daily task's copy (text, note, checklist, priority, tag, goal, time slot) carry over to future days.
 function syncDailyFrom(todo: Todo | undefined): void {
   if (!todo?.dailyId) return;
   updateDailyTask(todo.dailyId, (d) => {
-    const { note: _n, subtasks: _st, priority: _p, tag: _t, start: _s, duration: _d, ...rest } = d;
+    const { note: _n, subtasks: _st, priority: _p, tag: _t, start: _s, duration: _d, goalId: _g, ...rest } = d;
     return {
       ...rest,
       text: todo.text,
@@ -488,6 +531,7 @@ function syncDailyFrom(todo: Todo | undefined): void {
       ...(todo.subtasks?.length ? { subtasks: todo.subtasks.map((st) => st.text) } : {}),
       ...(todo.priority ? { priority: todo.priority } : {}),
       ...(todo.tag ? { tag: todo.tag } : {}),
+      ...(todo.goalId ? { goalId: todo.goalId } : {}),
       ...(todo.start !== undefined ? { start: todo.start, duration: todo.duration ?? DEFAULT_DURATION } : {}),
     };
   });
@@ -513,6 +557,7 @@ export function loadTodosWithDaily(date: string): Todo[] {
         : {}),
       ...(d.priority ? { priority: d.priority } : {}),
       ...(d.tag ? { tag: d.tag } : {}),
+      ...(d.goalId ? { goalId: d.goalId } : {}),
       ...(d.start !== undefined ? { start: d.start, duration: d.duration ?? DEFAULT_DURATION } : {}),
     })),
   ];
@@ -535,7 +580,11 @@ export function makeTodoDaily(id: string, date: string, repeat?: number[] | Repe
   if (!todo || todo.dailyId) return todos;
   const task = templateFrom(todo, date, Array.isArray(repeat) ? { days: repeat } : repeat);
   saveDailyTasks([...loadDailyTasks(), task]);
-  const updated = todos.map((t) => (t.id === id ? { ...t, dailyId: task.id } : t));
+  const updated = todos.map((t) => {
+    if (t.id !== id) return t;
+    const { due: _due, ...rest } = t;
+    return { ...rest, dailyId: task.id };
+  });
   saveTodos(updated, date);
   return updated;
 }
@@ -671,12 +720,12 @@ export function moveTodoToDate(id: string, from: string, to: string, schedule?: 
 }
 
 // Copy a todo to another day (or the same one), optionally into a time slot there.
-// The copy starts fresh: not done, checklist unticked, no focus time, and it is always a
-// one-off, even when copied from a daily task's copy. Returns the target day's todos.
+// The copy starts fresh: not done, checklist unticked, no focus time or deadline, and it is always
+// a one-off, even when copied from a daily task's copy. Returns the target day's todos.
 export function copyTodoToDate(id: string, from: string, to: string, schedule?: Schedule): Todo[] {
   const todo = loadTodos(from).find((t) => t.id === id);
   if (!todo) return loadTodos(to);
-  const { start: _s, duration: _d, dailyId: _id, carriedFrom: _c, spent: _sp, order: _o, doneAt: _da, subtasks, ...rest } = todo;
+  const { start: _s, duration: _d, dailyId: _id, carriedFrom: _c, spent: _sp, order: _o, doneAt: _da, due: _due, subtasks, ...rest } = todo;
   const copy: Todo = {
     ...rest,
     id: crypto.randomUUID(),
@@ -866,10 +915,12 @@ export async function syncPlanner(dates: string[], force = false): Promise<boole
   return changed && changed.length > 0;
 }
 
-// Every month up to this one, for finding overdue tasks; months ahead can't hold any.
-export async function syncPastPlanner(): Promise<boolean | null> {
-  const thisMonth = monthOf(getTodayDate());
-  const changed = await syncKeys(plannerKeys(allMonths().filter((m) => m <= thisMonth)));
+// Every month up to the next one, for the overdue and due-soon trays. Next month is there because a
+// task due soon may be planned just past the month's end.
+export async function syncTrayPlanner(): Promise<boolean | null> {
+  const today = new Date();
+  const nextMonth = monthOf(toDateString(new Date(today.getFullYear(), today.getMonth() + 1, 1)));
+  const changed = await syncKeys(plannerKeys(allMonths().filter((m) => m <= nextMonth)));
   return changed && changed.length > 0;
 }
 

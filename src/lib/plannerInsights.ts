@@ -1,4 +1,4 @@
-import { DEFAULT_DURATION, WATER_GOAL, shiftDate, weekday, type DailyTask, type DayLog, type TagId, type Todo } from "./todos";
+import { DEFAULT_DURATION, WATER_GOAL, shiftDate, toDateString, weekday, type DailyTask, type DayLog, type TagId, type Todo } from "./todos";
 import { weekStart } from "./plannerStats";
 
 // What the day log and the focus timer say when set against the tasks. Pure, like plannerStats.
@@ -221,4 +221,49 @@ export function computeMonth(days: Days, daily: DailyTask[], month: string): Mon
 // How a count of finished tasks shows on the heatmap: fixed steps, so months can be compared.
 export function heatLevel(done: number): 0 | 1 | 2 | 3 | 4 {
   return done <= 0 ? 0 : done <= 2 ? 1 : done <= 4 ? 2 : done <= 7 ? 3 : 4;
+}
+
+// ---------------- Goals ----------------
+
+export type GoalStep = { date: string; todo: Todo };
+
+export type GoalProgress = {
+  done: number; // tasks and repeats finished, all time
+  doneInRange: number; // of those, finished from `from` to `to`
+  percent: number | null; // one-off tasks finished out of all of them; null when there are none, as repeats have no end
+  open: GoalStep[]; // unfinished one-off tasks, earliest first; a missed repeat isn't owed, so those don't count
+  repeats: DailyTask[]; // repeating tasks still running
+  focused: number; // focus-timer minutes
+  lastDone: string | null;
+};
+
+// How a goal is going. A repeating task's past copies count from before it was linked.
+export function computeGoalProgress(goalId: string, days: Days, daily: DailyTask[], from: string, to: string): GoalProgress {
+  const repeats = daily.filter((d) => d.goalId === goalId);
+  const linked = new Set(repeats.map((d) => d.id));
+  const open: GoalStep[] = [];
+  const finished: string[] = repeats.flatMap((d) => d.doneDates ?? []); // cleared copies are gone from `days`
+  let oneOffsDone = 0;
+  let focused = 0;
+  for (const [date, todos] of Object.entries(days)) {
+    for (const t of todos) {
+      if (t.goalId !== goalId && !(t.dailyId && linked.has(t.dailyId))) continue;
+      focused += t.spent ?? 0;
+      if (t.completed) {
+        finished.push(t.doneAt ? toDateString(new Date(t.doneAt)) : date);
+        if (!t.dailyId) oneOffsDone++;
+      } else if (!t.dailyId) open.push({ date, todo: t });
+    }
+  }
+  open.sort((a, b) => a.date.localeCompare(b.date));
+  const oneOffs = oneOffsDone + open.length;
+  return {
+    done: finished.length,
+    doneInRange: finished.filter((d) => d >= from && d <= to).length,
+    percent: oneOffs ? Math.round((oneOffsDone / oneOffs) * 100) : null,
+    open,
+    repeats,
+    focused,
+    lastDone: finished.length ? finished.reduce((a, b) => (a > b ? a : b)) : null,
+  };
 }

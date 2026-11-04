@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { jsonResponse } from "@/test/fixtures";
 import { requests, routeFetch } from "@/test/pages";
+import { addGoal, loadGoals, setGoalDone } from "@/lib/plannerSettings";
 import { Todo, addTodo, getTodayDate, loadDayLog, loadDailyTasks, loadTodos, saveTodos, shiftDate, updateDayLog } from "@/lib/todos";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/todos" }));
@@ -374,11 +375,11 @@ describe("the task list", () => {
     fireEvent.click(screen.getByText("done (1)"));
     expect(rows()).toEqual(["Done"]);
     fireEvent.click(screen.getByText("all"));
-    fireEvent.change(screen.getByPlaceholderText("Search tasks"), { target: { value: "noon" } });
+    fireEvent.change(screen.getByPlaceholderText("Filter this day"), { target: { value: "noon" } });
     expect(rows()).toEqual(["Urgent"]); // matches the note
-    fireEvent.change(screen.getByPlaceholderText("Search tasks"), { target: { value: "zzz" } });
+    fireEvent.change(screen.getByPlaceholderText("Filter this day"), { target: { value: "zzz" } });
     expect(screen.getByText("No tasks match this filter.")).toBeTruthy();
-    fireEvent.change(screen.getByPlaceholderText("Search tasks"), { target: { value: "" } });
+    fireEvent.change(screen.getByPlaceholderText("Filter this day"), { target: { value: "" } });
     fireEvent.click(screen.getByText("Home", { selector: "button" }));
     expect(rows()).toEqual(["Low"]);
     fireEvent.click(screen.getByText("All tags"));
@@ -1416,5 +1417,201 @@ describe("schedule done marks", () => {
     saveTodos([todo("Old", { completed: true, doneAt: yesterdayNoon })], T);
     render(<TodosPage />);
     expect(screen.queryAllByTestId("day-mark")).toHaveLength(0);
+  });
+});
+
+describe("deadlines", () => {
+  const tray = () => within(screen.getByRole("region", { name: "Deadlines" }));
+  const dayAfter = shiftDate(T, 2);
+
+  it("sets a deadline from the options, or the shorthand, and clears the box", async () => {
+    render(<TodosPage />);
+    fireEvent.change(screen.getByPlaceholderText(/What needs to be done/), { target: { value: "Tax" } });
+    fireEvent.click(screen.getByText("⋯ Options"));
+    fireEvent.change(screen.getByLabelText("Deadline (optional)"), { target: { value: dayAfter } });
+    fireEvent.click(screen.getByText("Add"));
+    await waitFor(() => expect(loadTodos(T)[0]?.due).toBe(dayAfter));
+    expect((screen.getByLabelText("Deadline (optional)") as HTMLInputElement).value).toBe("");
+    fireEvent.change(screen.getByPlaceholderText(/What needs to be done/), { target: { value: "Bills by tomorrow" } });
+    expect(within(screen.getByTestId("quick-add-preview")).getByText(/🏁 Due/)).toBeTruthy();
+    fireEvent.click(screen.getByText("Add"));
+    await waitFor(() => expect(loadTodos(T).find((t) => t.text === "Bills")?.due).toBe(shiftDate(T, 1)));
+  });
+
+  it("doesn't take a deadline for a repeating task", async () => {
+    render(<TodosPage />);
+    fireEvent.click(screen.getByText("⋯ Options"));
+    fireEvent.click(screen.getByText(/Repeat$/));
+    expect((screen.getByLabelText("Deadline (optional)") as HTMLInputElement).disabled).toBe(true);
+    fireEvent.change(screen.getByPlaceholderText(/What needs to be done/), { target: { value: "Gym daily by fri" } });
+    expect(screen.queryByText(/🏁 Due/)).toBeNull();
+    fireEvent.click(screen.getByText("Add"));
+    await waitFor(() => expect(loadTodos(T)).toHaveLength(1));
+    expect(loadTodos(T)[0].due).toBeUndefined();
+    expect(inItem("Gym").queryByText("+ Due")).toBeNull();
+  });
+
+  it("sets, changes and removes one on a task", async () => {
+    saveTodos([todo("Tax")], T);
+    render(<TodosPage />);
+    await screen.findByText("Tax", { selector: "p" });
+    fireEvent.click(inItem("Tax").getByText("+ Due"));
+    fireEvent.change(screen.getByLabelText("Deadline for “Tax”"), { target: { value: shiftDate(T, 1) } });
+    expect(loadTodos(T)[0].due).toBe(shiftDate(T, 1));
+    expect(inItem("Tax").getByText("🏁 Due tomorrow")).toBeTruthy();
+    fireEvent.click(screen.getByText("Remove deadline"));
+    expect(loadTodos(T)[0].due).toBeUndefined();
+    fireEvent.click(screen.getByText("Close"));
+    expect(screen.queryByLabelText("Deadline for “Tax”")).toBeNull();
+  });
+
+  it("warns on a task planned after its deadline, and when moving one past it", async () => {
+    const later = shiftDate(T, 3);
+    saveTodos([todo("Late plan", { due: shiftDate(T, 1) })], later);
+    saveTodos([todo("Tax", { due: shiftDate(T, 1) })], T);
+    render(<TodosPage />);
+    await screen.findByText("Tax", { selector: "p" });
+    fireEvent.click(inItem("Tax").getByLabelText("Move or copy to another day"));
+    fireEvent.change(screen.getByLabelText("Day to move or copy to"), { target: { value: later } });
+    fireEvent.click(screen.getByText("Move"));
+    expect(await flashed(/past its .* deadline/)).toBeTruthy();
+    expect(loadTodos(later).find((t) => t.id === "Tax")?.due).toBe(shiftDate(T, 1));
+    fireEvent.change(screen.getByLabelText("Pick a date"), { target: { value: later } });
+    expect(await screen.findAllByText(/planned after it/)).toHaveLength(2);
+  });
+
+  it("shows a done task's deadline quietly", async () => {
+    saveTodos([todo("Tax", { due: shiftDate(T, -5), completed: true })], T);
+    render(<TodosPage />);
+    await screen.findByText("Tax", { selector: "p" });
+    expect(inItem("Tax").getByText(/^🏁 Due /)).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Deadlines" })).toBeNull();
+  });
+
+  it("lists coming deadlines on today's view, from any day, and acts on them", async () => {
+    saveTodos([todo("Soon", { due: shiftDate(T, 1) })], shiftDate(T, 2));
+    saveTodos([todo("Today one", { due: T })], T);
+    saveTodos([todo("Missed", { due: shiftDate(T, -2) })], shiftDate(T, -3));
+    render(<TodosPage />);
+    await screen.findByRole("region", { name: "Deadlines" });
+    expect(tray().getByText("3 deadlines coming up")).toBeTruthy();
+    expect(tray().getByText("2 days late")).toBeTruthy();
+    expect(tray().getByText("Due today")).toBeTruthy();
+    expect(tray().getByText("Due tomorrow")).toBeTruthy();
+    // It's in this tray, so not in Overdue as well.
+    expect(screen.queryByText(/overdue task/)).toBeNull();
+
+    fireEvent.click(tray().getByLabelText("Move “Soon” to today"));
+    expect(loadTodos(T).some((t) => t.id === "Soon")).toBe(true);
+    expect(loadTodos(T).find((t) => t.id === "Soon")?.due).toBe(shiftDate(T, 1));
+    expect(await flashed("Moved to today")).toBeTruthy();
+
+    fireEvent.click(tray().getByLabelText("Mark “Missed” as done"));
+    expect(loadTodos(shiftDate(T, -3))[0].completed).toBe(true);
+    expect(tray().queryByText("Missed")).toBeNull();
+
+    expect(tray().getByText("2 deadlines coming up")).toBeTruthy();
+  });
+
+  it("says when there's one, and opens the day it's planned on", async () => {
+    const planned = shiftDate(T, 4);
+    saveTodos([todo("Soon", { due: shiftDate(T, 6) })], planned);
+    render(<TodosPage />);
+    await screen.findByRole("region", { name: "Deadlines" });
+    expect(tray().getByText("1 deadline coming up")).toBeTruthy();
+    fireEvent.click(tray().getByText(/^Planned /));
+    expect(await screen.findByText("Soon", { selector: "p" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Deadlines" })).toBeNull();
+  });
+
+  it("marks a far-off deadline on a task still in Overdue", async () => {
+    saveTodos([todo("Slow", { due: shiftDate(T, 30) })], Y);
+    render(<TodosPage />);
+    fireEvent.click(await screen.findByText(/1 overdue task/));
+    expect(screen.getByText(/^Due /)).toBeTruthy();
+  });
+});
+
+describe("goals on tasks", () => {
+  it("links a new task from the options, and offers goals on each task", async () => {
+    addGoal("Run 10K");
+    const goalId = loadGoals()[0].id;
+    addGoal("Old aim");
+    setGoalDone(loadGoals()[1].id, true);
+    saveTodos([todo("Stretch")], T);
+    render(<TodosPage />);
+    await screen.findByText("Stretch", { selector: "p" });
+    fireEvent.click(screen.getByText("⋯ Options"));
+    const options = screen.getAllByLabelText("Goal");
+    expect(within(options[0]).queryByText("Old aim")).toBeNull();
+    fireEvent.change(options[0], { target: { value: goalId } });
+    fireEvent.change(screen.getByPlaceholderText(/What needs to be done/), { target: { value: "Buy shoes" } });
+    fireEvent.click(screen.getByText("Add"));
+    await waitFor(() => expect(loadTodos(T).find((t) => t.text === "Buy shoes")?.goalId).toBe(goalId));
+    expect(inItem("Buy shoes").getByText(/🎯 Run 10K/)).toBeTruthy();
+
+    fireEvent.change(inItem("Stretch").getByLabelText("Goal"), { target: { value: goalId } });
+    expect(loadTodos(T).find((t) => t.id === "Stretch")?.goalId).toBe(goalId);
+    fireEvent.change(inItem("Stretch").getByLabelText("Goal"), { target: { value: "" } });
+    expect(loadTodos(T).find((t) => t.id === "Stretch")?.goalId).toBeUndefined();
+  });
+
+  it("offers nothing without goals, and still names an achieved goal on its task", async () => {
+    saveTodos([todo("Plain")], T);
+    const { unmount } = render(<TodosPage />);
+    await screen.findByText("Plain", { selector: "p" });
+    expect(screen.queryByLabelText("Goal")).toBeNull();
+    unmount();
+    addGoal("Old aim");
+    const goal = loadGoals()[0];
+    setGoalDone(goal.id, true);
+    saveTodos([todo("Linked", { goalId: goal.id }), todo("Plain")], T);
+    render(<TodosPage />);
+    await screen.findByText("Linked", { selector: "p" });
+    expect(inItem("Linked").getByText(/🎯 Old aim/)).toBeTruthy();
+    expect(inItem("Plain").queryByLabelText("Goal")).toBeNull();
+  });
+
+  it("imports goals with the rest of a backup", async () => {
+    render(<TodosPage />);
+    const file = new File([JSON.stringify({ app: "planner", days: {}, settings: { goals: [{ id: "a", name: "Run" }, { id: "b", name: "Read" }] } })], "p.json");
+    fireEvent.change(document.getElementById("import-file")!, { target: { files: [file] } });
+    expect(await flashed(/\+ 2 goals/)).toBeTruthy();
+    const one = new File([JSON.stringify({ app: "planner", days: {}, settings: { goals: [{ id: "a", name: "Run" }] } })], "p.json");
+    fireEvent.change(document.getElementById("import-file")!, { target: { files: [one] } });
+    expect(await flashed(/\+ 1 goal$/)).toBeTruthy();
+  });
+});
+
+describe("links to a day and to search", () => {
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  it("opens the day named in the address, then forgets it", async () => {
+    const day = shiftDate(T, -40);
+    saveTodos([todo("Long ago")], day);
+    window.history.replaceState(null, "", `/todos?date=${day}`);
+    render(<TodosPage />);
+    expect(await screen.findByText("Long ago", { selector: "p" })).toBeTruthy();
+    expect(window.location.search).toBe("");
+  });
+
+  it("ignores a date that isn't one", async () => {
+    saveTodos([todo("Now")], T);
+    window.history.replaceState(null, "", "/todos?date=soon");
+    render(<TodosPage />);
+    expect(await screen.findByText("Now", { selector: "p" })).toBeTruthy();
+    window.history.replaceState(null, "", "/todos?date=2026-99-99");
+    render(<TodosPage />);
+    expect((await screen.findAllByText("Now", { selector: "p" })).length).toBeGreaterThan(0);
+  });
+
+  it("links to Search and Goals, and offers every day when the day's filter finds nothing", async () => {
+    saveTodos([todo("Gym")], T);
+    render(<TodosPage />);
+    await screen.findByText("Gym", { selector: "p" });
+    expect(screen.getByText("Search →").getAttribute("href")).toBe("/todos/search");
+    expect(screen.getByText("Goals →").getAttribute("href")).toBe("/todos/goals");
+    fireEvent.change(screen.getByPlaceholderText("Filter this day"), { target: { value: "den tist" } });
+    expect(screen.getByText("Search every day →").getAttribute("href")).toBe("/todos/search?q=den%20tist");
   });
 });

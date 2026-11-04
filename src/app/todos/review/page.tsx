@@ -5,7 +5,8 @@ import Link from "next/link";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { addList, loadLists, moveTodoToList, syncLists, STARTER_LISTS, type RememberList } from "@/lib/lists";
 import { computePlannerStats } from "@/lib/plannerStats";
-import { reviewWeek } from "@/lib/plannerInsights";
+import { computeGoalProgress, reviewWeek } from "@/lib/plannerInsights";
+import { useGoals } from "@/lib/plannerSettings";
 import { parseQuickAdd } from "@/lib/quickAdd";
 import { missingDailyTasks } from "@/lib/reminders";
 import {
@@ -32,6 +33,7 @@ import {
 } from "@/lib/todos";
 import { DAY_NAMES, fmtDuration, formatShortDate } from "../planner";
 import { SlippingHint } from "../Slipping";
+import { dueLabel, dueTone } from "../Deadlines";
 
 const STEPS = ["Look back", "Unfinished tasks", "Plan ahead"];
 const NEW_LIST = "new";
@@ -142,7 +144,7 @@ export default function WeeklyReviewPage() {
 
             <div className="mt-6">
               {step === 0 && <LookBack start={week.start} end={week.end} version={version} />}
-              {step === 1 && <Triage open={open} lists={lists} days={week.next} onMove={reschedule} onDrop={drop} onList={toList} onAddStep={addStep} />}
+              {step === 1 && <Triage open={open} today={today} lists={lists} days={week.next} onMove={reschedule} onDrop={drop} onList={toList} onAddStep={addStep} />}
               {step === 2 && (
                 <PlanNext
                   days={week.next}
@@ -190,6 +192,13 @@ export default function WeeklyReviewPage() {
 }
 
 function LookBack({ start, end, version }: { start: string; end: string; version: number }) {
+  const goals = useGoals();
+  const progress = useMemo(() => {
+    const days = loadAllTodos();
+    const daily = loadDailyTasks();
+    return goals.filter((g) => !g.doneAt).map((goal) => ({ goal, ...computeGoalProgress(goal.id, days, daily, start, end) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goals, start, end, version]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const { stats, notes } = useMemo(() => {
     const logs = loadAllDayLogs();
@@ -217,6 +226,33 @@ function LookBack({ start, end, version }: { start: string; end: string; version
           </div>
         ))}
       </div>
+      {progress.length > 0 && (
+        <section>
+          <h2 className="font-semibold">Your goals</h2>
+          <ul className="mt-2 space-y-2 text-sm">
+            {progress.map((p) => (
+              <li key={p.goal.id} className="rounded-xl border border-white/10 bg-panel/60 px-3 py-2.5">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                  <span className="min-w-0 break-words font-medium">{p.goal.name}</span>
+                  <span className="shrink-0 text-xs text-white/50">
+                    {p.doneInRange} done this week · {p.open.length} open
+                  </span>
+                </div>
+                {p.percent !== null && (
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10" role="progressbar" aria-label={`Progress on “${p.goal.name}”`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={p.percent}>
+                    <div className="h-full rounded-full bg-gold" style={{ width: `${p.percent}%` }} />
+                  </div>
+                )}
+                {p.open.length === 0 && p.repeats.length === 0 ? (
+                  <p className="mt-1.5 text-xs text-gold">No next step planned. Add one in the Plan ahead step.</p>
+                ) : (
+                  p.doneInRange === 0 && <p className="mt-1.5 text-xs text-white/55">Nothing moved this week.</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {stats.carried.length > 0 && (
         <section>
           <h2 className="font-semibold">What kept slipping</h2>
@@ -251,6 +287,7 @@ function LookBack({ start, end, version }: { start: string; end: string; version
 
 function Triage({
   open,
+  today,
   lists,
   days,
   onMove,
@@ -259,6 +296,7 @@ function Triage({
   onAddStep,
 }: {
   open: OverdueTodo[];
+  today: string;
   lists: RememberList[];
   days: string[];
   onMove: (item: OverdueTodo, to: string) => void;
@@ -278,6 +316,7 @@ function Triage({
             <div className="flex flex-wrap items-baseline justify-between gap-x-3">
               <span className="min-w-0 break-words font-medium">{item.todo.text}</span>
               <span className="text-xs text-white/50">
+                {item.todo.due && <span className={`mr-1.5 rounded-full border px-2 py-0.5 ${dueTone(item.todo, item.date, today)}`}>{dueLabel(item.todo.due, today)}</span>}
                 from {formatShortDate(item.date)}
                 {postponeCount(item.todo) > 0 && ` · postponed ${postponeCount(item.todo)}×`}
               </span>
@@ -318,6 +357,8 @@ function Triage({
 }
 
 function PlanNext({ days, version, onAdd }: { days: string[]; version: number; onAdd: () => void }) {
+  const goals = useGoals().filter((g) => !g.doneAt);
+  const [goalId, setGoalId] = useState("");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const plan = useMemo(() => {
     const daily = loadDailyTasks();
@@ -331,9 +372,22 @@ function PlanNext({ days, version, onAdd }: { days: string[]; version: number; o
   return (
     <div>
       <p className="mb-3 text-sm text-white/60">Add what matters most. Shorthand works here too: Gym 6pm 45m #health</p>
+      {goals.length > 0 && (
+        <label className="mb-3 flex flex-wrap items-center gap-2 text-xs text-white/60">
+          Tasks you add work towards
+          <select value={goalId} onChange={(e) => setGoalId(e.target.value)} className="min-w-0 max-w-full rounded-lg border border-white/10 bg-panel px-2 py-1 text-white/80 focus:border-gold/50 focus:outline-none">
+            <option value="">No goal</option>
+            {goals.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <ul className="space-y-3">
         {plan.map((d) => (
-          <DayPlan key={d.date} {...d} onAdd={onAdd} />
+          <DayPlan key={d.date} {...d} goalId={goalId} onAdd={onAdd} />
         ))}
       </ul>
       <Link href="/todos" className="mt-3 inline-block text-xs text-gold hover:underline">
@@ -343,7 +397,7 @@ function PlanNext({ days, version, onAdd }: { days: string[]; version: number; o
   );
 }
 
-function DayPlan({ date, todos, repeating, minutes, onAdd }: { date: string; todos: Todo[]; repeating: number; minutes: number; onAdd: () => void }) {
+function DayPlan({ date, todos, repeating, minutes, goalId, onAdd }: { date: string; todos: Todo[]; repeating: number; minutes: number; goalId: string; onAdd: () => void }) {
   const [text, setText] = useState("");
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -353,7 +407,7 @@ function DayPlan({ date, todos, repeating, minutes, onAdd }: { date: string; tod
     setText("");
     // Typed for another day ("15 nov"), whose month this device may not have pulled yet.
     if (q.date && q.date !== date) await syncPlanner([q.date]);
-    addTodo(q.text, q.date ?? date, q.priority, schedule, q.repeat ?? q.daily, undefined, q.tag);
+    addTodo(q.text, q.date ?? date, q.priority, schedule, q.repeat ?? q.daily, undefined, q.tag, { due: q.due, goalId: goalId || undefined });
     onAdd();
   };
   return (

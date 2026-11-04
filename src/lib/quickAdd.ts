@@ -13,6 +13,7 @@ export type QuickAdd = {
   daily?: boolean; // plain "daily"
   repeat?: RepeatRule; // any other repeat
   date?: string; // YYYY-MM-DD, from "tomorrow", "fri", "15 nov"
+  due?: string; // YYYY-MM-DD deadline, from "by fri", "due 15 nov"
 };
 
 const PRIORITIES: Record<string, Priority> = {
@@ -77,6 +78,17 @@ function parseDate(words: string[], i: number, today: string): { date: string; u
     return date ? { date, used: 2 } : null;
   }
   return null;
+}
+
+// A deadline starting at words[i] ("by fri", "due 15 nov", "due by sun"), and how many words it took.
+// Unlike a date alone, "by sun" can only mean the day.
+function parseDue(words: string[], i: number, today: string): { date: string; used: number } | null {
+  if (words[i] !== "by" && words[i] !== "due") return null;
+  const at = words[i] === "due" && words[i + 1] === "by" ? i + 2 : i + 1;
+  const word = words[at];
+  if (word === undefined) return null;
+  const date = isDay(word) ? { date: nextWeekday(DAYS[word], today), used: 1 } : parseDate(words, at, today);
+  return date && { date: date.date, used: at - i + date.used };
 }
 
 // A repeat starting at words[i], and how many words it took. A monthly or weekly repeat with no day
@@ -165,6 +177,12 @@ export function parseQuickAdd(input: string, today = getTodayDate()): QuickAdd {
   for (let i = 0; i < words.length; i++) {
     const raw = words[i];
     const w = raw.toLowerCase();
+    const due = out.due === undefined ? parseDue(lower, i, today) : null;
+    if (due) {
+      out.due = due.date;
+      i += due.used - 1;
+      continue;
+    }
     const repeat = !out.repeat && !out.daily ? parseRepeat(lower, i) : null;
     const date = out.date === undefined ? parseDate(lower, i, today) : null;
     if (repeat) {

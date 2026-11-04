@@ -76,7 +76,14 @@ export default function ListsPage() {
     try {
       saved = localStorage.getItem(SELECTED_KEY) ?? undefined;
     } catch {}
-    refresh(saved);
+    // Search links straight to an item.
+    const linked = new URLSearchParams(window.location.search);
+    refresh(linked.get("list") ?? saved);
+    const item = getItem(linked.get("item") ?? "");
+    if (item) {
+      setOpenId(item.id);
+      setShowDone(item.done);
+    }
     setMounted(true);
     syncLists().then((changed) => {
       if (changed) refresh();

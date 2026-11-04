@@ -159,3 +159,26 @@ describe("repeats in quick add", () => {
     expect(parse("Plan #deepwork")).toEqual({ text: "Plan", tag: expect.any(String) });
   });
 });
+
+describe("deadlines in the add box", () => {
+  const TODAY = "2026-11-04"; // a Wednesday
+
+  it("reads by and due with any date, apart from the day it's planned", () => {
+    expect(parseQuickAdd("Tax return by fri", TODAY)).toEqual({ text: "Tax return", due: "2026-11-06" });
+    expect(parseQuickAdd("Tax return due 15 nov", TODAY)).toEqual({ text: "Tax return", due: "2026-11-15" });
+    expect(parseQuickAdd("Tax return due by tomorrow", TODAY)).toEqual({ text: "Tax return", due: "2026-11-05" });
+    expect(parseQuickAdd("Tax return mon by 15 nov", TODAY)).toEqual({ text: "Tax return", date: "2026-11-09", due: "2026-11-15" });
+    expect(parseQuickAdd("Draft thu by next fri", TODAY)).toEqual({ text: "Draft", date: "2026-11-05", due: "2026-11-13" });
+  });
+
+  it("takes a day that's also a word, as nothing else follows by", () => {
+    expect(parseQuickAdd("Bills by sun", TODAY)).toEqual({ text: "Bills", due: "2026-11-08" });
+  });
+
+  it("leaves by and due alone when no date follows", () => {
+    expect(parseQuickAdd("Walk by the river", TODAY).text).toBe("Walk by the river");
+    expect(parseQuickAdd("Rent due", TODAY).text).toBe("Rent due");
+    expect(parseQuickAdd("Rent due by", TODAY).text).toBe("Rent due by");
+    expect(parseQuickAdd("Finish by 5pm", TODAY)).toEqual({ text: "Finish by", start: 17 * 60 });
+  });
+});
