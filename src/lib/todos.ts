@@ -30,6 +30,7 @@ export type Todo = {
   createdAt: string; // ISO string
   priority?: Priority;
   carriedFrom?: string; // YYYY-MM-DD the task was moved from
+  postponed?: number; // times it was pushed to a later day; see postponeCount()
   start?: number; // planner start, minutes since midnight
   duration?: number; // planner length in minutes
   dailyId?: string; // set when this is one day's copy of a daily task
@@ -85,7 +86,7 @@ type LogDoc = { items: LogItem[] };
 
 // A day's log: when you woke and slept (HH:MM), the water you drank (millilitres, and when each drink was
 // logged as minutes after midnight), and a short review.
-export type DayLog = { wake?: string; sleep?: string; water?: number; drinks?: { at: number; ml: number }[]; weight?: number; well?: string; bad?: string; improve?: string };
+export type DayLog = { wake?: string; sleep?: string; water?: number; drinks?: { at: number; ml: number }[]; weight?: number; well?: string; bad?: string; improve?: string; reviewedAt?: number }; // reviewedAt: on a week's Sunday, when its weekly review was finished
 
 const DAILY_DOC = "planner-daily";
 const LOG_DOC = "planner-log";
@@ -318,6 +319,45 @@ export function restoreTodo(todo: Todo, date?: string): Todo[] {
   return updated;
 }
 
+// ---------------- Postponing ----------------
+
+export const SLIPPING_AFTER = 3; // postponed this many times, the planner asks "drop it or break it down?"
+
+// Tasks carried over before the count existed have only `carriedFrom`, so they count once.
+export const postponeCount = (t: Todo): number => t.postponed ?? (t.carriedFrom ? 1 : 0);
+
+// A todo pushed to a later day: it remembers where it started and how often this has happened.
+const pushedFrom = (t: Todo, from: string): Todo => ({ ...t, carriedFrom: t.carriedFrom ?? from, postponed: postponeCount(t) + 1 });
+
+export type OverdueTodo = { date: string; todo: Todo };
+
+// Unfinished one-off todos from every day before `before`, oldest first. Daily tasks are left out:
+// each day gets its own copy of them, so a missed one isn't owed.
+export function getOverdueTodos(before: string): OverdueTodo[] {
+  return getAllStoredDates()
+    .filter((date) => date < before)
+    .reverse()
+    .flatMap((date) => loadTodos(date).filter((t) => !t.completed && !t.dailyId).map((todo) => ({ date, todo })));
+}
+
+// Move overdue todos onto `date`. Like carrying over from yesterday, they lose their time slot.
+export function carryOverdueTo(date: string, items: OverdueTodo[]): Todo[] {
+  const moved: Todo[] = [];
+  for (const from of Array.from(new Set(items.map((i) => i.date)))) {
+    const ids = new Set(items.filter((i) => i.date === from).map((i) => i.todo.id));
+    const source = loadTodos(from);
+    for (const t of source) {
+      if (!ids.has(t.id)) continue;
+      const { start: _s, duration: _d, order: _o, ...rest } = t;
+      moved.push(pushedFrom(rest, from));
+    }
+    saveTodos(source.filter((t) => !ids.has(t.id)), from);
+  }
+  const updated = [...loadTodos(date), ...moved];
+  saveTodos(updated, date);
+  return updated;
+}
+
 // Unfinished one-off todos from the day before `date`. Daily tasks are left out:
 // today already gets its own copy of them.
 export function getUnfinishedFromYesterday(date: string): Todo[] {
@@ -330,16 +370,8 @@ export function carryOverFromYesterday(date: string, ids?: string[]): Todo[] {
   const wanted = ids ? new Set(ids) : null;
   const moving = getUnfinishedFromYesterday(date).filter((t) => !wanted || wanted.has(t.id));
   if (moving.length === 0) return loadTodos(date);
-  const movingIds = new Set(moving.map((t) => t.id));
-  saveTodos(loadTodos(yesterday).filter((t) => !movingIds.has(t.id)), yesterday);
   // A carried task keeps no time slot: yesterday's 9 AM isn't today's 9 AM.
-  const moved = moving.map((t) => {
-    const { start: _s, duration: _d, order: _o, ...rest } = t;
-    return { ...rest, carriedFrom: t.carriedFrom ?? yesterday };
-  });
-  const updated = [...loadTodos(date), ...moved];
-  saveTodos(updated, date);
-  return updated;
+  return carryOverdueTo(date, moving.map((todo) => ({ date: yesterday, todo })));
 }
 
 // ---------------- Day log (wake, sleep, weight, water, review) ----------------
@@ -592,9 +624,12 @@ export function moveTodoToDate(id: string, from: string, to: string, schedule?: 
   if (from === to) return scheduleTodo(id, schedule, to);
   if (todo.dailyId) return null;
   const { start: _s, duration: _d, order: _o, ...rest } = todo;
+  // Pushing an unfinished task off today or a past day is postponing it. Rearranging future plans isn't.
+  const postponing = !todo.completed && to > from && from <= getTodayDate();
+  const base = postponing ? pushedFrom(rest, from) : rest;
   const moved: Todo = schedule
-    ? { ...rest, start: schedule.start, duration: schedule.duration ?? todo.duration ?? DEFAULT_DURATION }
-    : { ...rest, ...(todo.duration !== undefined ? { duration: todo.duration } : {}) };
+    ? { ...base, start: schedule.start, duration: schedule.duration ?? todo.duration ?? DEFAULT_DURATION }
+    : { ...base, ...(todo.duration !== undefined ? { duration: todo.duration } : {}) };
   saveTodos(source.filter((t) => t.id !== id), from);
   const updated = [...loadTodos(to), moved];
   saveTodos(updated, to);
@@ -752,6 +787,13 @@ function allMonths(): string[] {
 // skipped unless `force`. Resolves to whether anything changed here, or null when offline.
 export async function syncPlanner(dates: string[], force = false): Promise<boolean | null> {
   const changed = await syncKeys(plannerKeys(dates.map(monthOf)), { force });
+  return changed && changed.length > 0;
+}
+
+// Every month up to this one, for finding overdue tasks; months ahead can't hold any.
+export async function syncPastPlanner(): Promise<boolean | null> {
+  const thisMonth = monthOf(getTodayDate());
+  const changed = await syncKeys(plannerKeys(allMonths().filter((m) => m <= thisMonth)));
   return changed && changed.length > 0;
 }
 

@@ -12,6 +12,10 @@ import {
   addSubtask,
   addTodo,
   carryOverFromYesterday,
+  carryOverdueTo,
+  getOverdueTodos,
+  postponeCount,
+  syncPastPlanner,
   copyTodoToDate,
   clearCompletedTodos,
   deleteSubtask,
@@ -167,6 +171,67 @@ describe("basic todo operations", () => {
   it("clears completed todos", () => {
     saveTodos([todo("a", { completed: true }), todo("b")], D1);
     expect(clearCompletedTodos(D1).map((t) => t.id)).toEqual(["b"]);
+  });
+});
+
+describe("overdue and postponing", () => {
+  it("lists every past day's unfinished one-offs, oldest first", () => {
+    saveTodos([todo("recent"), todo("done", { completed: true })], D2);
+    saveTodos([todo("old")], "2026-02-10");
+    saveTodos([todo("copy", { dailyId: "x" })], D1);
+    saveTodos([todo("current")], D3);
+    expect(getOverdueTodos(D3).map((o) => [o.date, o.todo.id])).toEqual([["2026-02-10", "old"], [D2, "recent"]]);
+  });
+
+  it("moves overdue tasks across days, counting each postponement and dropping the slot", () => {
+    saveTodos([todo("a", { start: 600, duration: 30, order: 1 }), todo("stay")], "2026-02-10");
+    saveTodos([todo("b", { carriedFrom: "2026-01-01" })], D1);
+    const out = carryOverdueTo(D3, getOverdueTodos(D3).filter((o) => o.todo.id !== "stay"));
+    expect(out.map((t) => t.id)).toEqual(["a", "b"]);
+    expect(out[0]).toMatchObject({ carriedFrom: "2026-02-10", postponed: 1 });
+    expect(out[0].start).toBeUndefined();
+    expect(out[0].duration).toBeUndefined();
+    expect(out[0].order).toBeUndefined();
+    expect(out[1]).toMatchObject({ carriedFrom: "2026-01-01", postponed: 2 }); // older tasks count once
+    expect(ids("2026-02-10")).toEqual(["stay"]);
+    expect(ids(D1)).toEqual([]);
+  });
+
+  it("counts carrying over from yesterday too", () => {
+    saveTodos([todo("a", { postponed: 2, carriedFrom: "2026-02-01" })], D1);
+    expect(carryOverFromYesterday(D2)[0]).toMatchObject({ postponed: 3, carriedFrom: "2026-02-01" });
+  });
+
+  it("counts a move off today or a past day to a later one, and nothing else", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 2, 2, 12));
+    saveTodos([todo("late"), todo("done", { completed: true })], D1);
+    saveTodos([todo("today")], D2);
+    saveTodos([todo("planned")], "2026-03-10");
+    expect(moveTodoToDate("late", D1, D3)!.find((t) => t.id === "late")).toMatchObject({ postponed: 1, carriedFrom: D1 });
+    expect(moveTodoToDate("today", D2, D3)!.find((t) => t.id === "today")).toMatchObject({ postponed: 1 });
+    expect(moveTodoToDate("done", D1, D3)!.find((t) => t.id === "done")!.postponed).toBeUndefined();
+    expect(moveTodoToDate("planned", "2026-03-10", "2026-03-11")!.find((t) => t.id === "planned")!.postponed).toBeUndefined(); // still ahead
+    expect(moveTodoToDate("today", D3, D1)!.find((t) => t.id === "today")!.postponed).toBe(1); // brought forward
+    expect(postponeCount(todo("x"))).toBe(0);
+    expect(postponeCount(todo("x", { carriedFrom: D1 }))).toBe(1);
+    expect(postponeCount(todo("x", { postponed: 4, carriedFrom: D1 }))).toBe(4);
+  });
+
+  it("pulls past months but not future ones for overdue tasks", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 4, 12));
+    fetchMock.mockImplementation(async () => docsResponse({}));
+    expect(await syncPastPlanner()).toBe(false);
+    const asked = decodeURIComponent(String(fetchMock.mock.calls[0][0]));
+    expect(asked).toContain("planner-2026-10");
+    expect(asked).toContain("planner-2026-11");
+    expect(asked).not.toContain("planner-2026-12");
+  });
+
+  it("pulls past months and reports offline", async () => {
+    fetchMock.mockRejectedValue(new Error("offline"));
+    expect(await syncPastPlanner()).toBeNull();
   });
 });
 

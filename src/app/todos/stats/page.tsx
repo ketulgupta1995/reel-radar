@@ -3,10 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AppSwitcher } from "@/components/AppSwitcher";
-import { loadAllTodos, syncAllPlanner, getTodayDate, shiftDate, TAGS, type TagId, type Todo } from "@/lib/todos";
+import { loadAllDayLogs, loadAllTodos, syncAllPlanner, getTodayDate, shiftDate, TAGS, type DayLog, type TagId, type Todo } from "@/lib/todos";
 import { computePlannerStats, type PlannerStats } from "@/lib/plannerStats";
 import { bucketDate, usageByDay, type UsageBucket } from "@/lib/usageStats";
 import { DAY_NAMES, TAG_COLORS, fmtDuration, formatShortDate } from "../planner";
+import { Card, TableToggle, Tip } from "./parts";
+import { DayLogInsights, TimeFitCard } from "./insights";
 
 type Range = "7" | "30" | "90" | "all";
 const RANGES: { id: Range; label: string }[] = [
@@ -23,6 +25,7 @@ const hours = (mins: number) => (mins ? fmtDuration(mins) : "0h");
 
 export default function PlannerStatsPage() {
   const [days, setDays] = useState<Record<string, Todo[]> | null>(null);
+  const [logs, setLogs] = useState<Record<string, DayLog>>({});
   const [range, setRange] = useState<Range>("30");
   const [usage, setUsage] = useState<UsageBucket[] | null>(null);
   const [offline, setOffline] = useState(false);
@@ -30,8 +33,12 @@ export default function PlannerStatsPage() {
   // Show this browser's copy at once, then every month from the server (mostly unchanged, so cheap).
   useEffect(() => {
     setDays(loadAllTodos());
+    setLogs(loadAllDayLogs());
     syncAllPlanner().then((changed) => {
-      if (changed) setDays(loadAllTodos());
+      if (changed) {
+        setDays(loadAllTodos());
+        setLogs(loadAllDayLogs());
+      }
       setOffline(changed === null);
     });
     fetch("/api/usage")
@@ -43,9 +50,9 @@ export default function PlannerStatsPage() {
   const today = getTodayDate();
   const from = useMemo(() => {
     if (range !== "all") return shiftDate(today, -(Number(range) - 1));
-    const earliest = Object.keys(days ?? {}).filter((d) => d <= today).sort()[0];
+    const earliest = [...Object.keys(days ?? {}), ...Object.keys(logs)].filter((d) => d <= today).sort()[0];
     return earliest ?? today;
-  }, [range, days, today]);
+  }, [range, days, logs, today]);
   const stats = useMemo(() => (days ? computePlannerStats(days, from, today) : null), [days, from, today]);
 
   return (
@@ -83,6 +90,12 @@ export default function PlannerStatsPage() {
           </div>
         </div>
 
+        {days && (
+          <div className="mb-6">
+            <DayLogInsights days={days} logs={logs} from={from} today={today} compare={range !== "all"} />
+          </div>
+        )}
+
         {!stats ? null : stats.total === 0 ? (
           <div className="rounded-2xl border border-white/10 bg-panel/60 p-12 text-center text-white/60">
             No tasks in this period yet.{" "}
@@ -92,6 +105,12 @@ export default function PlannerStatsPage() {
           </div>
         ) : (
           <Stats stats={stats} />
+        )}
+
+        {days && (
+          <div className="mt-6">
+            <TimeFitCard days={days} from={from} today={today} />
+          </div>
         )}
 
         {usage && <UsageChart buckets={usage} range={range} today={today} />}
@@ -130,57 +149,6 @@ function Stats({ stats }: { stats: PlannerStats }) {
       <HoursChart stats={stats} />
       <CarriedList stats={stats} />
     </div>
-  );
-}
-
-function Card({ title, sub, children }: { title: string; sub?: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-2xl border border-white/10 bg-panel/60 p-4 sm:p-5">
-      <h2 className="font-semibold">{title}</h2>
-      {sub && <p className="mt-0.5 text-xs text-white/50">{sub}</p>}
-      <div className="mt-4">{children}</div>
-    </section>
-  );
-}
-
-// Hover/focus tooltip for a chart mark; the mark's whole column is the hit target.
-function Tip({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 w-max max-w-[12rem] -translate-x-1/2 rounded-lg border border-white/15 bg-ink px-2.5 py-1.5 text-left text-xs text-white/70 opacity-0 shadow-xl transition-opacity group-hover:opacity-100 group-focus:opacity-100">
-      {children}
-    </span>
-  );
-}
-
-function TableToggle({ head, rows }: { head: string[]; rows: (string | number)[][] }) {
-  return (
-    <details className="mt-4 text-xs text-white/60">
-      <summary className="cursor-pointer select-none text-white/45 hover:text-white">View as table</summary>
-      <div className="mt-2 overflow-x-auto">
-        <table className="w-full text-left tabular-nums">
-          <thead className="text-white/45">
-            <tr>
-              {head.map((h) => (
-                <th key={h} className="py-1 pr-4 font-medium">
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i} className="border-t border-white/5">
-                {r.map((c, j) => (
-                  <td key={j} className="py-1 pr-4">
-                    {c}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </details>
   );
 }
 
@@ -389,6 +357,9 @@ function UsageChart({ buckets, range, today }: { buckets: UsageBucket[]; range: 
 function CarriedList({ stats }: { stats: PlannerStats }) {
   return (
     <Card title="Most postponed" sub="Tasks brought over from an earlier day, by how many days they were pushed">
+      <Link href="/todos/review" className="-mt-2 mb-3 inline-block text-xs text-gold hover:underline">
+        Reschedule or drop them in the weekly review →
+      </Link>
       {stats.carried.length === 0 ? (
         <p className="text-sm text-white/50">Nothing was carried over in this period.</p>
       ) : (
@@ -402,6 +373,7 @@ function CarriedList({ stats }: { stats: PlannerStats }) {
               <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs tabular-nums text-white/75">
                 {c.days} {c.days === 1 ? "day" : "days"}
               </span>
+              {c.times > 1 && <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs tabular-nums text-white/75">{c.times} times</span>}
               <span className={`text-xs ${c.completed ? "text-gold" : "text-white/45"}`}>
                 {c.completed ? "✓ Done" : "Open"}
               </span>

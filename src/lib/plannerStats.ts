@@ -1,8 +1,8 @@
-import { DEFAULT_DURATION, shiftDate, type TagId, type Todo } from "./todos";
+import { DEFAULT_DURATION, postponeCount, shiftDate, type TagId, type Todo } from "./todos";
 
 export type Bucket = { start: string; end: string; plannedMinutes: number; doneMinutes: number };
 
-export type CarriedTask = { id: string; text: string; from: string; to: string; days: number; completed: boolean };
+export type CarriedTask = { id: string; text: string; from: string; to: string; days: number; completed: boolean; times: number };
 
 export type PlannerStats = {
   total: number;
@@ -75,6 +75,7 @@ export function computePlannerStats(days: Record<string, Todo[]>, from: string, 
           to: date,
           days: daysBetween(t.carriedFrom, date),
           completed: t.completed,
+          times: postponeCount(t),
         });
       }
     }

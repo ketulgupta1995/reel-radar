@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { merge3, same } from "@/lib/syncDocs";
 import { SYNC_EVENT, markDirty, registerDocs, syncKeys, watchKeys } from "@/lib/sync";
-import { addTodo, getTodayDate } from "@/lib/todos";
+import { addTodo, deleteTodo, getTodayDate, type Todo } from "@/lib/todos";
 import { MAX_ITEM_MEDIA, MEDIA_ID, MEDIA_TYPES, type MediaRef } from "@/lib/media";
 
 // The planner's lists: things to remember that don't belong to a day (a wishlist, gift ideas,
@@ -276,6 +276,16 @@ export function clearDone(listId: string): MediaRef[] {
 export function planItem(item: ListItem, date = getTodayDate()): void {
   const note = [item.note, item.link].filter(Boolean).join("\n");
   addTodo(item.text, date, undefined, undefined, undefined, note || undefined);
+}
+
+// Turn a day's task into a list item, for something that no longer belongs to a day. Steps still
+// open go into the note, so they aren't lost.
+export function moveTodoToList(todo: Todo, date: string, listId: string): ListItem {
+  const steps = (todo.subtasks ?? []).filter((s) => !s.done).map((s) => `- ${s.text}`);
+  const note = [todo.note, ...steps].filter(Boolean).join("\n");
+  const item = addItem(listId, todo.text, note ? { note } : {});
+  deleteTodo(todo.id, date);
+  return item;
 }
 
 // ---------------- Backup ----------------

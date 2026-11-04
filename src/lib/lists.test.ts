@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   addItem,
   addList,
+  moveTodoToList,
   cleanLink,
   clearDone,
   deleteItem,
@@ -26,7 +27,7 @@ import {
   type ListItem,
 } from "./lists";
 import { flush } from "./sync";
-import { getTodayDate, loadTodos } from "./todos";
+import { getTodayDate, loadTodos, saveTodos } from "./todos";
 import { jsonResponse } from "@/test/fixtures";
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -221,5 +222,20 @@ describe("sync", () => {
     expect(mergeLists(local, server, base).lists.map((e) => e.value.name)).toEqual(["A local", "C"]);
     expect(mergeLists({ lists: [], items: [] }, server).lists).toHaveLength(3);
     expect(mergeLists({} as never, {} as never)).toEqual({ lists: [], items: [] });
+  });
+});
+
+describe("moving a task to a list", () => {
+  it("keeps its note and open steps, and takes it off the day", () => {
+    const day = "2026-03-01";
+    const list = addList("Someday");
+    const task = { id: "t", text: "Learn piano", completed: false, createdAt: "", note: "Buy keyboard", subtasks: [{ id: "1", text: "Find teacher", done: false }, { id: "2", text: "Done bit", done: true }] };
+    saveTodos([task], day);
+    const item = moveTodoToList(task, day, list.id);
+    expect(item).toMatchObject({ text: "Learn piano", note: "Buy keyboard\n- Find teacher", listId: list.id });
+    expect(loadTodos(day)).toEqual([]);
+    const plain = { id: "p", text: "Plain", completed: false, createdAt: "" };
+    saveTodos([plain], day);
+    expect(moveTodoToList(plain, day, list.id).note).toBeUndefined();
   });
 });

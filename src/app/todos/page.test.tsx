@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { jsonResponse } from "@/test/fixtures";
 import { requests, routeFetch } from "@/test/pages";
-import { Todo, addTodo, getTodayDate, loadDayLog, loadDailyTasks, loadTodos, saveTodos, shiftDate } from "@/lib/todos";
+import { Todo, addTodo, getTodayDate, loadDayLog, loadDailyTasks, loadTodos, saveTodos, shiftDate, updateDayLog } from "@/lib/todos";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/todos" }));
 
@@ -638,26 +638,124 @@ describe("days", () => {
     fireEvent.click(screen.getByText("day"));
   });
 
-  it("brings over yesterday's unfinished tasks, one or all", async () => {
-    saveTodos([todo("Left"), todo("Also", { priority: "high" }), todo("Finished", { completed: true })], Y);
+  it("offers every past day's unfinished tasks as overdue, one or all", async () => {
+    saveTodos([todo("Left"), todo("Finished", { completed: true })], Y);
+    saveTodos([todo("Ancient", { priority: "high" })], shiftDate(T, -20));
+    addTodo("Repeats", Y, undefined, undefined, true);
     render(<TodosPage />);
-    await screen.findByText("2 unfinished tasks from Yesterday");
+    await screen.findByText("2 overdue tasks");
     fireEvent.click(screen.getByText("Choose"));
-    fireEvent.click(screen.getAllByText("+ Add")[0]); // "Also" sorts first (high priority)
-    expect(await flashed("Added 1 task from Yesterday")).toBeTruthy();
-    expect(loadTodos(T).map((t) => t.id)).toEqual(["Also"]);
-    fireEvent.click(screen.getByText("Add all"));
-    expect(loadTodos(T).map((t) => t.id)).toEqual(["Also", "Left"]);
-    expect(screen.queryByText(/unfinished task/)).toBeNull();
+    fireEvent.click(screen.getByLabelText("Move “Ancient” to today"));
+    expect(await flashed("Moved 1 task to today")).toBeTruthy();
+    expect(loadTodos(T).map((t) => t.id)).toContain("Ancient");
+    expect(loadTodos(T).find((t) => t.id === "Ancient")!.postponed).toBe(1);
+    fireEvent.click(screen.getByText("Move all to today"));
+    expect(loadTodos(T).map((t) => t.id)).toContain("Left");
+    expect(screen.queryByText(/overdue task/)).toBeNull();
   });
 
-  it("toggles the carry-over list from its summary", async () => {
-    saveTodos([todo("Left")], Y);
+  it("drops an overdue task, with undo back to its own day", async () => {
+    const old = shiftDate(T, -5);
+    saveTodos([todo("Stale")], old);
     render(<TodosPage />);
-    fireEvent.click(await screen.findByText("1 unfinished task from Yesterday"));
+    fireEvent.click(await screen.findByText("1 overdue task"));
     expect(screen.getByText("Hide")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Drop “Stale”"));
+    expect(loadTodos(old)).toEqual([]);
+    fireEvent.click(await screen.findByText("Undo"));
+    expect(loadTodos(old).map((t) => t.id)).toEqual(["Stale"]);
+    expect(loadTodos(T).map((t) => t.id)).not.toContain("Stale");
     fireEvent.click(screen.getByText("Hide"));
     expect(screen.getByText("Choose")).toBeTruthy();
+  });
+
+  it("asks to drop or break down a task postponed 3 times, in the tray and the list", async () => {
+    const old = shiftDate(T, -5);
+    saveTodos([todo("Taxes", { postponed: 3 })], old);
+    saveTodos([todo("Dentist", { postponed: 4 })], T);
+    saveTodos([todo("Fine", { postponed: 2 })], Y);
+    render(<TodosPage />);
+    expect((await screen.findAllByText("Postponed 4 times. Drop it or break it down?")).length).toBe(1);
+    fireEvent.click(await screen.findByText("2 overdue tasks"));
+    expect(screen.getByText("Postponed 3 times. Drop it or break it down?")).toBeTruthy();
+    expect(screen.queryByText(/Postponed 2 times/)).toBeNull();
+    // Break the overdue one down in place.
+    fireEvent.click(screen.getAllByText("Break it down")[0]);
+    const input = screen.getByLabelText("A smaller step for “Taxes”");
+    fireEvent.submit(input);
+    expect(loadTodos(old)[0].subtasks).toBeUndefined();
+    fireEvent.change(input, { target: { value: "Find the forms" } });
+    fireEvent.click(screen.getByText("Add step"));
+    expect(loadTodos(old)[0].subtasks!.map((s) => s.text)).toEqual(["Find the forms"]);
+    expect(screen.getByText("· Find the forms")).toBeTruthy();
+    // And drop the one in today's list.
+    const dentist = screen.getByText("Postponed 4 times. Drop it or break it down?").parentElement!;
+    fireEvent.click(within(dentist).getByText("Drop it"));
+    expect(loadTodos(T).map((t) => t.id)).not.toContain("Dentist");
+    fireEvent.click(screen.getByText("Drop it"));
+    expect(loadTodos(old)).toEqual([]);
+  });
+
+  it("still offers the day before when looking at another day", async () => {
+    saveTodos([todo("Left"), todo("Also", { priority: "high" })], T);
+    render(<TodosPage />);
+    fireEvent.click(screen.getByLabelText("Next day"));
+    await screen.findByText("2 unfinished tasks from Today");
+    fireEvent.click(screen.getByText("Choose"));
+    fireEvent.click(screen.getAllByText("+ Add")[0]);
+    expect(await flashed("Added 1 task from Today")).toBeTruthy();
+    fireEvent.click(screen.getByText("Add all"));
+    expect(screen.queryByText(/unfinished task/)).toBeNull();
+    fireEvent.click(screen.getByLabelText("Previous day"));
+  });
+
+  it("pulls past months once, so older overdue tasks are found on a new device", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2027, 0, 15, 12, 0));
+    fetch = routeFetch({
+      "/api/sync": (url, init) => {
+        if (init?.method === "POST") return { etag: '"e"' };
+        return decodeURIComponent(url.search).includes("planner-2026-11")
+          ? { docs: { "planner-2026-11": { etag: '"m"', data: { items: [{ date: "2026-11-20", pos: 0, todo: todo("Remote old"), updatedAt: 1 }] } } } }
+          : { docs: {} };
+      },
+    });
+    render(<TodosPage />);
+    expect(await screen.findByText("1 overdue task")).toBeTruthy();
+    const asked = requests(fetch, "/api/sync").filter((r) => decodeURIComponent(r.url.search).includes("planner-2026-11"));
+    expect(asked).toHaveLength(1);
+  });
+
+  it("suggests a realistic length for a block, from how long that tag's blocks really ran", async () => {
+    const done = (id: string) => todo(id, { tag: "work", start: 540, duration: 60, spent: 90, completed: true });
+    saveTodos([done("a"), done("b"), done("c")], Y);
+    saveTodos([todo("Plan it", { tag: "work", start: 600, duration: 60 }), todo("Other", { tag: "home", start: 800, duration: 60 })], T);
+    render(<TodosPage />);
+    fireEvent.click(await screen.findByText("Other", { selector: "span" }));
+    expect(screen.queryByText(/usually run/)).toBeNull();
+    fireEvent.click(screen.getByText("Plan it", { selector: "span" }));
+    expect(screen.getByText(/Work blocks usually run 50% over/)).toBeTruthy();
+    fireEvent.click(screen.getByText("Use 1h 30m"));
+    expect(loadTodos(T).find((t) => t.id === "Plan it")!.duration).toBe(90);
+    expect(screen.queryByText(/usually run/)).toBeTruthy();
+    expect(screen.queryByText("Use 1h 30m")).toBeNull();
+  });
+
+  it("nudges for the weekly review on an unreviewed Sunday only", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 2, 1, 12, 0)); // a Sunday
+    const { unmount } = render(<TodosPage />);
+    expect((await screen.findByText("Start review →")).closest("a")!.getAttribute("href")).toBe("/todos/review");
+    unmount();
+    updateDayLog("2026-03-01", { reviewedAt: 1 });
+    const again = render(<TodosPage />);
+    await waitFor(() => expect(screen.queryByText("Start review →")).toBeNull());
+    again.unmount();
+    localStorage.clear();
+    vi.setSystemTime(new Date(2026, 2, 2, 12, 0)); // Monday
+    render(<TodosPage />);
+    await waitFor(() => expect(screen.getByText("Review →")).toBeTruthy());
+    expect(screen.queryByText("Start review →")).toBeNull();
   });
 
   it("moves or copies a task to another day", async () => {

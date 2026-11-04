@@ -37,6 +37,11 @@ import {
   updateTodo,
   clearCompletedTodos,
   getUnfinishedFromYesterday,
+  getOverdueTodos,
+  carryOverdueTo,
+  loadAllTodos,
+  syncPastPlanner,
+  type OverdueTodo,
   carryOverFromYesterday,
   loadTodosWithDaily,
   makeTodoDaily,
@@ -77,6 +82,8 @@ import {
   type Todo,
 } from "@/lib/todos";
 import { exportPlanner, importPlanner } from "@/lib/plannerBackup";
+import { computeTimeFit, suggestBlockLength } from "@/lib/plannerInsights";
+import { SlippingHint } from "./Slipping";
 import { REMINDER_LEADS, reminderBody, reminderKey } from "@/lib/reminders";
 import { disablePush, enablePush, notify } from "@/lib/push";
 
@@ -164,6 +171,11 @@ export default function TodosPage() {
   const [editNote, setEditNote] = useState("");
   const [yesterdayTodos, setYesterdayTodos] = useState<Todo[]>([]);
   const [showYesterday, setShowYesterday] = useState(false);
+  const [overdue, setOverdue] = useState<OverdueTodo[]>([]);
+  const [reviewDue, setReviewDue] = useState(false);
+  const [deletedFrom, setDeletedFrom] = useState<string | null>(null);
+  const pastSynced = useRef(false);
+  const flashTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [mobileView, setMobileView] = useState<MobileView>("tasks");
   const [deleted, setDeleted] = useState<Todo | null>(null);
   const [message, setMessage] = useState("");
@@ -184,8 +196,19 @@ export default function TodosPage() {
   const focusAlerted = useRef<string | null>(null);
   const resize = useBlockResize((t, date, duration) => apply(scheduleTodo(t.id, { start: t.start!, duration }, date)));
 
+  useEffect(
+    () => () => {
+      clearTimeout(flashTimer.current);
+      clearTimeout(undoTimer.current);
+    },
+    []
+  );
+
   const refreshMeta = (date = selectedDate) => {
-    setYesterdayTodos(getUnfinishedFromYesterday(date));
+    const today = getTodayDate();
+    setYesterdayTodos(date === today ? [] : getUnfinishedFromYesterday(date));
+    setOverdue(date === today ? getOverdueTodos(today) : []);
+    setReviewDue(weekday(today) === 0 && !loadDayLog(today).reviewedAt);
     setDailyTasks(loadDailyTasks());
   };
 
@@ -205,6 +228,12 @@ export default function TodosPage() {
       setTodos(loadTodosWithDaily(selectedDate));
       refreshMeta(selectedDate);
       setLogVersion((v) => v + 1);
+      // Overdue tasks can be in any past month, which this device may not have yet. Once per visit.
+      if (pastSynced.current) return;
+      pastSynced.current = true;
+      syncPastPlanner().then((changed) => {
+        if (changed && !cancelled) refreshMeta(selectedDate);
+      });
     });
     setTodos(local);
     refreshMeta(selectedDate);
@@ -338,7 +367,8 @@ export default function TodosPage() {
 
   const flash = (text: string) => {
     setMessage(text);
-    setTimeout(() => setMessage(""), 3000);
+    clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setMessage(""), 3000);
   };
 
   const apply = (updated: Todo[]) => {
@@ -378,6 +408,7 @@ export default function TodosPage() {
     if (selectedBlock === id) setSelectedBlock(null);
     if (target) {
       setDeleted(target);
+      setDeletedFrom(null);
       clearTimeout(undoTimer.current);
       undoTimer.current = setTimeout(() => setDeleted(null), 6000);
     }
@@ -385,7 +416,8 @@ export default function TodosPage() {
 
   const handleUndo = () => {
     if (!deleted) return;
-    apply(restoreTodo(deleted, selectedDate));
+    restoreTodo(deleted, deletedFrom ?? selectedDate);
+    apply(loadTodos(selectedDate));
     setDeleted(null);
   };
 
@@ -395,6 +427,20 @@ export default function TodosPage() {
     setEditingId(null);
     setEditText("");
     setEditNote("");
+  };
+
+  const handleMoveOverdue = (items: OverdueTodo[]) => {
+    apply(carryOverdueTo(selectedDate, items));
+    flash(`Moved ${items.length} ${items.length === 1 ? "task" : "tasks"} to today`);
+  };
+
+  const handleDropOverdue = ({ todo, date }: OverdueTodo) => {
+    deleteTodo(todo.id, date);
+    apply(loadTodos(selectedDate));
+    setDeleted(todo);
+    setDeletedFrom(date);
+    clearTimeout(undoTimer.current);
+    undoTimer.current = setTimeout(() => setDeleted(null), 6000);
   };
 
   const handleCarryOver = (ids?: string[]) => {
@@ -568,6 +614,13 @@ export default function TodosPage() {
   const usedTags = TAGS.map((t) => t.id).filter((id) => id === tagFilter || todos.some((t) => t.tag === id));
 
   const isToday = selectedDate === getTodayDate();
+  const selectedForHint = todos.find((t) => t.id === selectedBlock && t.start !== undefined && !t.completed);
+  // The last 90 days' blocks say how long this kind of block really takes.
+  const lengthHint = useMemo(() => {
+    if (!selectedForHint) return null;
+    const today = getTodayDate();
+    return suggestBlockLength(computeTimeFit(loadAllTodos(), shiftDate(today, -90), today), selectedForHint.tag, selectedForHint.duration ?? DEFAULT_DURATION);
+  }, [selectedForHint?.id, selectedForHint?.tag, selectedForHint?.duration]);
   const prevLabel = getRelativeDateLabel(shiftDate(selectedDate, -1));
 
   return (
@@ -597,6 +650,12 @@ export default function TodosPage() {
               className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-white/80 hover:border-gold/40 hover:text-gold"
             >
               Stats →
+            </Link>
+            <Link
+              href="/todos/review"
+              className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-white/80 hover:border-gold/40 hover:text-gold"
+            >
+              Review →
             </Link>
             <button
               onClick={handleExport}
@@ -729,7 +788,81 @@ export default function TodosPage() {
           />
         ) : (
         <>
-        {/* Carry-over from the previous day */}
+        {reviewDue && isToday && (
+          <Link href="/todos/review" className="mb-5 flex items-center justify-between gap-3 rounded-xl border border-gold/30 bg-gold/5 px-4 py-3 text-sm text-white/85 hover:border-gold/60">
+            It's Sunday: look back on the week and plan the next one.
+            <span className="shrink-0 font-semibold text-gold">Start review →</span>
+          </Link>
+        )}
+
+        {/* Overdue: unfinished tasks from every past day */}
+        {overdue.length > 0 && (
+          <div className="mb-5 rounded-xl border border-gold/30 bg-gold/5 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <button
+                onClick={() => setShowYesterday((v) => !v)}
+                className="flex items-center gap-2 text-left text-white/80 hover:text-white"
+                aria-expanded={showYesterday}
+              >
+                <span className={`text-gold transition ${showYesterday ? "rotate-90" : ""}`}>›</span>
+                {overdue.length} overdue {overdue.length === 1 ? "task" : "tasks"}
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowYesterday((v) => !v)}
+                  className="rounded-full border border-gold/40 px-3 py-1 text-xs text-gold hover:bg-gold/10"
+                >
+                  {showYesterday ? "Hide" : "Choose"}
+                </button>
+                <button
+                  onClick={() => handleMoveOverdue(overdue)}
+                  className="rounded-full bg-gold px-3 py-1 text-xs font-semibold text-black hover:brightness-110"
+                >
+                  Move all to today
+                </button>
+              </div>
+            </div>
+            {showYesterday && (
+              <ul className="divide-y divide-white/5 border-t border-gold/20">
+                {overdue.map((o) => (
+                  <li key={o.todo.id} className="px-4 py-2">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <span
+                        className={`h-2 w-2 shrink-0 rounded-full ${o.todo.priority ? PRIORITY_STYLE[o.todo.priority].dot : "border border-white/30"}`}
+                      />
+                      <span className="min-w-0 flex-1 basis-32 break-words text-white/80">{o.todo.text}</span>
+                      <span className="text-xs text-white/50">{formatShortDate(o.date)}</span>
+                      <button
+                        onClick={() => handleDropOverdue(o)}
+                        aria-label={`Drop “${o.todo.text}”`}
+                        className="shrink-0 text-xs text-white/55 hover:text-white"
+                      >
+                        Drop
+                      </button>
+                      <button
+                        onClick={() => handleMoveOverdue([o])}
+                        aria-label={`Move “${o.todo.text}” to today`}
+                        className="shrink-0 rounded-full border border-white/20 px-3 py-1 text-xs text-white/80 hover:border-gold/50 hover:text-gold"
+                      >
+                        + Today
+                      </button>
+                    </div>
+                    <SlippingHint
+                      todo={o.todo}
+                      onDrop={() => handleDropOverdue(o)}
+                      onAddStep={(text) => {
+                        addSubtask(o.todo.id, text, o.date);
+                        refreshMeta();
+                      }}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {/* Carry-over from the previous day, on other days than today */}
         {yesterdayTodos.length > 0 && (
           <div className="mb-5 rounded-xl border border-gold/30 bg-gold/5 text-sm">
             <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
@@ -1148,6 +1281,19 @@ export default function TodosPage() {
                 <button onClick={() => setSelectedBlock(null)} className="ml-auto text-xs text-white/40 hover:text-white" aria-label="Close">
                   ✕
                 </button>
+                {lengthHint && (
+                  <p className="w-full text-xs text-white/60">
+                    {selected.tag ? TAG_LABEL[selected.tag] : "Untagged"} blocks usually run {Math.abs(lengthHint.overBy)}% {lengthHint.overBy > 0 ? "over" : "under"}.{" "}
+                    <button
+                      onClick={() =>
+                        apply(scheduleTodo(selected.id, { start: clampStart(selected.start!, lengthHint.minutes), duration: lengthHint.minutes }, selectedDate))
+                      }
+                      className="font-medium text-gold hover:brightness-110"
+                    >
+                      Use {fmtDuration(lengthHint.minutes)}
+                    </button>
+                  </p>
+                )}
                 {selected.note && (
                   <p className="w-full whitespace-pre-wrap break-words text-xs text-white/55">{selected.note}</p>
                 )}
@@ -1620,6 +1766,7 @@ function TodoItem({
               <span className="rounded-full bg-white/10 px-2 py-0.5 text-white/60">from {getRelativeDateLabel(todo.carriedFrom)}</span>
             )}
           </p>
+          <SlippingHint todo={todo} onDrop={() => onDelete(todo.id)} onAddStep={(text) => onAddSubtask(todo, text)} />
           {showSend && (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-white/55">
               <input

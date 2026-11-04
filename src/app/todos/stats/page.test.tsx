@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { jsonResponse } from "@/test/fixtures";
 import { routeFetch, requests } from "@/test/pages";
-import { Todo, getTodayDate, saveTodos, shiftDate } from "@/lib/todos";
+import { Todo, getTodayDate, saveTodos, shiftDate, updateDayLog } from "@/lib/todos";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/todos/stats" }));
 
@@ -109,5 +109,122 @@ describe("PlannerStatsPage", () => {
     routeFetch({ "/api/sync": () => jsonResponse({}, { status: 500 }) });
     render(<PlannerStatsPage />);
     expect(await screen.findByText(/this browser's copy \(couldn't reach the server\)/)).toBeTruthy();
+  });
+
+  it("shows day log trends and says when patterns need more days", () => {
+    routeFetch();
+    const today = getTodayDate();
+    const y = shiftDate(today, -1);
+    updateDayLog(shiftDate(today, -2), { sleep: "23:00", weight: 72, water: 1000 });
+    updateDayLog(y, { wake: "07:00", sleep: "23:30", weight: 71, water: 2500 });
+    updateDayLog(today, { wake: "07:30" });
+    saveTodos([todo("A")], y);
+    render(<PlannerStatsPage />);
+    expect(screen.getByText("8.0 h avg")).toBeTruthy();
+    expect(screen.getByText("1.8 L avg")).toBeTruthy();
+    expect(screen.getByText("71.0 kg latest")).toBeTruthy();
+    expect(screen.getByText(/−1\.0 kg over this period/)).toBeTruthy();
+    expect(screen.getAllByText(/Needs at least 5 days each way/).length).toBe(2);
+  });
+
+  it("states a pattern with its numbers, and a difference too small to matter", () => {
+    routeFetch();
+    const today = getTodayDate();
+    for (let i = 1; i <= 10; i++) {
+      const d = shiftDate(today, -i);
+      const rested = i <= 5;
+      updateDayLog(shiftDate(d, -1), { sleep: rested ? "22:00" : "02:00" });
+      updateDayLog(d, { wake: "07:00", water: 1000 });
+      saveTodos([todo(`A${i}`, { completed: rested }), todo(`B${i}`, { completed: true })], d);
+    }
+    render(<PlannerStatsPage />);
+    expect(screen.getByText("You finish more of your tasks after 7+ hours of sleep: 100% vs. 50%.")).toBeTruthy();
+    expect(screen.getByText("5 days that did, 5 that didn't")).toBeTruthy();
+  });
+
+  it("reports when a habit lines up with finishing less, or makes no difference", () => {
+    routeFetch();
+    const today = getTodayDate();
+    for (let i = 1; i <= 10; i++) {
+      const d = shiftDate(today, -i);
+      const met = i <= 5;
+      updateDayLog(d, { water: met ? 3000 : 500 });
+      saveTodos([todo(`A${i}`, { completed: !met }), todo(`B${i}`, { completed: true })], d);
+    }
+    const { unmount } = render(<PlannerStatsPage />);
+    expect(screen.getByText(/You finish less of your tasks on days you reached your 2\.5 L water goal: 50% vs\. 100%/)).toBeTruthy();
+    unmount();
+    for (let i = 1; i <= 10; i++) saveTodos([todo(`A${i}`, { completed: true })], shiftDate(today, -i));
+    render(<PlannerStatsPage />);
+    expect(screen.getByText("No clear difference so far.")).toBeTruthy();
+  });
+
+  it("compares with the period before, and leaves that out for all time", () => {
+    routeFetch();
+    const today = getTodayDate();
+    updateDayLog(shiftDate(today, -40), { water: 1000 });
+    updateDayLog(shiftDate(today, -2), { water: 2000 });
+    render(<PlannerStatsPage />);
+    expect(screen.getByText("+1.0 L vs. the period before")).toBeTruthy();
+    expect(screen.getByText("┄ 2.5 L goal")).toBeTruthy();
+    fireEvent.click(screen.getByText("All time"));
+    expect(screen.getByText("Per day, leaving out today")).toBeTruthy();
+    expect(screen.getByText("Hours slept the night before")).toBeTruthy();
+    expect(screen.getByText("Log when you went to sleep and woke up to see this.")).toBeTruthy();
+    expect(screen.getByText("Log your weight to see this.")).toBeTruthy();
+  });
+
+  it("says about the same when a change rounds to nothing", () => {
+    routeFetch();
+    const today = getTodayDate();
+    updateDayLog(shiftDate(today, -40), { water: 2000 });
+    updateDayLog(shiftDate(today, -2), { water: 2010 });
+    render(<PlannerStatsPage />);
+    expect(screen.getByText("About the same as the period before")).toBeTruthy();
+  });
+
+  it("hides the day log section when nothing is logged", () => {
+    routeFetch();
+    saveTodos([todo("A")], getTodayDate());
+    render(<PlannerStatsPage />);
+    expect(screen.queryByText("Patterns in your days")).toBeNull();
+  });
+
+  it("compares planned and actual time by tag and suggests a block length", () => {
+    routeFetch();
+    const y = shiftDate(getTodayDate(), -1);
+    const done = (id: string, tag: Todo["tag"], spent: number, duration = 60) => todo(id, { tag, start: 540, duration, spent, completed: true });
+    saveTodos(
+      [
+        done("w1", "work", 84), done("w2", "work", 84), done("w3", "work", 84),
+        done("h1", "home", 60), done("h2", "home", 62), done("h3", "home", 58),
+        done("l1", "learning", 30), done("l2", "learning", 30), done("l3", "learning", 30),
+        done("n1", undefined, 90), done("n2", undefined, 90), done("n3", undefined, 90),
+        done("thin1", "health", 90),
+      ],
+      y
+    );
+    render(<PlannerStatsPage />);
+    expect(screen.getByText("Work tasks run 40% over")).toBeTruthy();
+    expect(screen.getByText(/3 tasks · plan about 1h 25m instead of 1h/)).toBeTruthy();
+    expect(screen.getByText("Home tasks run about as planned")).toBeTruthy();
+    expect(screen.getByText("Learning tasks run 50% under")).toBeTruthy();
+    expect(screen.getByText("Untagged tasks run 50% over")).toBeTruthy();
+    expect(screen.queryByText(/Health tasks/)).toBeNull(); // too few to say
+  });
+
+  it("explains how to get planned vs. actual when there's nothing yet", () => {
+    routeFetch();
+    render(<PlannerStatsPage />);
+    expect(screen.getByText(/Finish 3 time blocks with the same tag/)).toBeTruthy();
+  });
+
+  it("links the postponed list to the review and shows how many times", () => {
+    routeFetch();
+    const today = getTodayDate();
+    saveTodos([todo("Taxes", { carriedFrom: shiftDate(today, -4), postponed: 3 })], today);
+    render(<PlannerStatsPage />);
+    expect(screen.getByText("3 times")).toBeTruthy();
+    expect(screen.getByText(/in the weekly review/).closest("a")!.getAttribute("href")).toBe("/todos/review");
   });
 });

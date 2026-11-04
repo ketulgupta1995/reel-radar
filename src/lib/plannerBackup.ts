@@ -75,7 +75,7 @@ function cleanDayLog(raw: unknown): DayLog {
     const v = l[k];
     if (typeof v === "string") log[k] = v;
   }
-  for (const k of ["water", "weight"] as const) {
+  for (const k of ["water", "weight", "reviewedAt"] as const) {
     const v = l[k];
     if (typeof v === "number" && Number.isFinite(v)) log[k] = v;
   }

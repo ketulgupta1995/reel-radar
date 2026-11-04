@@ -61,7 +61,7 @@ src/
   proxy.ts               Auth gate for every route except /login and /api/auth/*
   app/                   Pages: / (app launcher), reel-radar (Reel Radar landing), discover,
                          recommendations, analysis, watched, watchlist, search, similar,
-                         person/[id], todos, todos/stats, todos/lists, money, money/import, money/settings, login
+                         person/[id], todos, todos/stats, todos/lists, todos/review, money, money/import, money/settings, login
                          (api/money/family: starter family from the env)
   app/api/               Route handlers: discover, recommendations, similar, search, title,
                          person/[id], sync, media/[id], usage, push, push/send, auth/login, auth/logout
@@ -89,6 +89,7 @@ src/
     docStore.ts          Server-only doc storage: one Turso row per doc, or data/ locally
     http.ts              cachedJson() for browser-cacheable API responses
     plannerStats.ts      Planner stats aggregation (pure; used by /todos/stats)
+    plannerInsights.ts   Sleep hours, day log trends and patterns, planned vs. actual time, review week (pure)
     usageStats.ts        Database reads/writes per local day (pure; used by /todos/stats)
     auth.ts              Session signing/verification via Web Crypto
   types/title.ts         Title / MediaType types and keyOf()
@@ -116,6 +117,7 @@ The repo is indexed by CodeGraph (`.codegraph/`). Use `codegraph explore "<symbo
   - `money-*` docs are encrypted at rest in `docStore` (`seal`/`unseal`: AES-256-GCM, `enc:v1:<iv>:<ciphertext+tag>`, the doc key as AAD), in Turso and `data/` alike. Etags hash the stored (encrypted) text. Never add a path that stores them unsealed or falls back to plain text when the key is missing. Plain legacy docs are sealed on read (the read query returns their body even for a matching etag). Tests set the key with `vi.stubEnv("MONEY_ENCRYPTION_KEY", ...)`.
   - `readDoc`/`writeDoc` count every call per half hour (`flushUsage()` saves the counts to the `usage` table, or `data/usage.json`; `/api/usage` serves them to the stats page). Any new code path that queries the `docs` table must go through them so it is counted.
 - **Media** (list photos and voice notes): one `media-<id>` doc each, through `readDoc`/`writeDoc`/`deleteDoc` in `api/media/[id]`, never `/api/sync` (they stay out of `DOC_KEY` and out of `localStorage`). Ids are random and files are never rewritten, so GET answers `private, immutable`. Only the types in `MEDIA_TYPES` are stored or served (no SVG or HTML), up to `MAX_MEDIA_BYTES`. List items keep `MediaRef`s; whoever drops an item, photo or list deletes its media. Links on items go through `cleanLink()` (http/https only) before they reach an `href`. `next.config.mjs` allows `microphone=(self)` for voice notes.
+- **Postponing**: `postponeCount()` is the one reader of a todo's `postponed` (tasks older than that field count once if they have `carriedFrom`). `carryOverdueTo()` and `moveTodoToDate()` raise it; a move only counts when an unfinished task leaves today or a past day for a later one, not when future plans are rearranged. Overdue covers one-off tasks only, because every day gets its own daily copy. Todo ids are unique across a month doc: `saveTodos` treats the same id on another day as a move.
 - **Reminders**: `public/sw.js` shows pushes and has no `fetch` handler, so private pages are never cached. An outside scheduler calls `POST /api/push/send` every minute with `PUSH_CRON_SECRET`. It's the one data route `proxy.ts` skips, so it must check that secret itself, stay shut when the secret is unset, answer with counts only, and never log task text or endpoints. `push-subscriptions` goes through `readDoc`/`writeDoc` and stays out of `DOC_KEY`. Stored endpoints are limited to known push services (`PUSH_HOST`), because the server POSTs to them. The server works out what's due from the docs, so it counts today's repeating tasks that have no copy yet (`missingDailyTasks`). Code it shares with `lib/todos.ts` belongs in `lib/reminders.ts`, because a `"use client"` module can't be called from a route.
 - **Vercel usage**: TMDB GET routes answer through `cachedJson()` and every route sets `maxDuration`. Keep new routes the same.
 - **Todos** are stored one doc per month (`planner-YYYY-MM`), plus `planner-daily` for repeating tasks. `loadTodos`/`saveTodos` keep the per-day API on top of that.
