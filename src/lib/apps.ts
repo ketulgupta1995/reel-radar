@@ -1,6 +1,6 @@
 // The apps listed on the home page (/) and in the AppSwitcher menu.
 // To add an app: add an entry here, then put <AppSwitcher current="<id>" /> in its page headers.
-export type AppId = "reel-radar" | "planner" | "money";
+export type AppId = "reel-radar" | "planner" | "money" | "books";
 
 export type AppInfo = {
   id: AppId;
@@ -31,6 +31,13 @@ export const APPS: AppInfo[] = [
     href: "/money",
     icon: "💰",
     description: "Log spending, set monthly limits, import Google Pay statements, and keep track of what you owe family.",
+  },
+  {
+    id: "books",
+    name: "Books",
+    href: "/books",
+    icon: "📚",
+    description: "Find free books or upload your own EPUBs, then listen with your phone reading them aloud.",
   },
 ];
 
