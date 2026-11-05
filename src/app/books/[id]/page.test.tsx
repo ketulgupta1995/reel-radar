@@ -93,6 +93,15 @@ describe("Book page", () => {
     expect(screen.getByLabelText("Chapter text").textContent).toContain("Page 11 says hello.");
   });
 
+  it("shows a PDF's text only as text", async () => {
+    const { entry } = await addUpload(pdfFile(["<img src=x onerror=alert(1)> Hello there."], { title: "Plain" }));
+    nav.params.id = entry.id;
+    render(<BookPage />);
+    await screen.findByRole("heading", { name: "Plain" });
+    await waitFor(() => expect(sentence("<img src=x onerror=alert(1)> Hello there.")).toBeTruthy());
+    expect(document.querySelector("img")).toBeNull();
+  });
+
   it("asks for the file again when it isn't on this device", async () => {
     nav.params.id = "0123456789abcdef";
     render(<BookPage />);

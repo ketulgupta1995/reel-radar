@@ -6,7 +6,7 @@ import { splitSentences } from "./sentences";
 
 export class PdfError extends Error {
   constructor(
-    public code: "invalid",
+    public code: "invalid" | "scan" | "encrypted" | "limit",
     message: string
   ) {
     super(message);
@@ -14,6 +14,10 @@ export class PdfError extends Error {
 }
 
 const PAGES_PER_CHAPTER = 10;
+// Bounds on what one PDF may cost, so a huge or hostile file can't exhaust the tab's memory.
+export const MAX_PDF_PAGES = 3000;
+export const MAX_PDF_CHARS = 5_000_000;
+export type PdfLimits = { maxPages?: number; maxChars?: number };
 const clean = (s: string | null | undefined) => (s ?? "").replace(/\s+/g, " ").trim();
 
 /** True when the bytes start like a PDF (the header may follow up to 1 KB of junk, as readers allow). */
@@ -23,6 +27,7 @@ export function isPdf(bytes: ArrayBuffer | Uint8Array): boolean {
 }
 
 const invalid = () => new PdfError("invalid", "That file isn't a valid PDF.");
+const encrypted = () => new PdfError("encrypted", "This PDF is protected with a password or copy protection, so it can't be read aloud. Use an unprotected copy.");
 
 async function loadPdfjs() {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -36,21 +41,28 @@ async function loadPdfjs() {
 const rangeTitle = (from: number, to: number) => (from === to ? `Page ${from}` : `Pages ${from}–${to}`);
 
 // `fallbackTitle` names a PDF that has no title of its own (the caller knows the file name).
-export async function parsePdf(bytes: ArrayBuffer | Uint8Array, fallbackTitle = "Untitled"): Promise<ParsedBook> {
+export async function parsePdf(bytes: ArrayBuffer | Uint8Array, fallbackTitle = "Untitled", limits: PdfLimits = {}): Promise<ParsedBook> {
+  const { maxPages = MAX_PDF_PAGES, maxChars = MAX_PDF_CHARS } = limits;
   const pdfjs = await loadPdfjs();
   // pdf.js takes over the buffer it is given, so it gets a copy and the caller can still hash and store the file.
   const data = new Uint8Array(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)).slice();
   const task = pdfjs.getDocument({ data, disableFontFace: true, enableXfa: false, verbosity: 0 });
-  const doc = await task.promise.catch(async () => {
+  const doc = await task.promise.catch(async (err: unknown) => {
     await task.destroy();
+    if ((err as { name?: string } | null)?.name === "PasswordException") throw encrypted();
     throw invalid();
   });
 
   try {
+    if (doc.numPages > maxPages) throw new PdfError("limit", `That PDF is too long to read here (over ${maxPages} pages).`);
     const pageTexts: string[] = [];
+    let chars = 0;
     for (let n = 1; n <= doc.numPages; n++) {
       const content = await (await doc.getPage(n)).getTextContent();
-      pageTexts.push(clean(content.items.map((item) => ("str" in item ? item.str + (item.hasEOL ? " " : "") : "")).join("")));
+      const text = clean(content.items.map((item) => ("str" in item ? item.str + (item.hasEOL ? " " : "") : "")).join(""));
+      chars += text.length;
+      if (chars > maxChars) throw new PdfError("limit", `That PDF has more text than can be read here (over ${maxChars.toLocaleString("en-US")} characters).`);
+      pageTexts.push(text);
     }
 
     const chapters: Chapter[] = [];
@@ -59,7 +71,7 @@ export async function parsePdf(bytes: ArrayBuffer | Uint8Array, fallbackTitle = 
       const sentences = splitSentences(group.filter(Boolean).join(" "));
       if (sentences.length) chapters.push({ title: rangeTitle(from + 1, from + group.length), sentences });
     }
-    if (!chapters.length) throw new PdfError("invalid", "No readable text was found in that PDF.");
+    if (!chapters.length) throw new PdfError("scan", "This PDF is a scan, so there is no text to read. Use a PDF with selectable text.");
 
     const info = ((await doc.getMetadata().catch(() => null))?.info ?? {}) as { Title?: unknown; Author?: unknown };
     const text = (v: unknown) => (typeof v === "string" ? clean(v) : "");

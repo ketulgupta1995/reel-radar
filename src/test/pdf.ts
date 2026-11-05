@@ -6,6 +6,7 @@ export type FakePage = string | string[]; // one string is one line; an array is
 export type FakePdfOptions = {
   title?: string;
   author?: string;
+  encrypt?: boolean; // a Standard security handler whose user password isn't empty, so the file can't be opened
 };
 
 const escape = (s: string) => s.replace(/[\\()]/g, "\\$&");
@@ -29,6 +30,9 @@ export function textPdf(pages: FakePage[], opts: FakePdfOptions = {}): Uint8Arra
     add(`<</Length ${stream.length}>>\nstream\n${stream}\nendstream`);
   }
 
+  // The user password check fails for these made-up keys, which is what an encrypted PDF looks like to a reader.
+  if (opts.encrypt) add(`<</Filter/Standard/V 1/R 2/P -4/O<${"ab".repeat(32)}>/U<${"cd".repeat(32)}>>>`);
+
   let out = "%PDF-1.4\n";
   const offsets = objects.map((body, i) => {
     const at = out.length;
@@ -37,7 +41,8 @@ export function textPdf(pages: FakePage[], opts: FakePdfOptions = {}): Uint8Arra
   });
   const xref = out.length;
   out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")}`;
-  out += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R/Info 4 0 R>>\nstartxref\n${xref}\n%%EOF\n`;
+  const encrypt = opts.encrypt ? `/Encrypt ${objects.length} 0 R/ID[<${"01".repeat(16)}><${"01".repeat(16)}>]` : "";
+  out += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R/Info 4 0 R${encrypt}>>\nstartxref\n${xref}\n%%EOF\n`;
   return new TextEncoder().encode(out);
 }
 

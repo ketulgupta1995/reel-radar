@@ -71,7 +71,39 @@ describe("parsePdf", () => {
     await expect(parsePdf(new Uint8Array([1, 2, 3]))).rejects.toThrow("That file isn't a valid PDF.");
   });
 
-  it("refuses a PDF with no readable text", async () => {
-    await expect(parsePdf(textPdf(["", ""]))).rejects.toThrow("No readable text was found in that PDF.");
+  it("refuses a scan, which has no text to read, and says so", async () => {
+    const err = await parsePdf(textPdf(["", ""])).catch((e) => e);
+    expect(err).toBeInstanceOf(PdfError);
+    expect(err.code).toBe("scan");
+    expect(err.message).toBe("This PDF is a scan, so there is no text to read. Use a PDF with selectable text.");
+  });
+
+  it("reads a mostly scanned PDF from the pages that have text", async () => {
+    const book = await parsePdf(textPdf(["", "", "Only this page has text.", "", ""]));
+    expect(book.chapters).toHaveLength(1);
+    expect(book.chapters[0].sentences).toEqual(["Only this page has text."]);
+  });
+
+  it("refuses a password-protected PDF", async () => {
+    const err = await parsePdf(textPdf(["Secret text."], { encrypt: true })).catch((e) => e);
+    expect(err).toBeInstanceOf(PdfError);
+    expect(err.code).toBe("encrypted");
+    expect(err.message).toBe("This PDF is protected with a password or copy protection, so it can't be read aloud. Use an unprotected copy.");
+  });
+
+  it("refuses a file cut off in the middle as invalid", async () => {
+    const err = await parsePdf(textPdf(["Hello there."]).slice(0, 40)).catch((e) => e);
+    expect(err).toMatchObject({ code: "invalid", message: "That file isn't a valid PDF." });
+  });
+
+  it("refuses a PDF with more pages than it will read, naming the limit", async () => {
+    const err = await parsePdf(textPdf(pages(5)), "x", { maxPages: 3 }).catch((e) => e);
+    expect(err).toMatchObject({ code: "limit", message: "That PDF is too long to read here (over 3 pages)." });
+    expect((await parsePdf(textPdf(pages(3)), "x", { maxPages: 3 })).chapters).toHaveLength(1);
+  });
+
+  it("stops at a PDF with more text than it will read, naming the limit", async () => {
+    const err = await parsePdf(textPdf(pages(5)), "x", { maxChars: 40 }).catch((e) => e);
+    expect(err).toMatchObject({ code: "limit", message: "That PDF has more text than can be read here (over 40 characters)." });
   });
 });

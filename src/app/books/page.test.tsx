@@ -104,6 +104,27 @@ describe("Books page", () => {
     expect(loadLibrary()[0].format).toBe("pdf");
   });
 
+  it.each([
+    ["a scan", () => pdfFile([""]), /scan, so there is no text to read/],
+    ["a password-protected PDF", () => pdfFile(["Secret."], { encrypt: true }), /password or copy protection/],
+    ["a damaged PDF", () => new File([new TextEncoder().encode("%PDF-1.4 broken") as BlobPart], "x.pdf"), /isn't a valid PDF/],
+    ["a file that is not a book", () => new File(["hello"], "notes.txt"), /isn't an EPUB or a PDF/],
+  ])("shows a plain message for %s and adds nothing", async (_name, file, message) => {
+    render(<BooksPage />);
+    upload(file());
+    await screen.findByText(message);
+    expect(loadLibrary()).toEqual([]);
+    expect(screen.getByText("Your library is empty")).toBeTruthy();
+  });
+
+  it("shows text from a PDF only as text", async () => {
+    render(<BooksPage />);
+    upload(pdfFile(["<img src=x onerror=alert(1)> Hello."], { title: "<b>Bold</b> title" }));
+    const link = await screen.findByRole("link", { name: /Bold/ });
+    expect(link.textContent).toContain("<b>Bold</b> title");
+    expect(document.querySelector("img, b")).toBeNull();
+  });
+
   it("ignores choosing no file", () => {
     render(<BooksPage />);
     fireEvent.change(screen.getByLabelText("Upload an EPUB or PDF"), { target: { files: [] } });

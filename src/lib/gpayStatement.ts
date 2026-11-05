@@ -96,8 +96,13 @@ function parseObjects(bytes: Uint8Array): Map<number, PdfObject> {
     // Trust a direct /Length; fall back to searching for endstream.
     const len = dict.match(/\/Length (\d+)(?! \d+ R)/);
     let to = len ? from + Number(len[1]) : -1;
-    if (to < 0 || !/^\s*endstream/.test(s.slice(to, to + 20))) to = s.indexOf("endstream", from);
-    if (to < 0) break;
+    if (to < 0 || !/^\s*endstream/.test(s.slice(to, to + 20))) {
+      to = s.indexOf("endstream", from);
+      if (to < 0) break;
+      // The end-of-line before endstream isn't data, and DecompressionStream can reject trailing bytes.
+      if (to > from && s[to - 1] === "\n") to--;
+      if (to > from && s[to - 1] === "\r") to--;
+    }
     objs.set(Number(m[1]), { dict, data: bytes.subarray(from, to) });
     re.lastIndex = to;
   }

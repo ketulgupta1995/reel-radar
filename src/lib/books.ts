@@ -36,6 +36,9 @@ async function files<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) =
   }
 }
 
+// An EPUB is a zip file ("PK" first).
+const isZip = (bytes: ArrayBuffer) => bytes.byteLength > 1 && new Uint8Array(bytes, 0, 2).every((b, i) => b === [0x50, 0x4b][i]);
+
 const hex = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("");
 
 export type AddResult = {
@@ -58,6 +61,7 @@ export async function localIds(): Promise<Set<string>> {
 export async function addBook(bytes: ArrayBuffer, source: BookSource, sourceId?: string, fileName?: string): Promise<AddResult> {
   if (bytes.byteLength > MAX_EPUB_BYTES) throw new Error("That file is too big (max 50 MB).");
   const pdf = isPdf(bytes);
+  if (!pdf && !isZip(bytes)) throw new EpubError("invalid", "That file isn't an EPUB or a PDF.");
   const parsed = pdf ? await parsePdf(bytes, fileName?.replace(/\.pdf$/i, "").trim() || undefined) : await parseEpub(bytes);
   const hash = hex(await crypto.subtle.digest("SHA-256", bytes));
   const id = hash.slice(0, 16);

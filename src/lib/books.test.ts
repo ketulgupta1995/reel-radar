@@ -2,6 +2,7 @@
 import { IDBFactory } from "fake-indexeddb";
 import { beforeEach, describe, expect, it } from "vitest";
 import { epubFile } from "@/test/epub";
+import { pdfFile } from "@/test/pdf";
 import { MAX_EPUB_BYTES, addBook, addUpload, errorText, loadLibrary, loadPosition, loadVoicePrefs, localIds, openBook, purgeRemoved, removeBook, savePosition, saveVoicePrefs } from "./books";
 import { removeEntry } from "./booksDoc";
 import { EpubError } from "./epub";
@@ -43,7 +44,13 @@ describe("books on this device", () => {
 
   it("refuses copy-protected, invalid and oversized files without adding them", async () => {
     await expect(addUpload(await epubFile({ rights: true }))).rejects.toMatchObject({ code: "drm" });
+    await expect(addUpload(new File(["not an epub"], "x.epub"))).rejects.toMatchObject({ code: "invalid", message: "That file isn't an EPUB or a PDF." });
     await expect(addUpload(new File(["not an epub"], "x.epub"))).rejects.toBeInstanceOf(EpubError);
+    await expect(addUpload(pdfFile([""]))).rejects.toMatchObject({ code: "scan" });
+    await expect(addUpload(pdfFile(["Secret."], { encrypt: true }))).rejects.toMatchObject({ code: "encrypted" });
+    const bigPdf = pdfFile(["Hello there."]);
+    Object.defineProperty(bigPdf, "size", { value: MAX_EPUB_BYTES + 1 });
+    await expect(addUpload(bigPdf)).rejects.toThrow("That file is too big (max 50 MB).");
     const big = new File([new Uint8Array(10)], "big.epub");
     Object.defineProperty(big, "size", { value: MAX_EPUB_BYTES + 1 });
     await expect(addUpload(big)).rejects.toThrow("too big");
