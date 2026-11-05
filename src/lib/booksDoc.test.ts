@@ -17,6 +17,27 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("PDF entries", () => {
+  it("keep their format through saving a place and through a merge in either direction", () => {
+    addEntry(entry("a", { format: "pdf" }));
+    savePosition("a", 2, 3);
+    expect(loadLibrary()[0].format).toBe("pdf");
+
+    const pdf = item("p", 5, { entry: entry("p", { format: "pdf" }) });
+    const moved = { ...pdf, position: { chapter: 1, sentence: 1 }, updatedAt: 9 }; // an older client that doesn't know `format` moves the place
+    expect(mergeBooks({ items: [pdf] }, { items: [moved] }).items[0]).toMatchObject({ position: { chapter: 1, sentence: 1 }, entry: { format: "pdf" } });
+    expect(mergeBooks({ items: [moved] }, { items: [pdf] }).items[0]).toMatchObject({ position: { chapter: 1, sentence: 1 }, entry: { format: "pdf" } });
+  });
+
+  it("do not make an EPUB entry a PDF, and a PDF added on one device appears on another", () => {
+    const epub = item("e", 5);
+    const pdf = item("p", 6, { entry: entry("p", { format: "pdf" }) });
+    const merged = mergeBooks({ items: [epub] }, { items: [pdf] }).items;
+    expect(merged.find((i) => i.entry.id === "e")!.entry.format).toBeUndefined();
+    expect(merged.find((i) => i.entry.id === "p")!.entry.format).toBe("pdf");
+  });
+});
+
 describe("library and positions", () => {
   it("lists books newest first and marks the doc for syncing", () => {
     expect(loadLibrary()).toEqual([]);

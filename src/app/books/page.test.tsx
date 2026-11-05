@@ -369,6 +369,69 @@ describe("A library shared between devices", () => {
     expect(loadLibrary()).toHaveLength(2);
   });
 
+  describe("with a PDF", () => {
+    const station = () => pdfFile([["Mr. Rao kept the clock fast."]], { title: "Station Notes" });
+    const dropFile = async (id: string) => {
+      const db = await new Promise<IDBDatabase>((r) => (indexedDB.open("books", 1).onsuccess = (e) => r((e.target as IDBOpenDBRequest).result)));
+      await new Promise((r) => (db.transaction("files", "readwrite").objectStore("files").delete(id).onsuccess = r));
+      db.close();
+    };
+
+    it("shows a PDF from another device with its badge, and asks for its file", async () => {
+      serverWith([{ entry: entry("abc", { title: "From The Laptop", format: "pdf" }), updatedAt: 5 }]);
+      render(<BooksPage />);
+      await screen.findByText("The file isn't on this device.");
+      expect(within(screen.getByLabelText("Your library")).getByText("PDF")).toBeTruthy();
+      expect(screen.getByText("Add the file on this device")).toBeTruthy();
+      expect(screen.queryByRole("link", { name: /From The Laptop/ })).toBeNull();
+    });
+
+    it("restores the file and keeps your place when you add the same PDF", async () => {
+      const { entry: made } = await addUpload(station());
+      savePosition(made.id, 0, 0);
+      await dropFile(made.id);
+
+      render(<BooksPage />);
+      await screen.findByText("The file isn't on this device.");
+      fireEvent.change(screen.getByLabelText(`Add the file for ${made.title}`), { target: { files: [station()] } });
+      await screen.findByText(`Added the file for “${made.title}”. Your place is kept.`);
+      await waitFor(() => expect(screen.getByRole("link", { name: new RegExp(made.title) })).toBeTruthy());
+      expect(loadLibrary()).toHaveLength(1);
+      expect(loadLibrary()[0].format).toBe("pdf");
+      expect(loadPosition(made.id)).toMatchObject({ chapter: 0, sentence: 0 });
+    });
+
+    it("says when the PDF added is a different edition, which becomes a new book without the old place", async () => {
+      serverWith([{ entry: entry("abc", { title: "Old Edition", format: "pdf" }), position: { chapter: 3, sentence: 9 }, updatedAt: 5 }]);
+      render(<BooksPage />);
+      await screen.findByText("The file isn't on this device.");
+      fireEvent.change(screen.getByLabelText("Add the file for Old Edition"), { target: { files: [station()] } });
+      await screen.findByText(/different edition/);
+      expect(loadLibrary()).toHaveLength(2);
+      const added = loadLibrary().find((b) => b.id !== "abc")!;
+      expect(loadPosition(added.id)).toBeUndefined();
+    });
+
+    it("removes a PDF everywhere, deleting its file here", async () => {
+      const { entry: made } = await addUpload(station());
+      render(<BooksPage />);
+      fireEvent.click(await screen.findByRole("button", { name: `Remove ${made.title}` }));
+      fireEvent.click(screen.getByText("Yes, remove"));
+      await screen.findByText("Your library is empty");
+      const { localIds } = await import("@/lib/books");
+      expect((await localIds()).has(made.id)).toBe(false);
+    });
+
+    it("deletes the file of a PDF that was removed on another device", async () => {
+      const { entry: made } = await addUpload(station());
+      serverWith([{ entry: made, removed: true, updatedAt: Date.now() + 1000 }]);
+      render(<BooksPage />);
+      await screen.findByText("Your library is empty");
+      const { localIds } = await import("@/lib/books");
+      await waitFor(async () => expect((await localIds()).has(made.id)).toBe(false));
+    });
+  });
+
   it("downloads a catalogue book again with one tap", async () => {
     const epub = await makeEpub({ title: "Emma", author: "Jane Austen" });
     vi.stubGlobal("fetch", vi.fn(async (url: string) => (String(url).includes("/downloads/") ? bytesResponse(epub) : jsonResponse({ docs: {} }))));
