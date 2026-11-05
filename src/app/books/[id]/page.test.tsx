@@ -140,6 +140,24 @@ describe("Book page", () => {
     expect(screen.queryByRole("note")).toBeNull();
   });
 
+  it("speaks a long PDF sentence with no punctuation in pieces under 1,000 characters, highlighting all of it", async () => {
+    // Forty lines of one paragraph, about 3,000 characters with no comma or stop: one sentence.
+    const words = Array.from({ length: 450 }, (_, i) => `word${i}`);
+    const lines = Array.from({ length: 45 }, (_, i) => ({ text: words.slice(i * 10, i * 10 + 10).join(" "), y: 740 - i * 16 }));
+    const long = words.join(" ");
+    const { entry } = await addUpload(pdfFile([lines], { title: "Run on" }));
+    nav.params.id = entry.id;
+    render(<BookPage />);
+    await screen.findByRole("heading", { name: "Run on" });
+    await waitFor(() => expect(document.querySelector('[aria-current="true"]')).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    for (let i = 0; i < 10 && said().join(" ").length < long.length; i++) finishSpeaking();
+    expect(said().length).toBeGreaterThanOrEqual(4);
+    expect(said().every((piece) => piece.length <= 1000)).toBe(true);
+    expect(said().join(" ")).toBe(long);
+    expect(sentence(long).getAttribute("aria-current")).toBe("true");
+  });
+
   it("shows a PDF's text only as text", async () => {
     const { entry } = await addUpload(pdfFile(["<img src=x onerror=alert(1)> Hello there."], { title: "Plain" }));
     nav.params.id = entry.id;
