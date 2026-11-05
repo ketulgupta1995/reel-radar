@@ -103,6 +103,26 @@ describe("Book page", () => {
     expect(screen.getByLabelText("Chapter text").textContent).toContain("Three says hi.");
   });
 
+  it("reads a PDF without its running header and page numbers", async () => {
+    const names = ["Alpha", "Bravo", "Charlie", "Delta"];
+    const pagesWithFurniture = names.map((name, i) => [
+      { text: "THE STATION CLOCK", y: 750 },
+      { text: `${name} walked in.`, y: 600 },
+      { text: `${name} sat down.`, y: 584 },
+      { text: `${name} left.`, y: 568 },
+      { text: `Page ${i + 1}`, y: 40 },
+    ]);
+    const { entry } = await addUpload(pdfFile(pagesWithFurniture, { title: "Furnished" }));
+    nav.params.id = entry.id;
+    render(<BookPage />);
+    await screen.findByRole("heading", { name: "Furnished" });
+    await waitFor(() => expect(sentence("Alpha walked in.")).toBeTruthy());
+    const text = screen.getByLabelText("Chapter text").textContent ?? "";
+    expect(text).not.toMatch(/STATION CLOCK|Page \d/);
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    expect(said()).toEqual(["Alpha walked in."]);
+  });
+
   it("shows a PDF's text only as text", async () => {
     const { entry } = await addUpload(pdfFile(["<img src=x onerror=alert(1)> Hello there."], { title: "Plain" }));
     nav.params.id = entry.id;
