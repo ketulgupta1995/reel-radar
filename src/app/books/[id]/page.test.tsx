@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { IDBFactory } from "fake-indexeddb";
-import { act, fireEvent, render, screen, waitFor, configure } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, configure, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addUpload, loadPosition, loadVoicePrefs, savePosition } from "@/lib/books";
 import { loadRecording, setRecording } from "@/lib/booksDoc";
 import { epubFile } from "@/test/epub";
+import { pdfFile } from "@/test/pdf";
 import { requests, routeFetch } from "@/test/pages";
 
 const nav = vi.hoisted(() => ({ params: { id: "" } as Record<string, string> }));
@@ -72,6 +73,24 @@ describe("Book page", () => {
     fireEvent.change(screen.getByLabelText("Chapter"), { target: { value: "1" } });
     expect(screen.getByLabelText("Chapter text").textContent).toContain("She closed her book.");
     expect(screen.getByRole("link", { name: "← Library" }).getAttribute("href")).toBe("/books");
+  });
+
+  it("opens a PDF into chapters of pages and plays it like an EPUB", async () => {
+    const pages = Array.from({ length: 12 }, (_, i) => `Page ${i + 1} says hello.`);
+    const { entry } = await addUpload(pdfFile(pages, { title: "Station Notes" }));
+    nav.params.id = entry.id;
+    render(<BookPage />);
+    await screen.findByRole("heading", { name: "Station Notes" });
+    await waitFor(() => expect(document.querySelector('[aria-current="true"]')).not.toBeNull());
+    expect(screen.getByLabelText("Chapter text").textContent).toContain("Page 1 says hello.");
+    expect(within(screen.getByLabelText("Chapter")).getAllByRole("option").map((o) => o.textContent)).toEqual(["Pages 1–10", "Pages 11–12"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    expect(said()).toEqual(["Page 1 says hello."]);
+    finishSpeaking();
+    expect(said()).toEqual(["Page 1 says hello.", "Page 2 says hello."]);
+    fireEvent.change(screen.getByLabelText("Chapter"), { target: { value: "1" } });
+    expect(screen.getByLabelText("Chapter text").textContent).toContain("Page 11 says hello.");
   });
 
   it("asks for the file again when it isn't on this device", async () => {

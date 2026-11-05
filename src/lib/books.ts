@@ -5,6 +5,7 @@
 // same book (uploading it twice adds it once, and later syncs can match it across devices).
 import { BookEntry, BookSource, addEntry, loadLibrary, removeEntry, removedIds } from "./booksDoc";
 import { EpubError, ParsedBook, parseEpub } from "./epub";
+import { PdfError, isPdf, parsePdf } from "./pdf";
 
 export { loadLibrary, loadPosition, savePosition } from "./booksDoc";
 export type { BookEntry, BookSource } from "./booksDoc";
@@ -48,14 +49,16 @@ export async function localIds(): Promise<Set<string>> {
   return new Set((await files("readonly", (s) => s.getAllKeys())).map(String));
 }
 
-// Add EPUB bytes to the library: read them, keep the file on this device and list the book. The same
+// Add EPUB or PDF bytes to the library: read them, keep the file on this device and list the book. The same
 // file is only added once. A book that is already in the library without its file here (it came from
 // another device) gets the file, and keeps its place. A catalogue book whose edition changed since the
-// other device downloaded it is matched by its catalogue id instead. Throws EpubError for
-// copy-protected or invalid files, and a plain Error for files that are too big.
-export async function addBook(bytes: ArrayBuffer, source: BookSource, sourceId?: string): Promise<AddResult> {
+// other device downloaded it is matched by its catalogue id instead. The type is told from the bytes,
+// not the file name. Throws EpubError or PdfError for copy-protected or invalid files, and a plain Error
+// for files that are too big. `fileName` titles a PDF that has no title of its own.
+export async function addBook(bytes: ArrayBuffer, source: BookSource, sourceId?: string, fileName?: string): Promise<AddResult> {
   if (bytes.byteLength > MAX_EPUB_BYTES) throw new Error("That file is too big (max 50 MB).");
-  const parsed = await parseEpub(bytes);
+  const pdf = isPdf(bytes);
+  const parsed = pdf ? await parsePdf(bytes, fileName?.replace(/\.pdf$/i, "").trim() || undefined) : await parseEpub(bytes);
   const hash = hex(await crypto.subtle.digest("SHA-256", bytes));
   const id = hash.slice(0, 16);
 
@@ -67,20 +70,21 @@ export async function addBook(bytes: ArrayBuffer, source: BookSource, sourceId?:
   }
 
   await files("readwrite", (s) => s.put(bytes, id));
-  const entry: BookEntry = { id, title: parsed.title, author: parsed.author, source, hash, addedAt: Date.now(), ...(sourceId && { sourceId }) };
+  const entry: BookEntry = { id, title: parsed.title, author: parsed.author, source, hash, addedAt: Date.now(), ...(sourceId && { sourceId }), ...(pdf && { format: "pdf" as const }) };
   addEntry(entry);
   return { entry, existing: false };
 }
 
 export async function addUpload(file: File): Promise<AddResult> {
   if (file.size > MAX_EPUB_BYTES) throw new Error("That file is too big (max 50 MB).");
-  return addBook(await file.arrayBuffer(), "upload");
+  return addBook(await file.arrayBuffer(), "upload", undefined, file.name);
 }
 
 // The parsed text of a book kept on this device, or null when its file isn't here.
 export async function openBook(id: string): Promise<ParsedBook | null> {
   const bytes = await files<ArrayBuffer | undefined>("readonly", (s) => s.get(id));
-  return bytes ? parseEpub(bytes) : null;
+  if (!bytes) return null;
+  return isPdf(bytes) ? parsePdf(bytes) : parseEpub(bytes);
 }
 
 /** Take a book out of the library on every device, and delete its file from this one. */
@@ -97,7 +101,7 @@ export async function purgeRemoved(): Promise<void> {
   for (const id of gone) if (here.has(id)) await files("readwrite", (s) => s.delete(id));
 }
 
-export const errorText = (err: unknown) => (err instanceof EpubError || err instanceof Error ? err.message : "That file couldn't be added.");
+export const errorText = (err: unknown) => (err instanceof EpubError || err instanceof PdfError || err instanceof Error ? err.message : "That file couldn't be added.");
 
 // The voice and speed you chose, kept on this device.
 export type VoicePrefs = { voiceURI: string | null; rate: number };

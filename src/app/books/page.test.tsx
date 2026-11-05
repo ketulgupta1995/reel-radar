@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, configure, waitFor, within } from "@testing-library/react";
 import { getApp } from "@/lib/apps";
 import { epubFile, makeEpub } from "@/test/epub";
+import { pdfFile } from "@/test/pdf";
 import { opdsFeed } from "@/test/gutenberg";
 import { jsonResponse } from "@/test/fixtures";
 import { routeFetch } from "@/test/pages";
@@ -23,7 +24,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-const upload = (file: File) => fireEvent.change(screen.getByLabelText("Upload an EPUB"), { target: { files: [file] } });
+const upload = (file: File) => fireEvent.change(screen.getByLabelText("Upload an EPUB or PDF"), { target: { files: [file] } });
 
 describe("Books page", () => {
   it("is registered as an app and opens at its own address", () => {
@@ -67,9 +68,45 @@ describe("Books page", () => {
     expect(screen.getByText("Your library is empty")).toBeTruthy();
   });
 
+  it("adds an uploaded PDF marked as one, named from its metadata, and only once", async () => {
+    render(<BooksPage />);
+    upload(pdfFile([["Mr. Rao kept the clock fast."]], { title: "Station Notes", author: "I. Rao" }));
+    await screen.findByText("Added “Station Notes”.");
+    const link = await screen.findByRole("link", { name: /Station Notes/ });
+    expect(link.getAttribute("href")).toBe(`/books/${loadLibrary()[0].id}`);
+    expect(loadLibrary()[0]).toMatchObject({ title: "Station Notes", author: "I. Rao", source: "upload", format: "pdf" });
+    expect(within(screen.getByLabelText("Your library")).getByText("PDF")).toBeTruthy();
+
+    upload(pdfFile([["Mr. Rao kept the clock fast."]], { title: "Station Notes", author: "I. Rao" }));
+    await screen.findByText("“Station Notes” is already in your library.");
+    expect(loadLibrary()).toHaveLength(1);
+  });
+
+  it("names a PDF with no title after its file", async () => {
+    render(<BooksPage />);
+    upload(pdfFile(["Hello there."], {}, "my-notes.pdf"));
+    await screen.findByText("Added “my-notes”.");
+    expect(loadLibrary()[0].title).toBe("my-notes");
+  });
+
+  it("does not mark an EPUB as a PDF", async () => {
+    render(<BooksPage />);
+    upload(await epubFile());
+    await screen.findByText("Added “The Station Clock”.");
+    expect(loadLibrary()[0].format).toBeUndefined();
+    expect(within(screen.getByLabelText("Your library")).queryByText("PDF")).toBeNull();
+  });
+
+  it("recognises a PDF by its contents, not its name", async () => {
+    render(<BooksPage />);
+    upload(pdfFile(["Hello there."], { title: "Disguised" }, "book.epub"));
+    await screen.findByText("Added “Disguised”.");
+    expect(loadLibrary()[0].format).toBe("pdf");
+  });
+
   it("ignores choosing no file", () => {
     render(<BooksPage />);
-    fireEvent.change(screen.getByLabelText("Upload an EPUB"), { target: { files: [] } });
+    fireEvent.change(screen.getByLabelText("Upload an EPUB or PDF"), { target: { files: [] } });
     expect(screen.queryByRole("status")).toBeNull();
   });
 

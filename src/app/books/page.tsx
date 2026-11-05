@@ -108,12 +108,12 @@ export default function BooksPage() {
             htmlFor="upload-epub"
             className="cursor-pointer rounded-full bg-gold px-4 py-2 text-sm font-semibold text-ink transition hover:bg-amber-300"
           >
-            {busy ? "Adding…" : "Upload an EPUB"}
+            {busy ? "Adding…" : "Upload an EPUB or PDF"}
           </label>
           <input
             id="upload-epub"
             type="file"
-            accept=".epub,application/epub+zip"
+            accept=".epub,.pdf,application/epub+zip,application/pdf"
             disabled={busy}
             className="sr-only"
             onChange={(e) => {
@@ -185,7 +185,7 @@ export default function BooksPage() {
             <p className="mt-2 text-sm text-white/65">Add a book in one of two ways:</p>
             <ul className="mt-4 list-disc space-y-2 pl-5 text-sm text-white/80">
               <li>Search for a free book by title or author.</li>
-              <li>Upload an EPUB file you already own, without copy protection.</li>
+              <li>Upload an EPUB or PDF file you already own, without copy protection.</li>
             </ul>
           </section>
         ) : (
@@ -198,12 +198,18 @@ export default function BooksPage() {
                   <div className="flex items-center justify-between gap-3">
                     {onDevice ? (
                       <Link href={`/books/${b.id}`} className="min-w-0 flex-1 transition hover:text-gold">
-                        <span className="block font-semibold">{b.title}</span>
+                        <span className="block font-semibold">
+                          {b.title}
+                          {b.format === "pdf" && <span className="ml-2 rounded border border-white/20 px-1.5 py-0.5 align-middle text-[10px] font-semibold tracking-wide text-white/60">PDF</span>}
+                        </span>
                         <span className="block text-sm text-white/60">{b.author}</span>
                       </Link>
                     ) : (
                       <div className="min-w-0 flex-1">
-                        <span className="block font-semibold">{b.title}</span>
+                        <span className="block font-semibold">
+                          {b.title}
+                          {b.format === "pdf" && <span className="ml-2 rounded border border-white/20 px-1.5 py-0.5 align-middle text-[10px] font-semibold tracking-wide text-white/60">PDF</span>}
+                        </span>
                         <span className="block text-sm text-white/60">{b.author}</span>
                         <span className="block text-xs text-white/45">The file isn&apos;t on this device.</span>
                       </div>
@@ -229,7 +235,7 @@ export default function BooksPage() {
                           <input
                             id={`file-${b.id}`}
                             type="file"
-                            accept=".epub,application/epub+zip"
+                            accept=".epub,.pdf,application/epub+zip,application/pdf"
                             aria-label={`Add the file for ${b.title}`}
                             className="sr-only"
                             onChange={(e) => {

@@ -18,6 +18,7 @@ export type BookEntry = {
   sourceId?: string; // the catalogue's own id for a downloaded book, e.g. "standard-ebooks:jane-austen/emma"
   hash: string;
   addedAt: number;
+  format?: "pdf"; // absent for an EPUB, so entries made before PDFs were supported are still right
 };
 export type Position = { chapter: number; sentence: number; updatedAt: number };
 

@@ -1,0 +1,45 @@
+// Builds small text PDFs that pdf.js can read, for tests of lib/pdf.ts. (gpayPdf.ts draws statements with a
+// stand-in font that only its own reader understands; these use the standard Helvetica font.)
+
+export type FakePage = string | string[]; // one string is one line; an array is lines from the top down
+
+export type FakePdfOptions = {
+  title?: string;
+  author?: string;
+};
+
+const escape = (s: string) => s.replace(/[\\()]/g, "\\$&");
+
+export function textPdf(pages: FakePage[], opts: FakePdfOptions = {}): Uint8Array {
+  const objects: string[] = [];
+  const add = (body: string) => objects.push(body);
+
+  // 1 catalog, 2 page tree, 3 font, 4 info; then a page and a content stream for each page.
+  add("<</Type/Catalog/Pages 2 0 R>>");
+  const first = 5;
+  add(`<</Type/Pages/Kids[${pages.map((_, i) => `${first + i * 2} 0 R`).join(" ")}]/Count ${pages.length}>>`);
+  add("<</Type/Font/Subtype/Type1/BaseFont/Helvetica/Encoding/WinAnsiEncoding>>");
+  const info = [opts.title && `/Title(${escape(opts.title)})`, opts.author && `/Author(${escape(opts.author)})`].filter(Boolean).join("");
+  add(`<<${info}>>`);
+  for (const page of pages) {
+    const lines = Array.isArray(page) ? page : [page];
+    const stream = lines.map((line, i) => `BT /F1 12 Tf 72 ${720 - i * 16} Td (${escape(line)}) Tj ET`).join("\n");
+    const contentId = objects.length + 2;
+    add(`<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</Font<</F1 3 0 R>>>>/Contents ${contentId} 0 R>>`);
+    add(`<</Length ${stream.length}>>\nstream\n${stream}\nendstream`);
+  }
+
+  let out = "%PDF-1.4\n";
+  const offsets = objects.map((body, i) => {
+    const at = out.length;
+    out += `${i + 1} 0 obj\n${body}\nendobj\n`;
+    return at;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")}`;
+  out += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R/Info 4 0 R>>\nstartxref\n${xref}\n%%EOF\n`;
+  return new TextEncoder().encode(out);
+}
+
+export const pdfFile = (pages: FakePage[], opts?: FakePdfOptions, name = "book.pdf"): File =>
+  new File([textPdf(pages, opts) as BlobPart], name, { type: "application/pdf" });
