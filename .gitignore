@@ -15,3 +15,6 @@ data/*.pdf
 
 # CodeGraph index (generated locally)
 .codegraph/
+.scratch
+.claude
+.agents
