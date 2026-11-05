@@ -3,7 +3,7 @@
 import { splitSentences } from "./sentences";
 
 export type Chapter = { title: string; sentences: string[] };
-export type ParsedBook = { title: string; author: string; chapters: Chapter[] };
+export type ParsedBook = { title: string; author: string; chapters: Chapter[]; warning?: string }; // a warning is shown with the book, not an error
 
 export class EpubError extends Error {
   constructor(

@@ -2,7 +2,7 @@
 // pdf.js is imported on demand so it only loads on Books pages. A PDF is untrusted input: no scripts or
 // embedded fonts are run, and its text only ever leaves here as plain strings.
 import type { Chapter, ParsedBook } from "./epub";
-import { PdfLine, joinPages, paragraphsOfPage, stripPageFurniture } from "./pdfText";
+import { PdfLine, Span, joinPages, looksMultiColumn, paragraphsOfPage, stripPageFurniture } from "./pdfText";
 import { splitSentences } from "./sentences";
 
 export class PdfError extends Error {
@@ -88,6 +88,12 @@ function linesOf(items: unknown[]): PdfLine[] {
   return lines;
 }
 
+// Where each piece of text on a page sits from side to side.
+const spansOf = (items: unknown[]): Span[] =>
+  (items as Partial<TextItem & { width: number }>[])
+    .filter((item) => item.str?.trim() && item.transform)
+    .map((item) => ({ x0: item.transform![4], x1: item.transform![4] + (item.width ?? 0) }));
+
 const rangeTitle = (from: number, to: number) => (from === to ? `Page ${from}` : `Pages ${from}–${to}`);
 
 // `fallbackTitle` names a PDF that has no title of its own (the caller knows the file name).
@@ -107,10 +113,14 @@ export async function parsePdf(bytes: ArrayBuffer | Uint8Array, fallbackTitle = 
   try {
     if (doc.numPages > maxPages) throw new PdfError("limit", `That PDF is too long to read here (over ${maxPages} pages).`);
     const pageLines: PdfLine[][] = [];
+    const layouts: { width: number; spans: Span[] }[] = [];
     let chars = 0;
     for (let n = 1; n <= doc.numPages; n++) {
       signal?.throwIfAborted();
-      const lines = linesOf((await (await doc.getPage(n)).getTextContent()).items);
+      const page = await doc.getPage(n);
+      const items = (await page.getTextContent()).items;
+      layouts.push({ width: page.view[2] - page.view[0], spans: spansOf(items) });
+      const lines = linesOf(items);
       chars += lines.reduce((sum, line) => sum + line.text.length, 0);
       if (chars > maxChars) throw new PdfError("limit", `That PDF has more text than can be read here (over ${maxChars.toLocaleString("en-US")} characters).`);
       pageLines.push(lines);
@@ -140,7 +150,8 @@ export async function parsePdf(bytes: ArrayBuffer | Uint8Array, fallbackTitle = 
 
     const info = ((await doc.getMetadata().catch(() => null))?.info ?? {}) as { Title?: unknown; Author?: unknown };
     const text = (v: unknown) => (typeof v === "string" ? clean(v) : "");
-    return { title: text(info.Title) || fallbackTitle, author: text(info.Author) || "Unknown author", chapters };
+    const warning = looksMultiColumn(layouts) ? "This PDF looks like it has two columns, so it may read out of order." : undefined;
+    return { title: text(info.Title) || fallbackTitle, author: text(info.Author) || "Unknown author", chapters, ...(warning && { warning }) };
   } finally {
     await task.destroy();
   }

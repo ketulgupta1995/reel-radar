@@ -186,6 +186,11 @@ export default function BookPage() {
             <div>
               <h1 className="text-2xl font-bold">{book.title}</h1>
               <p className="text-sm text-white/60">{book.author}</p>
+              {book.warning && (
+                <p role="note" className="mt-2 text-sm text-amber-200/90">
+                  {book.warning}
+                </p>
+              )}
             </div>
             <section aria-label="Recording" className="space-y-3 rounded-2xl border border-white/10 bg-white/[.04] p-3">
               {recording ? (

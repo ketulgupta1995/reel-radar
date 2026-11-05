@@ -123,6 +123,23 @@ describe("Book page", () => {
     expect(said()).toEqual(["Alpha walked in."]);
   });
 
+  it("warns before Play that a two-column PDF may read out of order", async () => {
+    const page = Array.from({ length: 14 }, (_, i) => [
+      { text: `Left column line ${"a".repeat(i)}.`, y: 700 - i * 16, x: 72 },
+      { text: `Right column line ${"b".repeat(i)}.`, y: 700 - i * 16, x: 330 },
+    ]).flat();
+    const { entry } = await addUpload(pdfFile([page, page, page], { title: "Columns" }));
+    nav.params.id = entry.id;
+    render(<BookPage />);
+    await screen.findByRole("heading", { name: "Columns" });
+    expect((await screen.findByRole("note")).textContent).toBe("This PDF looks like it has two columns, so it may read out of order.");
+  });
+
+  it("shows no warning for an ordinary book", async () => {
+    await openUploaded();
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+
   it("shows a PDF's text only as text", async () => {
     const { entry } = await addUpload(pdfFile(["<img src=x onerror=alert(1)> Hello there."], { title: "Plain" }));
     nav.params.id = entry.id;

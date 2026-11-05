@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PdfLine, joinPages, paragraphsOfPage, stripPageFurniture } from "./pdfText";
+import { PdfLine, Span, joinPages, looksMultiColumn, paragraphsOfPage, stripPageFurniture } from "./pdfText";
 
 // A page of lines from the top down, 16 points apart unless a line says where it sits.
 const page = (...lines: (string | [string, number])[]): PdfLine[] =>
@@ -103,5 +103,44 @@ describe("joinPages", () => {
 
   it("skips pages without text", () => {
     expect(joinPages([["One."], [], ["Two"], [], ["three."]])).toEqual(["One.", "Two three."]);
+  });
+});
+
+describe("looksMultiColumn", () => {
+  const W = 612;
+  const rows = (n: number, x0: number, x1: number): Span[] => Array.from({ length: n }, () => ({ x0, x1 }));
+  const pageOf = (...spans: Span[][]) => ({ width: W, spans: spans.flat() });
+
+  it("sees two columns with a gap between them", () => {
+    const twoColumns = pageOf(rows(20, 72, 290), rows(20, 322, 540));
+    expect(looksMultiColumn([twoColumns, twoColumns, twoColumns])).toBe(true);
+  });
+
+  it("does not take one column of full-width lines for two", () => {
+    const one = pageOf(rows(40, 72, 540));
+    expect(looksMultiColumn([one, one, one])).toBe(false);
+  });
+
+  it("does not take a narrow indented block, or short left-aligned lines, for two columns", () => {
+    expect(looksMultiColumn([pageOf(rows(30, 150, 300))])).toBe(false);
+    expect(looksMultiColumn([pageOf(rows(30, 72, 200))])).toBe(false);
+  });
+
+  it("allows a full-width title above the columns", () => {
+    const page = pageOf(rows(1, 72, 540), rows(20, 72, 290), rows(20, 322, 540));
+    expect(looksMultiColumn([page])).toBe(true);
+  });
+
+  it("is not set off by one two-column page in a long single-column book", () => {
+    const one = pageOf(rows(40, 72, 540));
+    const two = pageOf(rows(20, 72, 290), rows(20, 322, 540));
+    expect(looksMultiColumn([...Array(9).fill(one), two])).toBe(false);
+    expect(looksMultiColumn([one, two, two])).toBe(true);
+  });
+
+  it("needs real text on both sides, and ignores pages with almost nothing on them", () => {
+    expect(looksMultiColumn([pageOf(rows(20, 72, 290), rows(2, 322, 540))])).toBe(false);
+    expect(looksMultiColumn([pageOf(rows(2, 72, 290), rows(2, 322, 540))])).toBe(false);
+    expect(looksMultiColumn([])).toBe(false);
   });
 });

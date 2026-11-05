@@ -82,3 +82,44 @@ export function joinPages(pages: string[][]): string[] {
   }
   return out;
 }
+
+/** The horizontal extent of one piece of text on a page. */
+export type Span = { x0: number; x1: number };
+
+const MIN_SPANS = 10; // a page with less text than this says nothing about its layout
+const GUTTER_STEP = 2;
+const MIN_GUTTER = 12; // points of clear space between columns
+const CROSSING_SHARE = 0.1; // a title or caption may run across the gap
+const SIDE_SHARE = 0.25; // each side of the gap holds at least this much of the text
+const MIN_SIDE_SPANS = 5;
+const COLUMN_PAGES_SHARE = 0.3; // of the pages that have text
+
+// Is there a clear strip in the middle of the page with plenty of text on both sides of it?
+function hasGutter({ width, spans }: { width: number; spans: Span[] }): boolean {
+  const limit = CROSSING_SHARE * spans.length;
+  let runStart: number | null = null;
+  const closes = (end: number) => {
+    if (runStart === null || end - runStart < MIN_GUTTER) return false;
+    const mid = (runStart + end) / 2;
+    const left = spans.filter((s) => s.x1 <= mid).length;
+    const right = spans.filter((s) => s.x0 >= mid).length;
+    const enough = (n: number) => n >= MIN_SIDE_SPANS && n >= SIDE_SHARE * spans.length;
+    return enough(left) && enough(right);
+  };
+  for (let c = 0.3 * width; c <= 0.7 * width; c += GUTTER_STEP) {
+    const crossing = spans.filter((s) => s.x0 < c && s.x1 > c).length;
+    if (crossing <= limit) runStart ??= c;
+    else {
+      if (closes(c)) return true;
+      runStart = null;
+    }
+  }
+  return closes(0.7 * width);
+}
+
+/** Does the document look like it is set in columns? Only a guess from where the text sits; it is not reordered. */
+export function looksMultiColumn(pages: { width: number; spans: Span[] }[]): boolean {
+  const withText = pages.filter((p) => p.spans.length >= MIN_SPANS);
+  const columns = withText.filter(hasGutter).length;
+  return columns > 0 && columns >= COLUMN_PAGES_SHARE * withText.length;
+}

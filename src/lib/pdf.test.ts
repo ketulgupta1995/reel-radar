@@ -128,6 +128,24 @@ describe("parsePdf", () => {
     });
   });
 
+  describe("multiple columns", () => {
+    const left = (i: number) => ({ text: `Left column line ${"a".repeat(i)}.`, y: 700 - i * 16, x: 72 });
+    const right = (i: number) => ({ text: `Right column line ${"b".repeat(i)}.`, y: 700 - i * 16, x: 330 });
+    const twoColumnPage = Array.from({ length: 14 }, (_, i) => [left(i), right(i)]).flat();
+    const longLine = (i: number) => ({ text: `This single column line number ${i} runs right across the whole width of the page here.`, y: 700 - i * 16 });
+
+    it("warns that a PDF with two columns may read out of order, and still reads it", async () => {
+      const book = await parsePdf(textPdf([twoColumnPage, twoColumnPage, twoColumnPage]));
+      expect(book.warning).toBe("This PDF looks like it has two columns, so it may read out of order.");
+      expect(book.chapters.length).toBeGreaterThan(0);
+    });
+
+    it("does not warn about a single column", async () => {
+      const page = Array.from({ length: 14 }, (_, i) => longLine(i));
+      expect((await parsePdf(textPdf([page, page, page]))).warning).toBeUndefined();
+    });
+  });
+
   describe("with an outline", () => {
     const six = ["Alpha one.", "Alpha two.", "Beta one.", "Beta two.", "Gamma one.", "Gamma two."];
     const titles = (book: { chapters: { title: string }[] }) => book.chapters.map((c) => c.title);
