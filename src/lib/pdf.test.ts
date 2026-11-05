@@ -96,6 +96,38 @@ describe("parsePdf", () => {
     expect(err).toMatchObject({ code: "invalid", message: "That file isn't a valid PDF." });
   });
 
+  describe("cleaning the text", () => {
+    const names = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
+    const sentences = async (pageList: Parameters<typeof textPdf>[0]) => (await parsePdf(textPdf(pageList))).chapters.flatMap((c) => c.sentences);
+
+    it("leaves out running headers, footers and page numbers", async () => {
+      const pagesWithFurniture = names.map((name, i) => [
+        { text: "THE STATION CLOCK", y: 750 },
+        { text: `${name} walked in.`, y: 600 },
+        { text: `${name} sat down.`, y: 584 },
+        { text: `${name} left.`, y: 568 },
+        { text: `Page ${i + 1}`, y: 40 },
+      ]);
+      expect(await sentences(pagesWithFurniture)).toEqual(names.flatMap((n) => [`${n} walked in.`, `${n} sat down.`, `${n} left.`]));
+    });
+
+    it("keeps a line repeated on only two pages of a short document", async () => {
+      expect(await sentences([["Meanwhile, all was well."], ["Meanwhile, all was well."]])).toEqual(["Meanwhile, all was well.", "Meanwhile, all was well."]);
+    });
+
+    it("rejoins a word hyphenated across a line, but not a hyphen inside a line", async () => {
+      expect(await sentences([["A well-known conver-", "sation went on."]])).toEqual(["A well-known conversation went on."]);
+    });
+
+    it("rejoins a word hyphenated across a page break", async () => {
+      expect(await sentences([["A long conver-"], ["sation went on."]])).toEqual(["A long conversation went on."]);
+    });
+
+    it("keeps a heading apart from the text under it", async () => {
+      expect(await sentences([[{ text: "Chapter One", y: 700 }, { text: "It was dark.", y: 650 }, { text: "Very dark.", y: 634 }]])).toEqual(["Chapter One", "It was dark.", "Very dark."]);
+    });
+  });
+
   describe("with an outline", () => {
     const six = ["Alpha one.", "Alpha two.", "Beta one.", "Beta two.", "Gamma one.", "Gamma two."];
     const titles = (book: { chapters: { title: string }[] }) => book.chapters.map((c) => c.title);

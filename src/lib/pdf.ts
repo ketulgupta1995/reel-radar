@@ -2,6 +2,7 @@
 // pdf.js is imported on demand so it only loads on Books pages. A PDF is untrusted input: no scripts or
 // embedded fonts are run, and its text only ever leaves here as plain strings.
 import type { Chapter, ParsedBook } from "./epub";
+import { PdfLine, joinPages, paragraphsOfPage, stripPageFurniture } from "./pdfText";
 import { splitSentences } from "./sentences";
 
 export class PdfError extends Error {
@@ -66,6 +67,27 @@ async function outlineStarts(doc: PdfDoc): Promise<{ title: string; page: number
   return found.filter((e, i) => i === 0 || e.page !== found[i - 1].page);
 }
 
+type TextItem = { str: string; hasEOL: boolean; transform: number[]; height: number };
+
+// The lines of a page, in drawing order: pdf.js flags the item that ends each one.
+function linesOf(items: unknown[]): PdfLine[] {
+  const lines: PdfLine[] = [];
+  let text = "";
+  let y = 0;
+  let height = 0;
+  for (const item of items as Partial<TextItem>[]) {
+    if (typeof item.str !== "string") continue;
+    if (!text.trim() && item.str.trim()) [y, height] = [item.transform?.[5] ?? 0, item.height ?? 0];
+    text += item.str;
+    if (item.hasEOL) {
+      if (clean(text)) lines.push({ text: clean(text), y, height });
+      text = "";
+    }
+  }
+  if (clean(text)) lines.push({ text: clean(text), y, height });
+  return lines;
+}
+
 const rangeTitle = (from: number, to: number) => (from === to ? `Page ${from}` : `Pages ${from}–${to}`);
 
 // `fallbackTitle` names a PDF that has no title of its own (the caller knows the file name).
@@ -84,17 +106,17 @@ export async function parsePdf(bytes: ArrayBuffer | Uint8Array, fallbackTitle = 
 
   try {
     if (doc.numPages > maxPages) throw new PdfError("limit", `That PDF is too long to read here (over ${maxPages} pages).`);
-    const pageTexts: string[] = [];
+    const pageLines: PdfLine[][] = [];
     let chars = 0;
     for (let n = 1; n <= doc.numPages; n++) {
       signal?.throwIfAborted();
-      const content = await (await doc.getPage(n)).getTextContent();
-      const text = clean(content.items.map((item) => ("str" in item ? item.str + (item.hasEOL ? " " : "") : "")).join(""));
-      chars += text.length;
+      const lines = linesOf((await (await doc.getPage(n)).getTextContent()).items);
+      chars += lines.reduce((sum, line) => sum + line.text.length, 0);
       if (chars > maxChars) throw new PdfError("limit", `That PDF has more text than can be read here (over ${maxChars.toLocaleString("en-US")} characters).`);
-      pageTexts.push(text);
+      pageLines.push(lines);
       onProgress?.(n, doc.numPages);
     }
+    const pageParagraphs = stripPageFurniture(pageLines).map(paragraphsOfPage);
 
     // Chapters are the outline's top-level entries, with any text before the first one kept as an opening
     // chapter; a PDF without a usable outline is cut into groups of pages instead.
@@ -102,16 +124,16 @@ export async function parsePdf(bytes: ArrayBuffer | Uint8Array, fallbackTitle = 
     const ranges: { title: string; from: number; to: number }[] = [];
     if (starts.length) {
       if (starts[0].page > 0) ranges.push({ title: rangeTitle(1, starts[0].page), from: 0, to: starts[0].page });
-      starts.forEach((e, i) => ranges.push({ title: e.title, from: e.page, to: starts[i + 1]?.page ?? pageTexts.length }));
+      starts.forEach((e, i) => ranges.push({ title: e.title, from: e.page, to: starts[i + 1]?.page ?? pageParagraphs.length }));
     } else {
-      for (let from = 0; from < pageTexts.length; from += PAGES_PER_CHAPTER) {
-        const to = Math.min(from + PAGES_PER_CHAPTER, pageTexts.length);
+      for (let from = 0; from < pageParagraphs.length; from += PAGES_PER_CHAPTER) {
+        const to = Math.min(from + PAGES_PER_CHAPTER, pageParagraphs.length);
         ranges.push({ title: rangeTitle(from + 1, to), from, to });
       }
     }
     const chapters: Chapter[] = [];
     for (const { title, from, to } of ranges) {
-      const sentences = splitSentences(pageTexts.slice(from, to).filter(Boolean).join(" "));
+      const sentences = joinPages(pageParagraphs.slice(from, to)).flatMap(splitSentences);
       if (sentences.length) chapters.push({ title, sentences });
     }
     if (!chapters.length) throw new PdfError("scan", "This PDF is a scan, so there is no text to read. Use a PDF with selectable text.");

@@ -1,7 +1,9 @@
 // Builds small text PDFs that pdf.js can read, for tests of lib/pdf.ts. (gpayPdf.ts draws statements with a
 // stand-in font that only its own reader understands; these use the standard Helvetica font.)
 
-export type FakePage = string | string[]; // one string is one line; an array is lines from the top down
+// A line is drawn 16 points below the one before it, unless it says where (`y` counts up from the page's bottom, 0 to 792).
+export type FakeLine = string | { text: string; y: number };
+export type FakePage = FakeLine | FakeLine[]; // one string is one line; an array is lines from the top down
 
 // A bookmark. `page` is 1-based; null leaves out the destination, and a page past the end points at nothing.
 export type FakeOutline = { title: string; page: number | null; children?: FakeOutline[] };
@@ -28,7 +30,9 @@ export function textPdf(pages: FakePage[], opts: FakePdfOptions = {}): Uint8Arra
   add(`<<${info}>>`);
   for (const page of pages) {
     const lines = Array.isArray(page) ? page : [page];
-    const stream = lines.map((line, i) => `BT /F1 12 Tf 72 ${720 - i * 16} Td (${escape(line)}) Tj ET`).join("\n");
+    const stream = lines
+      .map((line, i) => (typeof line === "string" ? `BT /F1 12 Tf 72 ${720 - i * 16} Td (${escape(line)}) Tj ET` : `BT /F1 12 Tf 72 ${line.y} Td (${escape(line.text)}) Tj ET`))
+      .join("\n");
     const contentId = objects.length + 2;
     add(`<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</Font<</F1 3 0 R>>>>/Contents ${contentId} 0 R>>`);
     add(`<</Length ${stream.length}>>\nstream\n${stream}\nendstream`);
