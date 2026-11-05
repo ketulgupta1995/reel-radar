@@ -93,6 +93,16 @@ describe("Book page", () => {
     expect(screen.getByLabelText("Chapter text").textContent).toContain("Page 11 says hello.");
   });
 
+  it("lists a PDF's outline entries as its chapters", async () => {
+    const { entry } = await addUpload(pdfFile(["One says hi.", "Two says hi.", "Three says hi."], { title: "Outlined", outline: [{ title: "Beginning", page: 1 }, { title: "Ending", page: 3 }] }));
+    nav.params.id = entry.id;
+    render(<BookPage />);
+    await screen.findByRole("heading", { name: "Outlined" });
+    await waitFor(() => expect(within(screen.getByLabelText("Chapter")).getAllByRole("option").map((o) => o.textContent)).toEqual(["Beginning", "Ending"]));
+    fireEvent.change(screen.getByLabelText("Chapter"), { target: { value: "1" } });
+    expect(screen.getByLabelText("Chapter text").textContent).toContain("Three says hi.");
+  });
+
   it("shows a PDF's text only as text", async () => {
     const { entry } = await addUpload(pdfFile(["<img src=x onerror=alert(1)> Hello there."], { title: "Plain" }));
     nav.params.id = entry.id;

@@ -43,6 +43,29 @@ async function loadPdfjs() {
   return pdfjs;
 }
 
+type PdfDoc = Awaited<ReturnType<Awaited<ReturnType<typeof loadPdfjs>>["getDocument"]>["promise"]>;
+
+// The top-level outline entries (bookmarks) that point at a page, in page order. An entry with no
+// destination or a destination that can't be found is skipped, and of two entries on the same page the
+// first is kept. Returns [] when the PDF has no outline, so the caller falls back to groups of pages.
+async function outlineStarts(doc: PdfDoc): Promise<{ title: string; page: number }[]> {
+  const outline = await doc.getOutline().catch(() => null);
+  const found: { title: string; page: number }[] = [];
+  for (const entry of outline ?? []) {
+    try {
+      const dest = typeof entry.dest === "string" ? await doc.getDestination(entry.dest) : entry.dest;
+      const target = dest?.[0];
+      const page = typeof target === "number" ? target : target ? await doc.getPageIndex(target) : -1;
+      const title = clean(entry.title);
+      if (title && page >= 0 && page < doc.numPages) found.push({ title, page });
+    } catch {
+      // an entry that points nowhere is left out
+    }
+  }
+  found.sort((a, b) => a.page - b.page);
+  return found.filter((e, i) => i === 0 || e.page !== found[i - 1].page);
+}
+
 const rangeTitle = (from: number, to: number) => (from === to ? `Page ${from}` : `Pages ${from}–${to}`);
 
 // `fallbackTitle` names a PDF that has no title of its own (the caller knows the file name).
@@ -73,11 +96,23 @@ export async function parsePdf(bytes: ArrayBuffer | Uint8Array, fallbackTitle = 
       onProgress?.(n, doc.numPages);
     }
 
+    // Chapters are the outline's top-level entries, with any text before the first one kept as an opening
+    // chapter; a PDF without a usable outline is cut into groups of pages instead.
+    const starts = await outlineStarts(doc);
+    const ranges: { title: string; from: number; to: number }[] = [];
+    if (starts.length) {
+      if (starts[0].page > 0) ranges.push({ title: rangeTitle(1, starts[0].page), from: 0, to: starts[0].page });
+      starts.forEach((e, i) => ranges.push({ title: e.title, from: e.page, to: starts[i + 1]?.page ?? pageTexts.length }));
+    } else {
+      for (let from = 0; from < pageTexts.length; from += PAGES_PER_CHAPTER) {
+        const to = Math.min(from + PAGES_PER_CHAPTER, pageTexts.length);
+        ranges.push({ title: rangeTitle(from + 1, to), from, to });
+      }
+    }
     const chapters: Chapter[] = [];
-    for (let from = 0; from < pageTexts.length; from += PAGES_PER_CHAPTER) {
-      const group = pageTexts.slice(from, from + PAGES_PER_CHAPTER);
-      const sentences = splitSentences(group.filter(Boolean).join(" "));
-      if (sentences.length) chapters.push({ title: rangeTitle(from + 1, from + group.length), sentences });
+    for (const { title, from, to } of ranges) {
+      const sentences = splitSentences(pageTexts.slice(from, to).filter(Boolean).join(" "));
+      if (sentences.length) chapters.push({ title, sentences });
     }
     if (!chapters.length) throw new PdfError("scan", "This PDF is a scan, so there is no text to read. Use a PDF with selectable text.");
 

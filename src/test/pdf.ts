@@ -3,7 +3,11 @@
 
 export type FakePage = string | string[]; // one string is one line; an array is lines from the top down
 
+// A bookmark. `page` is 1-based; null leaves out the destination, and a page past the end points at nothing.
+export type FakeOutline = { title: string; page: number | null; children?: FakeOutline[] };
+
 export type FakePdfOptions = {
+  outline?: FakeOutline[];
   title?: string;
   author?: string;
   encrypt?: boolean; // a Standard security handler whose user password isn't empty, so the file can't be opened
@@ -28,6 +32,24 @@ export function textPdf(pages: FakePage[], opts: FakePdfOptions = {}): Uint8Arra
     const contentId = objects.length + 2;
     add(`<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</Font<</F1 3 0 R>>>>/Contents ${contentId} 0 R>>`);
     add(`<</Length ${stream.length}>>\nstream\n${stream}\nendstream`);
+  }
+
+  if (opts.outline?.length) {
+    const rootId = add("");
+    const build = (entries: FakeOutline[], parentId: number): { first: number; last: number; count: number } => {
+      const ids = entries.map(() => add(""));
+      entries.forEach((e, i) => {
+        const dest = e.page === null ? "" : `/Dest[${first + (e.page - 1) * 2} 0 R/Fit]`;
+        const kids = e.children?.length ? build(e.children, ids[i]) : null;
+        const links = `${i > 0 ? `/Prev ${ids[i - 1]} 0 R` : ""}${i < ids.length - 1 ? `/Next ${ids[i + 1]} 0 R` : ""}`;
+        const sub = kids ? `/First ${kids.first} 0 R/Last ${kids.last} 0 R/Count ${kids.count}` : "";
+        objects[ids[i] - 1] = `<</Title(${escape(e.title)})/Parent ${parentId} 0 R${links}${dest}${sub}>>`;
+      });
+      return { first: ids[0], last: ids[ids.length - 1], count: ids.length };
+    };
+    const top = build(opts.outline, rootId);
+    objects[rootId - 1] = `<</Type/Outlines/First ${top.first} 0 R/Last ${top.last} 0 R/Count ${top.count}>>`;
+    objects[0] = `<</Type/Catalog/Pages 2 0 R/Outlines ${rootId} 0 R>>`;
   }
 
   // The user password check fails for these made-up keys, which is what an encrypted PDF looks like to a reader.

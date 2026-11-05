@@ -96,6 +96,86 @@ describe("parsePdf", () => {
     expect(err).toMatchObject({ code: "invalid", message: "That file isn't a valid PDF." });
   });
 
+  describe("with an outline", () => {
+    const six = ["Alpha one.", "Alpha two.", "Beta one.", "Beta two.", "Gamma one.", "Gamma two."];
+    const titles = (book: { chapters: { title: string }[] }) => book.chapters.map((c) => c.title);
+
+    it("makes a chapter of each top-level entry, from its page to the next entry's", async () => {
+      const book = await parsePdf(
+        textPdf(six, {
+          outline: [
+            { title: "Alpha", page: 1 },
+            { title: "Beta", page: 3 },
+            { title: "Gamma", page: 5 },
+          ],
+        })
+      );
+      expect(titles(book)).toEqual(["Alpha", "Beta", "Gamma"]);
+      expect(book.chapters.map((c) => c.sentences)).toEqual([
+        ["Alpha one.", "Alpha two."],
+        ["Beta one.", "Beta two."],
+        ["Gamma one.", "Gamma two."],
+      ]);
+    });
+
+    it("keeps the text before the first entry as an opening chapter", async () => {
+      const book = await parsePdf(textPdf(six, { outline: [{ title: "Beta", page: 3 }] }));
+      expect(titles(book)).toEqual(["Pages 1–2", "Beta"]);
+      expect(book.chapters[0].sentences).toEqual(["Alpha one.", "Alpha two."]);
+      expect(book.chapters[1].sentences).toHaveLength(4);
+    });
+
+    it("uses only the top level, and puts entries in page order", async () => {
+      const book = await parsePdf(
+        textPdf(six, {
+          outline: [
+            { title: "Gamma", page: 5 },
+            { title: "Alpha", page: 1, children: [{ title: "Alpha sub", page: 2 }] },
+          ],
+        })
+      );
+      expect(titles(book)).toEqual(["Alpha", "Gamma"]);
+    });
+
+    it("keeps the first of two entries on the same page", async () => {
+      const book = await parsePdf(
+        textPdf(six, {
+          outline: [
+            { title: "Alpha", page: 1 },
+            { title: "Also alpha", page: 1 },
+            { title: "Beta", page: 3 },
+          ],
+        })
+      );
+      expect(titles(book)).toEqual(["Alpha", "Beta"]);
+    });
+
+    it("skips an entry that points nowhere", async () => {
+      const book = await parsePdf(
+        textPdf(six, {
+          outline: [
+            { title: "Alpha", page: 1 },
+            { title: "No destination", page: null },
+            { title: "Off the end", page: 40 },
+            { title: "Gamma", page: 5 },
+          ],
+        })
+      );
+      expect(titles(book)).toEqual(["Alpha", "Gamma"]);
+      expect(book.chapters[0].sentences).toHaveLength(4);
+    });
+
+    it("falls back to groups of 10 pages when no entry can be placed", async () => {
+      const book = await parsePdf(textPdf(six, { outline: [{ title: "Lost", page: null }] }));
+      expect(titles(book)).toEqual(["Pages 1–6"]);
+    });
+
+    it("leaves out a chapter whose pages have no text", async () => {
+      const book = await parsePdf(textPdf(["Alpha one.", "", "", "Gamma one."], { outline: [{ title: "Alpha", page: 1 }, { title: "Blank", page: 2 }, { title: "Gamma", page: 4 }] }));
+      expect(titles(book)).toEqual(["Alpha", "Gamma"]);
+    });
+  });
+
   it("reports its progress after every page, in order", async () => {
     const seen: [number, number][] = [];
     await parsePdf(textPdf(pages(4)), "x", { onProgress: (done, total) => seen.push([done, total]) });
