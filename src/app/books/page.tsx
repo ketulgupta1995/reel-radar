@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { AddResult, BookEntry, addBook, addUpload, errorText, loadLibrary, localIds, purgeRemoved, removeBook } from "@/lib/books";
@@ -27,6 +27,8 @@ export default function BooksPage() {
   const [searching, setSearching] = useState(false);
   const [adding, setAdding] = useState("");
   const [removing, setRemoving] = useState("");
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const reader = useRef<AbortController | null>(null);
 
   const refresh = useCallback(() => {
     setBooks(loadLibrary());
@@ -40,17 +42,26 @@ export default function BooksPage() {
   }, [refresh]);
   useBooksSync(() => void purgeRemoved().then(refresh));
 
+  // Leaving the page stops a PDF that is still being read.
+  useEffect(() => () => reader.current?.abort(), []);
+
   async function upload(file: File | undefined, expectedId?: string) {
     if (!file) return;
+    const stop = new AbortController();
+    reader.current = stop;
     setBusy(true);
     setMessage("");
     try {
-      setMessage(added(await addUpload(file), expectedId));
+      const result = await addUpload(file, { signal: stop.signal, onProgress: (done, total) => setProgress({ done, total }) });
+      setMessage(added(result, expectedId));
       refresh();
     } catch (err) {
-      setMessage(errorText(err));
+      if (!stop.signal.aborted) setMessage(errorText(err));
     }
-    setBusy(false);
+    if (!stop.signal.aborted) {
+      setProgress(null);
+      setBusy(false);
+    }
   }
 
   async function search(e: FormEvent) {
@@ -122,6 +133,14 @@ export default function BooksPage() {
             }}
           />
         </div>
+        {progress && (
+          <div className="space-y-1">
+            <progress aria-label="Reading the PDF" value={progress.done} max={progress.total} className="h-2 w-full accent-gold" />
+            <p className="text-xs text-white/60">
+              Reading page {progress.done} of {progress.total}…
+            </p>
+          </div>
+        )}
         <form onSubmit={search} className="flex gap-2" role="search">
           <label htmlFor="book-search" className="sr-only">
             Search for a book

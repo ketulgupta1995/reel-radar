@@ -5,7 +5,7 @@
 // same book (uploading it twice adds it once, and later syncs can match it across devices).
 import { BookEntry, BookSource, addEntry, loadLibrary, removeEntry, removedIds } from "./booksDoc";
 import { EpubError, ParsedBook, parseEpub } from "./epub";
-import { PdfError, isPdf, parsePdf } from "./pdf";
+import { PdfError, PdfOptions, isPdf, parsePdf } from "./pdf";
 
 export { loadLibrary, loadPosition, savePosition } from "./booksDoc";
 export type { BookEntry, BookSource } from "./booksDoc";
@@ -41,6 +41,9 @@ const isZip = (bytes: ArrayBuffer) => bytes.byteLength > 1 && new Uint8Array(byt
 
 const hex = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("");
 
+/** Lets the caller watch a PDF being read, and stop it. */
+export type ReadHooks = Pick<PdfOptions, "onProgress" | "signal">;
+
 export type AddResult = {
   entry: BookEntry;
   existing: boolean; // the book and its file were already here
@@ -57,12 +60,14 @@ export async function localIds(): Promise<Set<string>> {
 // another device) gets the file, and keeps its place. A catalogue book whose edition changed since the
 // other device downloaded it is matched by its catalogue id instead. The type is told from the bytes,
 // not the file name. Throws EpubError or PdfError for copy-protected or invalid files, and a plain Error
-// for files that are too big. `fileName` titles a PDF that has no title of its own.
-export async function addBook(bytes: ArrayBuffer, source: BookSource, sourceId?: string, fileName?: string): Promise<AddResult> {
+// for files that are too big. `fileName` titles a PDF that has no title of its own. Aborting `read.signal`
+// stops the reading and adds nothing.
+export async function addBook(bytes: ArrayBuffer, source: BookSource, sourceId?: string, fileName?: string, read?: ReadHooks): Promise<AddResult> {
   if (bytes.byteLength > MAX_EPUB_BYTES) throw new Error("That file is too big (max 50 MB).");
   const pdf = isPdf(bytes);
   if (!pdf && !isZip(bytes)) throw new EpubError("invalid", "That file isn't an EPUB or a PDF.");
-  const parsed = pdf ? await parsePdf(bytes, fileName?.replace(/\.pdf$/i, "").trim() || undefined) : await parseEpub(bytes);
+  const parsed = pdf ? await parsePdf(bytes, fileName?.replace(/\.pdf$/i, "").trim() || undefined, read) : await parseEpub(bytes);
+  read?.signal?.throwIfAborted();
   const hash = hex(await crypto.subtle.digest("SHA-256", bytes));
   const id = hash.slice(0, 16);
 
@@ -79,9 +84,9 @@ export async function addBook(bytes: ArrayBuffer, source: BookSource, sourceId?:
   return { entry, existing: false };
 }
 
-export async function addUpload(file: File): Promise<AddResult> {
+export async function addUpload(file: File, read?: ReadHooks): Promise<AddResult> {
   if (file.size > MAX_EPUB_BYTES) throw new Error("That file is too big (max 50 MB).");
-  return addBook(await file.arrayBuffer(), "upload", undefined, file.name);
+  return addBook(await file.arrayBuffer(), "upload", undefined, file.name, read);
 }
 
 // The parsed text of a book kept on this device, or null when its file isn't here.

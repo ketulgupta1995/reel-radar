@@ -12,6 +12,21 @@ import { bytesResponse, resultsPage, textResponse } from "@/test/standardEbooks"
 import { addUpload, loadLibrary, loadPosition, savePosition } from "@/lib/books";
 import { addEntry, removeEntry } from "@/lib/booksDoc";
 
+// parsePdf is the real one unless a test holds it part way, to look at the page while a PDF is being read.
+const reading = vi.hoisted(() => ({ hold: null as null | ((opts: { onProgress?: (d: number, t: number) => void; signal?: AbortSignal }) => Promise<void>) }));
+vi.mock("@/lib/pdf", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/pdf")>();
+  return {
+    ...real,
+    parsePdf: async (bytes: ArrayBuffer, title?: string, opts: Parameters<typeof real.parsePdf>[2] = {}) => {
+      const hold = reading.hold;
+      reading.hold = null;
+      await hold?.(opts);
+      return real.parsePdf(bytes, title, opts);
+    },
+  };
+});
+
 import BooksPage from "./page";
 
 // Reading an EPUB (build, hash, parse) is slow when the machine is busy, as it is under coverage.
@@ -123,6 +138,43 @@ describe("Books page", () => {
     const link = await screen.findByRole("link", { name: /Bold/ });
     expect(link.textContent).toContain("<b>Bold</b> title");
     expect(document.querySelector("img, b")).toBeNull();
+  });
+
+  it("shows how far a PDF has been read, and finishes", async () => {
+    let release = () => {};
+    reading.hold = async (opts) => {
+      opts.onProgress?.(3, 12);
+      await new Promise<void>((resolve) => (release = resolve));
+    };
+    render(<BooksPage />);
+    upload(pdfFile([["Mr. Rao kept the clock fast."]], { title: "Station Notes" }));
+    const bar = await screen.findByRole("progressbar", { name: "Reading the PDF" });
+    expect(bar.getAttribute("value")).toBe("3");
+    expect(bar.getAttribute("max")).toBe("12");
+    expect(screen.getByText("Reading page 3 of 12…")).toBeTruthy();
+    expect((screen.getByLabelText("Adding…") as HTMLInputElement).disabled).toBe(true);
+
+    release();
+    await screen.findByText("Added “Station Notes”.");
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
+  it("stops reading a PDF when the page is left, and adds nothing", async () => {
+    let release = () => {};
+    let signal: AbortSignal | undefined;
+    reading.hold = async (opts) => {
+      signal = opts.signal;
+      opts.onProgress?.(1, 12);
+      await new Promise<void>((resolve) => (release = resolve));
+    };
+    const view = render(<BooksPage />);
+    upload(pdfFile([["Mr. Rao kept the clock fast."]], { title: "Station Notes" }));
+    await screen.findByRole("progressbar");
+    view.unmount();
+    expect(signal?.aborted).toBe(true);
+    release();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(loadLibrary()).toEqual([]);
   });
 
   it("ignores choosing no file", () => {

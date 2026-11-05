@@ -57,6 +57,15 @@ describe("books on this device", () => {
     expect(loadLibrary()).toEqual([]);
   });
 
+  it("adds nothing when reading is stopped part way", async () => {
+    const stop = new AbortController();
+    const file = pdfFile(Array.from({ length: 5 }, (_, i) => `Page ${i + 1}.`));
+    const err = await addUpload(file, { signal: stop.signal, onProgress: (done) => done === 2 && stop.abort() }).catch((e) => e);
+    expect(err.name).toBe("AbortError");
+    expect(loadLibrary()).toEqual([]);
+    expect([...(await localIds())]).toEqual([]);
+  });
+
   it("reports a book whose file isn't on this device as missing", async () => {
     expect(await openBook("0123456789abcdef")).toBeNull();
   });

@@ -96,6 +96,32 @@ describe("parsePdf", () => {
     expect(err).toMatchObject({ code: "invalid", message: "That file isn't a valid PDF." });
   });
 
+  it("reports its progress after every page, in order", async () => {
+    const seen: [number, number][] = [];
+    await parsePdf(textPdf(pages(4)), "x", { onProgress: (done, total) => seen.push([done, total]) });
+    expect(seen).toEqual([[1, 4], [2, 4], [3, 4], [4, 4]]);
+  });
+
+  it("stops without reading further when it is told to", async () => {
+    const seen: number[] = [];
+    const stop = new AbortController();
+    const err = await parsePdf(textPdf(pages(6)), "x", {
+      signal: stop.signal,
+      onProgress: (done) => {
+        seen.push(done);
+        if (done === 2) stop.abort();
+      },
+    }).catch((e) => e);
+    expect(err.name).toBe("AbortError");
+    expect(seen).toEqual([1, 2]);
+  });
+
+  it("does not start when it is already told to stop", async () => {
+    const stop = new AbortController();
+    stop.abort();
+    await expect(parsePdf(textPdf(pages(2)), "x", { signal: stop.signal })).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("refuses a PDF with more pages than it will read, naming the limit", async () => {
     const err = await parsePdf(textPdf(pages(5)), "x", { maxPages: 3 }).catch((e) => e);
     expect(err).toMatchObject({ code: "limit", message: "That PDF is too long to read here (over 3 pages)." });

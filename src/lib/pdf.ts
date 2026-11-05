@@ -17,7 +17,12 @@ const PAGES_PER_CHAPTER = 10;
 // Bounds on what one PDF may cost, so a huge or hostile file can't exhaust the tab's memory.
 export const MAX_PDF_PAGES = 3000;
 export const MAX_PDF_CHARS = 5_000_000;
-export type PdfLimits = { maxPages?: number; maxChars?: number };
+export type PdfOptions = {
+  maxPages?: number;
+  maxChars?: number;
+  onProgress?: (pagesRead: number, pages: number) => void; // after every page
+  signal?: AbortSignal; // reading stops with an AbortError once this is aborted
+};
 const clean = (s: string | null | undefined) => (s ?? "").replace(/\s+/g, " ").trim();
 
 /** True when the bytes start like a PDF (the header may follow up to 1 KB of junk, as readers allow). */
@@ -41,8 +46,9 @@ async function loadPdfjs() {
 const rangeTitle = (from: number, to: number) => (from === to ? `Page ${from}` : `Pages ${from}–${to}`);
 
 // `fallbackTitle` names a PDF that has no title of its own (the caller knows the file name).
-export async function parsePdf(bytes: ArrayBuffer | Uint8Array, fallbackTitle = "Untitled", limits: PdfLimits = {}): Promise<ParsedBook> {
-  const { maxPages = MAX_PDF_PAGES, maxChars = MAX_PDF_CHARS } = limits;
+export async function parsePdf(bytes: ArrayBuffer | Uint8Array, fallbackTitle = "Untitled", options: PdfOptions = {}): Promise<ParsedBook> {
+  const { maxPages = MAX_PDF_PAGES, maxChars = MAX_PDF_CHARS, onProgress, signal } = options;
+  signal?.throwIfAborted();
   const pdfjs = await loadPdfjs();
   // pdf.js takes over the buffer it is given, so it gets a copy and the caller can still hash and store the file.
   const data = new Uint8Array(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)).slice();
@@ -58,11 +64,13 @@ export async function parsePdf(bytes: ArrayBuffer | Uint8Array, fallbackTitle = 
     const pageTexts: string[] = [];
     let chars = 0;
     for (let n = 1; n <= doc.numPages; n++) {
+      signal?.throwIfAborted();
       const content = await (await doc.getPage(n)).getTextContent();
       const text = clean(content.items.map((item) => ("str" in item ? item.str + (item.hasEOL ? " " : "") : "")).join(""));
       chars += text.length;
       if (chars > maxChars) throw new PdfError("limit", `That PDF has more text than can be read here (over ${maxChars.toLocaleString("en-US")} characters).`);
       pageTexts.push(text);
+      onProgress?.(n, doc.numPages);
     }
 
     const chapters: Chapter[] = [];
