@@ -588,6 +588,7 @@ export default function TodosPage() {
   const plannedMinutes = scheduled.reduce((n, t) => n + (t.duration ?? DEFAULT_DURATION), 0);
   const focusedMinutes = todos.reduce((n, t) => n + (t.spent ?? 0), 0);
   const lanes = useMemo(() => layoutBlocks(scheduled), [scheduled]);
+  const marks = dayMarks(dayLog, todos, selectedDate);
   const selected = scheduled.find((t) => t.id === selectedBlock) ?? null;
 
   const visible = useMemo(() => {
@@ -1138,7 +1139,7 @@ export default function TodosPage() {
               </div>
             )}
 
-            <div ref={scrollRef} className="relative h-[65vh] overflow-y-auto lg:h-auto lg:max-h-[calc(100vh-17rem)] lg:min-h-[24rem]">
+            <div ref={scrollRef} className="relative h-[65vh] overflow-y-auto [color-scheme:dark] lg:h-auto lg:max-h-[calc(100vh-17rem)] lg:min-h-[24rem]">
               <div
                 ref={gridRef}
                 className="relative ml-12 mr-2 sm:ml-14 sm:mr-3"
@@ -1185,10 +1186,11 @@ export default function TodosPage() {
                   </div>
                 )}
 
-                {/* wake, sleep and water markers */}
-                <DayMarkers log={dayLog} todos={todos} date={selectedDate} />
+                {/* the Done column: what was ticked off, plus wake, sleep and water */}
+                <DayMarkers marks={marks} />
 
-                {/* blocks */}
+                {/* blocks, left of the Done column when there is one */}
+                <div data-slot="1" data-testid="plan-column" className={`absolute inset-y-0 left-0 ${marks.length ? MARK_COLUMN_RIGHT : "right-0"}`}>
                 {scheduled.map((t) => {
                   const { lane, lanes: count, shift } = lanes.get(t.id) ?? { lane: 0, lanes: 1, shift: 0 };
                   return (
@@ -1209,6 +1211,7 @@ export default function TodosPage() {
                     />
                   );
                 })}
+                </div>
 
                 {/* quick add */}
                 {quickAdd && (
@@ -1333,9 +1336,15 @@ function FocusBar({
 
 const MARK_PX = 22; // height of one mark pill plus a little air
 
+// The Done column's width, and the same width kept clear of blocks. Written out in full for Tailwind.
+const MARK_COLUMN = "w-[clamp(7.5rem,38%,13rem)]";
+const MARK_COLUMN_RIGHT = "right-[clamp(7.5rem,38%,13rem)]";
+
+type DayMark = { key: string; at: number; text: string; time?: string; tone: string; title?: string };
+
 // Wake, sleep and water marks on the schedule. Drinks within the same quarter hour are added together.
-function DayMarkers({ log, todos, date }: { log: DayLog; todos: Todo[]; date: string }) {
-  const marks: { key: string; at: number; text: string; tone: string; title?: string }[] = [];
+function dayMarks(log: DayLog, todos: Todo[], date: string): DayMark[] {
+  const marks: DayMark[] = [];
   const clock = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3));
   if (log.wake) marks.push({ key: "wake", at: clock(log.wake), text: `🌅 Woke ${fmtTime(clock(log.wake))}`, tone: "amber" });
   if (log.sleep) marks.push({ key: "sleep", at: clock(log.sleep), text: `😴 Sleep ${fmtTime(clock(log.sleep))}`, tone: "violet" });
@@ -1346,30 +1355,41 @@ function DayMarkers({ log, todos, date }: { log: DayLog; todos: Todo[]; date: st
   const doneToday = (ms?: number) => ms !== undefined && toDateString(new Date(ms)) === date;
   const minuteOf = (ms: number) => new Date(ms).getHours() * 60 + new Date(ms).getMinutes();
   for (const t of todos) {
-    if (t.completed && doneToday(t.doneAt))
-      marks.push({ key: `done-${t.id}`, at: minuteOf(t.doneAt!), text: `✓ ${t.text}`, tone: "emerald", title: `${t.text} · done ${fmtTime(minuteOf(t.doneAt!))}` });
+    if (t.completed && doneToday(t.doneAt)) {
+      const time = fmtTime(minuteOf(t.doneAt!));
+      marks.push({ key: `done-${t.id}`, at: minuteOf(t.doneAt!), text: `✓ ${t.text}`, time, tone: "emerald", title: `${t.text} · done ${time}` });
+    }
     for (const st of t.subtasks ?? [])
-      if (st.done && doneToday(st.doneAt))
-        marks.push({ key: `done-${t.id}-${st.id}`, at: minuteOf(st.doneAt!), text: `✓ ${st.text}`, tone: "emerald", title: `${st.text} (${t.text}) · done ${fmtTime(minuteOf(st.doneAt!))}` });
+      if (st.done && doneToday(st.doneAt)) {
+        const time = fmtTime(minuteOf(st.doneAt!));
+        marks.push({ key: `done-${t.id}-${st.id}`, at: minuteOf(st.doneAt!), text: `✓ ${st.text}`, time, tone: "emerald", title: `${st.text} (${t.text}) · done ${time}` });
+      }
   }
+  return marks;
+}
+
+function DayMarkers({ marks }: { marks: DayMark[] }) {
   const tones: Record<string, string> = {
     emerald: "border-emerald-300/60 bg-emerald-400/20 text-emerald-100",
     amber: "border-amber-300/60 bg-amber-400/20 text-amber-100",
     violet: "border-violet-300/60 bg-violet-400/20 text-violet-100",
     sky: "border-sky-300/60 bg-sky-400/20 text-sky-100",
   };
-  // Pills on the same side never share space: one that would land on the one above it is drawn just below it.
+  // Pills never share space: one that would land on the one above it is drawn just below it. It can
+  // end up below its real time, which is why each done pill shows its own.
   const shifts = new Map<string, number>();
-  for (const left of [true, false]) {
-    let bottom = -Infinity;
-    for (const m of marks.filter((m) => (m.tone === "emerald") === left).sort((a, b) => a.at - b.at)) {
-      const y = Math.max((m.at / 60) * HOUR_PX, bottom + MARK_PX);
-      shifts.set(m.key, y - (m.at / 60) * HOUR_PX);
-      bottom = y;
-    }
+  let bottom = -Infinity;
+  for (const m of [...marks].sort((a, b) => a.at - b.at)) {
+    const y = Math.max((m.at / 60) * HOUR_PX, bottom + MARK_PX);
+    shifts.set(m.key, y - (m.at / 60) * HOUR_PX);
+    bottom = y;
   }
+  if (!marks.length) return null;
   return (
     <>
+      <div className={`pointer-events-none absolute inset-y-0 right-0 border-l border-white/10 ${MARK_COLUMN}`}>
+        <div className="sticky top-0 z-[16] bg-panel px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-white/45">Done</div>
+      </div>
       {marks.map((m) => (
         <div
           key={m.key}
@@ -1383,11 +1403,12 @@ function DayMarkers({ log, todos, date }: { log: DayLog; todos: Todo[]; date: st
           <span
             title={m.title}
             style={{ top: shifts.get(m.key) }}
-            className={`absolute -translate-y-1/2 truncate rounded-full border px-2 py-0.5 text-[10px] font-medium backdrop-blur ${
-              m.tone === "emerald" ? "left-1 max-w-[45%]" : "right-0 whitespace-nowrap"
+            className={`absolute right-0 flex -translate-y-1/2 items-center justify-between gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium backdrop-blur ${MARK_COLUMN} ${
+              m.tone === "emerald" ? "pointer-events-auto" : ""
             } ${tones[m.tone]}`}
           >
-            {m.text}
+            <span className="min-w-0 truncate">{m.text}</span>
+            {m.time && <span className="shrink-0 opacity-70">{m.time}</span>}
           </span>
         </div>
       ))}

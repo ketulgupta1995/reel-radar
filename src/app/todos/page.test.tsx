@@ -1482,13 +1482,13 @@ describe("schedule done marks", () => {
       const marks = () => screen.queryAllByTestId("day-mark").map((m) => m.textContent);
       expect(marks()).toEqual([]);
       fireEvent.click(inItem("Report").getByLabelText('Mark "Draft" as done'));
-      expect(marks()).toEqual(["✓ Draft"]);
+      expect(marks()).toEqual(["✓ Draft3:05 PM"]);
       fireEvent.click(inItem("Milk").getByLabelText("Mark as complete"));
-      expect(marks()).toEqual(["✓ Draft", "✓ Milk"]);
+      expect(marks()).toEqual(["✓ Draft3:05 PM", "✓ Milk3:05 PM"]);
       expect(screen.getByTitle("Milk · done 3:05 PM")).toBeTruthy();
       expect(screen.getByTitle("Draft (Report) · done 3:05 PM")).toBeTruthy();
       fireEvent.click(inItem("Milk").getByLabelText("Mark as incomplete"));
-      expect(marks()).toEqual(["✓ Draft"]);
+      expect(marks()).toEqual(["✓ Draft3:05 PM"]);
       fireEvent.click(inItem("Report").getByLabelText('Mark "Draft" as not done'));
       expect(marks()).toEqual([]);
     } finally {
@@ -1496,15 +1496,55 @@ describe("schedule done marks", () => {
     }
   });
 
-  it("stacks marks ticked at the same time instead of drawing them on top of each other", () => {
+  it("names every item ticked in a burst, stacked in order with its own time", () => {
+    const at = (h: number, m: number) => new Date(`${T}T00:00:00`).setHours(h, m);
+    saveTodos(
+      [
+        todo("Brush", { completed: true, doneAt: at(13, 0) }),
+        todo("Bath", { completed: true, doneAt: at(13, 0) }),
+        todo("Lunch", { completed: true, doneAt: at(13, 10) }),
+        todo("Walk", { completed: true, doneAt: at(15, 0) }),
+      ],
+      T
+    );
+    render(<TodosPage />);
+    const marks = screen.getAllByTestId("day-mark");
+    expect(marks.map((m) => m.textContent)).toEqual(["✓ Brush1 PM", "✓ Bath1 PM", "✓ Lunch1:10 PM", "✓ Walk3 PM"]);
+    const tops = marks.map((m) => parseFloat((m.querySelector("span") as HTMLElement).style.top));
+    expect(tops[0]).toBe(0);
+    expect(tops[1]).toBe(22);
+    expect(tops[2]).toBeCloseTo(44 - (10 / 60) * 64);
+    expect(tops[3]).toBe(0);
+  });
+
+  it("keeps blocks clear of the Done column, which only shows when something is in it", () => {
+    saveTodos([todo("Review", { start: 15 * 60, duration: 60 })], T);
+    const { unmount } = render(<TodosPage />);
+    const plan = () => screen.getByTestId("plan-column");
+    expect(within(plan()).getByText("Review")).toBeTruthy();
+    expect(plan().className).toContain("right-0");
+    expect(screen.queryByText("Done", { selector: "div" })).toBeNull();
+    unmount();
+    saveTodos([todo("Review", { start: 15 * 60, duration: 60, completed: true, doneAt: new Date(`${T}T00:00:00`).setHours(15, 30) })], T);
+    render(<TodosPage />);
+    expect(plan().className).toContain("right-[clamp(7.5rem,38%,13rem)]");
+    expect(screen.getByText("Done", { selector: "div" })).toBeTruthy();
+    expect(screen.getByTestId("day-mark").querySelector("span")!.className).toContain("w-[clamp(7.5rem,38%,13rem)]");
+  });
+
+  it("draws a done mark just below a water mark it would land on", () => {
     vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
     vi.setSystemTime(new Date(`${T}T00:00:00`).setHours(15, 5));
     try {
-      saveTodos([todo("Brush"), todo("Bath"), todo("Lunch")], T);
+      saveTodos([todo("Milk")], T);
       render(<TodosPage />);
-      for (const name of ["Brush", "Bath", "Lunch"]) fireEvent.click(inItem(name).getByLabelText("Mark as complete"));
-      const tops = screen.getAllByTestId("day-mark").map((m) => Number((m.querySelector("span") as HTMLElement).style.top.replace("px", "")));
-      expect(tops).toEqual([0, 22, 44]);
+      openDayLog();
+      fireEvent.click(screen.getByLabelText("More water"));
+      fireEvent.click(inItem("Milk").getByLabelText("Mark as complete"));
+      const spans = screen.getAllByTestId("day-mark").map((m) => m.querySelector("span") as HTMLElement);
+      expect(spans.map((s) => s.textContent)).toEqual(["💧 250 ml · 3 PM", "✓ Milk3:05 PM"]);
+      expect(parseFloat(spans[0].style.top)).toBe(0);
+      expect(parseFloat(spans[1].style.top)).toBeCloseTo(22 - (5 / 60) * 64);
     } finally {
       vi.useRealTimers();
     }

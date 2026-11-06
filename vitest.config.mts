@@ -9,6 +9,9 @@ export default defineConfig({
     restoreMocks: true,
     unstubGlobals: true,
     unstubEnvs: true,
+    // The page tests are heavy: with more workers on this machine they time out at the 5 s default.
+    maxWorkers: 2,
+    testTimeout: 30000,
     // `npm run coverage`: text summary in the terminal, HTML report in coverage/.
     coverage: {
       provider: "v8",
