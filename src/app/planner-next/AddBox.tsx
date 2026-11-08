@@ -2,12 +2,12 @@
 
 import { useEffect, useMemo, useState, type RefObject } from "react";
 import { parseQuickAdd } from "@/lib/quickAdd";
-import { addTodo, normalizeRepeat, repeatsOn, syncPlanner, weekday, type RepeatRule } from "@/lib/todos";
+import { addTodo, DEFAULT_DURATION, normalizeRepeat, repeatsOn, syncPlanner, weekday, type Priority, type RepeatRule } from "@/lib/todos";
 import { addItem, loadLists, parseQuickItem, useListsSync, type RememberList } from "@/lib/lists";
-import { useGoals } from "@/lib/plannerSettings";
+import { useGoals, useTags, type TagDef } from "@/lib/plannerSettings";
 import { quickAddChips } from "../todos/AddTaskForm";
-import { repeatLabel } from "../todos/RepeatPicker";
-import { DAY_NAMES, formatShortDate, getRelativeDateLabel } from "../todos/planner";
+import { RepeatPicker, repeatLabel } from "../todos/RepeatPicker";
+import { DAY_NAMES, DURATIONS, fmtDuration, formatShortDate, fromInputTime, getRelativeDateLabel } from "../todos/planner";
 
 // Where a new entry goes: the day shown (on its own, or as a step towards a goal), or a list.
 export type Destination = { kind: "day" } | { kind: "goal"; id: string } | { kind: "list"; id: string };
@@ -34,6 +34,9 @@ export function AddBox({
   onMessage: (text: string) => void;
 }) {
   const [text, setText] = useState("");
+  const [more, setMore] = useState(false);
+  const [opts, setOpts] = useState<Options>(NO_OPTIONS);
+  const tags = useTags();
   const goals = useGoals().filter((g) => !g.doneAt);
   const [lists, setLists] = useState<RememberList[]>([]);
   useEffect(() => setLists(loadLists()), []);
@@ -55,13 +58,17 @@ export function AddBox({
       onMessage(`Added to ${list?.name ?? "the list"}`);
       return;
     }
+    // Shorthand in the text wins over the options, as in the current add box.
     const q = parseQuickAdd(text);
     const to = q.date ?? date;
-    const repeat: RepeatRule | false = q.repeat ?? (q.daily ? {} : false);
-    const schedule = q.start !== undefined ? { start: q.start, duration: q.duration } : undefined;
+    const repeat: RepeatRule | false = q.repeat ?? (q.daily ? {} : opts.repeat ?? false);
+    const start = q.start ?? fromInputTime(opts.time);
+    const schedule = start !== null ? { start, duration: q.duration ?? opts.duration } : undefined;
+    const { priority, tag, due, note } = opts;
+    setOpts((o) => ({ ...NO_OPTIONS, priority: o.priority, tag: o.tag, duration: o.duration })); // priority, tag and length stay
     // Another day's month may not be on this device yet: pull it, so the task lands in its latest copy.
     if (to !== date) await syncPlanner([to]);
-    addTodo(q.text || text.trim(), to, q.priority, schedule, repeat, undefined, q.tag, { due: q.due, goalId: destination.kind === "goal" ? destination.id : undefined });
+    addTodo(q.text || text.trim(), to, q.priority ?? priority, schedule, repeat, note, q.tag ?? tag, { due: q.due ?? (due || undefined), goalId: destination.kind === "goal" ? destination.id : undefined });
     onAdded();
     const rule = repeat ? normalizeRepeat(repeat) : null;
     if (rule?.monthDay && !repeatsOn({ ...rule, id: "", text: "", startDate: to }, to)) onMessage(`${repeatLabel(rule)}. Nothing to do until then.`);
@@ -116,6 +123,11 @@ export function AddBox({
             )}
           </select>
         </label>
+        {!toList && (
+          <button type="button" onClick={() => setMore((m) => !m)} aria-expanded={more} className="rounded-lg px-1.5 py-1 font-bfm text-bf-ink underline">
+            More options
+          </button>
+        )}
         <span data-testid="quick-add-preview" className="flex flex-wrap items-center gap-1.5">
           {chips.map((c) => (
             <span key={c} className="rounded-lg bg-gold px-2 py-0.5 font-bfm font-bold text-bf-ontag">
@@ -132,6 +144,53 @@ export function AddBox({
           {!text.trim() && !toList && <span className="font-bfm text-bf-muted">6pm · 45m · #work · !high · fri · by fri · daily</span>}
         </span>
       </div>
+      {more && !toList && <MoreOptions date={date} opts={opts} onChange={setOpts} tags={tags} />}
     </form>
+  );
+}
+
+type Options = { priority?: Priority; tag?: string; time: string; duration: number; repeat?: RepeatRule; due: string; note: string };
+const NO_OPTIONS: Options = { time: "", duration: DEFAULT_DURATION, due: "", note: "" };
+const OPT = "rounded-lg bg-bf-s2 px-2 py-1.5 text-xs font-bold text-bf-ink focus:outline-none focus:ring-2 focus:ring-bf-ink";
+
+// The add box's options, for what the shorthand doesn't cover or for anyone who'd rather pick.
+function MoreOptions({ date, opts, onChange, tags }: { date: string; opts: Options; onChange: (o: Options) => void; tags: TagDef[] }) {
+  const set = (o: Partial<Options>) => onChange({ ...opts, ...o });
+  return (
+    <div className="flex flex-col gap-2 rounded-[14px] bg-bf-s1 p-2.5">
+      <div className="flex flex-wrap gap-1.5">
+        <select value={opts.priority ?? ""} onChange={(e) => set({ priority: (e.target.value || undefined) as Priority | undefined })} aria-label="Priority" className={OPT}>
+          <option value="">No priority</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+        <select value={opts.tag ?? ""} onChange={(e) => set({ tag: e.target.value || undefined })} aria-label="Tag" className={OPT}>
+          <option value="">No tag</option>
+          {tags.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.label}
+            </option>
+          ))}
+        </select>
+        <input type="time" value={opts.time} onChange={(e) => set({ time: e.target.value })} aria-label="Start time" className={OPT} />
+        <select value={opts.duration} onChange={(e) => set({ duration: Number(e.target.value) })} aria-label="Length" className={OPT}>
+          {DURATIONS.map((d) => (
+            <option key={d} value={d}>
+              {fmtDuration(d)}
+            </option>
+          ))}
+        </select>
+        <label className="flex items-center gap-1 font-bfm text-[11px] text-bf-muted">
+          due
+          <input type="date" value={opts.due} disabled={!!opts.repeat} onChange={(e) => set({ due: e.target.value })} aria-label="Deadline" className={`${OPT} disabled:opacity-40`} />
+        </label>
+        <button type="button" aria-pressed={!!opts.repeat} onClick={() => set({ repeat: opts.repeat ? undefined : {}, due: "" })} className={opts.repeat ? `${OPT} bg-bf-ink text-bf-bg` : OPT}>
+          ↻ Repeat
+        </button>
+      </div>
+      {opts.repeat && <RepeatPicker tone="bf" value={opts.repeat} date={date} onChange={(repeat) => set({ repeat })} />}
+      <textarea value={opts.note} onChange={(e) => set({ note: e.target.value })} placeholder="A note (optional)" aria-label="Note" rows={2} className={`${OPT} resize-y font-normal`} />
+    </div>
   );
 }

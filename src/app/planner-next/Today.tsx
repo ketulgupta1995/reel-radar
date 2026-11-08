@@ -1,15 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { loadTodos, startFocus, stopFocus, toggleTodo, type Todo } from "@/lib/todos";
-import { dayProgress } from "@/lib/plannerToday";
+import { deleteTodo, loadTodos, moveTodoToDate, reorderTodo, restoreTodo, shiftDate, sortTodos, startFocus, stopFocus, toggleTodo, type Todo } from "@/lib/todos";
+import { dayProgress, todayCard } from "@/lib/plannerToday";
 import type { Goal } from "@/lib/plannerSettings";
 import { fmtDuration } from "../todos/planner";
 import { AddBox, type Destination } from "./AddBox";
 import { Attention } from "./Attention";
 import { CurrentCard } from "./CurrentCard";
 import { DayLogMore } from "./DayLogMore";
+import { FocusScreen } from "./FocusScreen";
 import { LogTiles } from "./LogTiles";
+import { TaskDetails } from "./TaskDetails";
 import { Tasks } from "./Tasks";
 import type { Day } from "./useDay";
 
@@ -34,26 +36,36 @@ function Progress({ todos }: { todos: Todo[] }) {
   );
 }
 
+// The task F and Space act on: the block under way, else the one being focused on, else what's next.
+function currentTask(todos: Todo[], now: number, focusId?: string): Todo | null {
+  const card = todayCard(todos, now);
+  if (card?.kind === "block") return card.todo;
+  const focused = focusId && todos.find((t) => t.id === focusId && !t.completed);
+  if (focused) return focused;
+  return card?.kind === "free" ? card.next ?? card.anytime[0] ?? null : null;
+}
+
 // The day shown: progress, what's on now, what needs a decision, the day log, the add box and the tasks.
 export function Today({ day }: { day: Day }) {
-  const { date, today, todos, log, setLog, now, focus, setFocus, refresh, flash } = day;
+  const { date, today, todos, log, setLog, now, focus, setFocus, refresh, flash, removed } = day;
   const [logOpen, setLogOpen] = useState(false);
   const [destination, setDestination] = useState<Destination>({ kind: "day" });
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [focusScreen, setFocusScreen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
+  const keys = useRef<(e: KeyboardEvent) => void>(() => {});
 
-  // N or / jumps to the add box.
+  // N or / jumps to the add box; on today, F focuses on the current task, Space finishes it, L opens the log.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey || (e.target instanceof Element && e.target.closest("input, textarea, select, [contenteditable], [role=dialog]"))) return;
-      if (e.key === "n" || e.key === "/") {
-        e.preventDefault();
-        inputRef.current?.focus();
-      }
+      if (e.metaKey || e.ctrlKey || e.altKey || (e.target instanceof Element && e.target.closest("input, textarea, select, button, a, [contenteditable], [role=dialog]"))) return;
+      keys.current(e);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  useEffect(() => setOpenId(null), [date]);
 
   if (!date || !today) return null;
   const isToday = date === today;
@@ -64,6 +76,7 @@ export function Today({ day }: { day: Day }) {
   };
   const beginFocus = (t: Todo) => {
     setFocus(startFocus(t, date));
+    setFocusScreen(true);
     refresh(); // a session stopped by this one has just been recorded
   };
   const endFocus = (markDone: boolean) => {
@@ -71,11 +84,12 @@ export function Today({ day }: { day: Day }) {
     const minutes = Math.round((Date.now() - focus.startedAt) / 60000);
     stopFocus();
     setFocus(null);
+    setFocusScreen(false);
     if (markDone && loadTodos(focus.date).some((t) => t.id === focus.todoId && !t.completed)) toggleTodo(focus.todoId, focus.date);
     refresh();
     flash(minutes > 0 ? `Recorded ${fmtDuration(minutes)} on “${focus.text}”` : "Under a minute, so nothing was recorded");
   };
-  const wrapUp = () => {
+  const openLog = () => {
     setLogOpen(true);
     setTimeout(() => logRef.current?.scrollIntoView?.({ block: "center", behavior: "smooth" }), 0);
   };
@@ -83,9 +97,63 @@ export function Today({ day }: { day: Day }) {
     setDestination({ kind: "goal", id: goal.id });
     inputRef.current?.focus();
   };
+  const swipeDone = (t: Todo) => {
+    toggleTodo(t.id, date);
+    refresh();
+    flash(`Done: ${t.text}`, () => {
+      toggleTodo(t.id, date);
+      day.setMessage(null);
+      refresh();
+    });
+  };
+  const toTomorrow = (t: Todo) => {
+    const tomorrow = shiftDate(date, 1);
+    const schedule = t.start !== undefined ? { start: t.start, duration: t.duration } : undefined;
+    if (moveTodoToDate(t.id, date, tomorrow, schedule) === null) {
+      flash("Repeating tasks stay on their own day");
+      return;
+    }
+    refresh();
+    // Undo puts the task back as it was, so the move doesn't count as postponing it.
+    flash(`Moved “${t.text}” to tomorrow`, () => {
+      deleteTodo(t.id, tomorrow);
+      restoreTodo(t, date);
+      day.setMessage(null);
+      refresh();
+    });
+  };
+  const moveBy = (t: Todo, delta: -1 | 1) => {
+    const ids = sortTodos(todos).filter((x) => !x.completed).map((x) => x.id);
+    const at = ids.indexOf(t.id);
+    if (at + delta < 0 || at + delta >= ids.length) return;
+    reorderTodo(t.id, delta < 0 ? ids[at - 1] : ids[at + 2] ?? null, date);
+    refresh();
+  };
 
+  keys.current = (e) => {
+    if (e.key === "n" || e.key === "/") {
+      e.preventDefault();
+      inputRef.current?.focus();
+      return;
+    }
+    if (!isToday) return;
+    const current = currentTask(todos, now, focus?.todoId);
+    if (e.key === "f" && current) {
+      if (focus?.todoId === current.id) setFocusScreen(true);
+      else beginFocus(current);
+    } else if (e.key === " " && current) {
+      e.preventDefault();
+      if (focus?.todoId === current.id) endFocus(true);
+      else {
+        tick(current);
+        flash(`Done: ${current.text}`);
+      }
+    } else if (e.key === "l") openLog();
+  };
+
+  const opened = openId ? todos.find((t) => t.id === openId) : undefined;
   const card = isToday && (
-    <CurrentCard todos={todos} now={now} focus={focus} onFinish={tick} onFocus={beginFocus} onStopFocus={endFocus} onWrapUp={wrapUp} />
+    <CurrentCard todos={todos} now={now} focus={focus} onFinish={tick} onFocus={beginFocus} onStopFocus={endFocus} onOpenFocus={() => setFocusScreen(true)} onWrapUp={openLog} />
   );
   const logPanel = (
     <div ref={logRef}>
@@ -106,9 +174,20 @@ export function Today({ day }: { day: Day }) {
         <div className="order-3 lg:col-start-2 lg:row-start-1">{logPanel}</div>
         <div className="order-4 flex flex-col gap-2.5 lg:col-start-1 lg:row-start-2">
           <AddBox date={date} destination={destination} onDestination={setDestination} inputRef={inputRef} onAdded={refresh} onMessage={flash} />
-          <Tasks todos={todos} date={date} today={today} onTick={tick} onFocus={beginFocus} />
+          <Tasks
+            todos={todos}
+            date={date}
+            today={today}
+            onReorder={(id, before) => {
+              reorderTodo(id, before, date);
+              refresh();
+            }}
+            actions={{ onTick: tick, onFocus: beginFocus, onOpen: (t) => setOpenId(t.id), onSwipeDone: swipeDone, onSwipeTomorrow: toTomorrow, onMoveBy: moveBy }}
+          />
         </div>
       </div>
+      {opened && <TaskDetails todo={opened} date={date} onClose={() => setOpenId(null)} onChanged={refresh} onFocus={beginFocus} onMessage={flash} onRemoved={removed} />}
+      {focus && focusScreen && <FocusScreen session={focus} onClose={() => setFocusScreen(false)} onStop={endFocus} onChanged={refresh} />}
     </div>
   );
 }

@@ -471,3 +471,383 @@ describe("messages", () => {
     expect(screen.queryByText("Moved 1 task to today")).toBeNull();
   });
 });
+
+describe("task details", () => {
+  const details = () => within(screen.getByRole("dialog", { name: "Task details" }));
+  const openTask = async (text: string) => {
+    fireEvent.click(await tasks().findByLabelText(`Open “${text}”`));
+    return details();
+  };
+  const saved = (id = "Report") => loadTodos(T).find((t) => t.id === id)!;
+
+  it("edits the title and note, and an emptied title deletes the task with undo", async () => {
+    saveTodos([todo("Report", { note: "Draft" })], T);
+    open();
+    const d = await openTask("Report");
+    expect((d.getByLabelText("Note") as HTMLTextAreaElement).value).toBe("Draft");
+    fireEvent.change(d.getByLabelText("Title"), { target: { value: "Quarterly report" } });
+    fireEvent.keyDown(d.getByLabelText("Title"), { key: "Enter" });
+    fireEvent.blur(d.getByLabelText("Title"));
+    expect(saved().text).toBe("Quarterly report");
+    fireEvent.change(d.getByLabelText("Note"), { target: { value: "Numbers first" } });
+    fireEvent.blur(d.getByLabelText("Note"));
+    expect(saved().note).toBe("Numbers first");
+    fireEvent.change(d.getByLabelText("Title"), { target: { value: "  " } });
+    fireEvent.blur(d.getByLabelText("Title"));
+    expect(loadTodos(T)).toEqual([]);
+    expect(screen.queryByRole("dialog", { name: "Task details" })).toBeNull();
+    expect(await flashed("Deleted “Quarterly report”")).toBeTruthy();
+    fireEvent.click(screen.getByText("Undo"));
+    await waitFor(() => expect(loadTodos(T).map((t) => t.text)).toEqual(["Quarterly report"]));
+  });
+
+  it("keeps a checklist, sets the time, length, priority and tag", async () => {
+    saveTodos([todo("Report")], T);
+    open();
+    const d = await openTask("Report");
+    fireEvent.change(d.getByLabelText("New checklist item"), { target: { value: "Pull numbers" } });
+    fireEvent.submit(d.getByLabelText("New checklist item"));
+    fireEvent.submit(d.getByLabelText("New checklist item")); // empty: nothing added
+    expect(saved().subtasks).toMatchObject([{ text: "Pull numbers", done: false }]);
+    fireEvent.click(d.getByLabelText("Tick “Pull numbers”"));
+    expect(saved().subtasks![0].done).toBe(true);
+    fireEvent.click(d.getByLabelText("Untick “Pull numbers”"));
+    fireEvent.click(d.getByLabelText("Remove “Pull numbers”"));
+    expect(saved().subtasks ?? []).toEqual([]);
+
+    expect((d.getByLabelText("Length") as HTMLSelectElement).disabled).toBe(true);
+    fireEvent.click(d.getByRole("button", { name: "Starts: not set" }));
+    fireEvent.click(screen.getByLabelText("2 o'clock"));
+    fireEvent.click(screen.getByLabelText("30 minutes"));
+    fireEvent.click(within(screen.getAllByRole("dialog")[1]).getByText("PM"));
+    fireEvent.click(within(screen.getAllByRole("dialog")[1]).getByText("Done"));
+    expect(saved()).toMatchObject({ start: 870, duration: 60 });
+    fireEvent.change(d.getByLabelText("Length"), { target: { value: "90" } });
+    expect(saved().duration).toBe(90);
+    fireEvent.click(d.getByRole("button", { name: /^Starts:/ }));
+    fireEvent.click(within(screen.getAllByRole("dialog")[1]).getByText("Clear"));
+    expect(saved().start).toBeUndefined();
+
+    fireEvent.click(within(d.getByRole("group", { name: "Priority" })).getByText("High"));
+    expect(saved().priority).toBe("high");
+    expect(within(d.getByRole("group", { name: "Priority" })).getByText("High").getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(within(d.getByRole("group", { name: "Priority" })).getByText("None"));
+    expect(saved().priority).toBeUndefined();
+    fireEvent.click(within(d.getByRole("group", { name: "Tag" })).getByText("Work"));
+    expect(saved().tag).toBe("work");
+    fireEvent.click(within(d.getByRole("group", { name: "Tag" })).getByText("None"));
+    expect(saved().tag).toBeUndefined();
+  });
+
+  it("shows a removed tag the task still has", async () => {
+    localStorage.setItem("reel-radar-planner-settings", JSON.stringify({ tags: [{ value: { id: "home", label: "Home", color: "#d95926", removed: true }, updatedAt: 1 }], templates: [], goals: [] }));
+    saveTodos([todo("Report", { tag: "home" })], T);
+    open();
+    const d = await openTask("Report");
+    expect(within(d.getByRole("group", { name: "Tag" })).getByText("Home").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("suggests a realistic length from how long blocks with that tag took", async () => {
+    const past = [1, 2, 3].map((n) => todo(`Old ${n}`, { start: 600, duration: 60, tag: "work", completed: true, spent: 90 }));
+    saveTodos(past, "2026-11-02");
+    saveTodos([todo("Report", { start: 900, duration: 60, tag: "work" })], T);
+    open();
+    const d = await openTask("Report");
+    expect(d.getByText(/usually run over: about 1h 30m/)).toBeTruthy();
+    fireEvent.click(d.getByText("Use 1h 30m"));
+    expect(saved().duration).toBe(90);
+  });
+
+  it("makes a task repeat, changes how, and stops it", async () => {
+    saveTodos([todo("Stretch")], T);
+    open();
+    let d = await openTask("Stretch");
+    fireEvent.click(d.getByText("Make it repeat"));
+    expect(await flashed("Repeats every day from now on")).toBeTruthy();
+    expect(saved("Stretch").dailyId).toBeTruthy();
+    d = details();
+    expect(d.queryByLabelText("Deadline")).toBeNull(); // a repeat has no deadline
+    fireEvent.change(d.getByLabelText("How it repeats"), { target: { value: "timesPerWeek" } });
+    expect(await screen.findByText("0 of 3 this week")).toBeTruthy();
+    fireEvent.click(details().getByText("Stop repeating"));
+    expect(await flashed("No longer repeats")).toBeTruthy();
+    expect(saved("Stretch").dailyId).toBeUndefined();
+  });
+
+  it("sets and clears a deadline and a goal, and warns when planned after the deadline", async () => {
+    addGoal("Q4 launch");
+    saveTodos([todo("Report")], T);
+    open();
+    const d = await openTask("Report");
+    fireEvent.change(d.getByLabelText("Deadline"), { target: { value: "2026-11-06" } });
+    expect(saved().due).toBe("2026-11-06");
+    expect(d.getByText("Planned after its deadline.")).toBeTruthy();
+    fireEvent.click(d.getByText("Clear"));
+    expect(saved().due).toBeUndefined();
+    fireEvent.change(d.getByLabelText("Goal"), { target: { value: loadGoals()[0].id } });
+    expect(saved().goalId).toBe(loadGoals()[0].id);
+    fireEvent.change(d.getByLabelText("Goal"), { target: { value: "" } });
+    expect(saved().goalId).toBeUndefined();
+  });
+
+  it("moves or copies a task to another day, and says when a move passes its deadline", async () => {
+    saveTodos([todo("Report", { due: "2026-11-09", start: 600 }), todo("Daily", { dailyId: "d1" })], T);
+    open();
+    let d = await openTask("Report");
+    expect((d.getByLabelText("Day to move or copy to") as HTMLInputElement).value).toBe("2026-11-09");
+    fireEvent.click(d.getByText("Copy"));
+    expect(await flashed("Copied to Tomorrow")).toBeTruthy();
+    expect(loadTodos("2026-11-09")[0]).toMatchObject({ text: "Report", start: 600 });
+    fireEvent.change(d.getByLabelText("Day to move or copy to"), { target: { value: "2026-11-12" } });
+    fireEvent.click(d.getByText("Move"));
+    expect(await flashed(/Moved to .*Nov 12.*, past its Nov 9 deadline/)).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Task details" })).toBeNull();
+    expect(loadTodos("2026-11-12")[0]).toMatchObject({ text: "Report", start: 600 });
+    d = await openTask("Daily");
+    fireEvent.click(d.getByText("Move"));
+    expect(await flashed("Repeating tasks stay on their own day. Copy it instead.")).toBeTruthy();
+  });
+
+  it("starts focus, deletes with undo, and closes with ✕, Escape or a tap outside", async () => {
+    saveTodos([todo("Report"), todo("Other")], T);
+    open();
+    let d = await openTask("Report");
+    fireEvent.click(d.getByLabelText("Close"));
+    expect(screen.queryByRole("dialog", { name: "Task details" })).toBeNull();
+    await openTask("Report");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Task details" })).toBeNull();
+    await openTask("Report");
+    fireEvent.click(screen.getByLabelText("Close details"));
+    expect(screen.queryByRole("dialog", { name: "Task details" })).toBeNull();
+    d = await openTask("Other");
+    fireEvent.click(d.getByText("Delete"));
+    expect(await flashed("Deleted “Other”")).toBeTruthy();
+    expect(loadTodos(T).map((t) => t.id)).toEqual(["Report"]);
+    d = await openTask("Report");
+    fireEvent.click(d.getByText("▶ Start focus"));
+    expect(getFocusSession()).toMatchObject({ todoId: "Report" });
+    expect(screen.getByRole("dialog", { name: "Focus" })).toBeTruthy();
+  });
+
+  it("asks to drop or break down a task postponed three times", async () => {
+    saveTodos([todo("Bike brakes", { postponed: 3 })], T);
+    open();
+    const d = await openTask("Bike brakes");
+    expect(d.getByText(/Postponed 3 times/)).toBeTruthy();
+    fireEvent.click(d.getByText("Drop it"));
+    expect(loadTodos(T)).toEqual([]);
+  });
+});
+
+describe("full-screen focus", () => {
+  it("fills the screen, keeps it on, ticks the checklist, and minimises into the card", async () => {
+    const request = vi.fn(async () => ({ release: vi.fn(async () => {}) }));
+    Object.defineProperty(navigator, "wakeLock", { value: { request }, configurable: true });
+    saveTodos([todo("Report", { start: 570, duration: 90, tag: "work", subtasks: [{ id: "s1", text: "Pull numbers", done: false }] })], T);
+    open();
+    fireEvent.click(within(await screen.findByRole("region", { name: "Under way" })).getByText("▶ Focus"));
+    const screenFocus = within(screen.getByRole("dialog", { name: "Focus" }));
+    expect(screenFocus.getByTestId("focus-big-clock").textContent).toBe("1:30:00");
+    expect(request).toHaveBeenCalledWith("screen");
+    fireEvent.click(screenFocus.getByText("Pull numbers"));
+    expect(loadTodos(T)[0].subtasks![0].done).toBe(true);
+    fireEvent.click(screenFocus.getByLabelText("Minimise focus"));
+    expect(screen.queryByRole("dialog", { name: "Focus" })).toBeNull();
+    fireEvent.click(within(screen.getByRole("region", { name: "Focusing" })).getByText("Open focus"));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Focus" })).toBeNull();
+    fireEvent.click(within(screen.getByRole("region", { name: "Focusing" })).getByText("Open focus"));
+    at(10, 0);
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Focus" })).getByText("Finish"));
+    expect(await flashed("Recorded 20m on “Report”")).toBeTruthy();
+    expect(loadTodos(T)[0]).toMatchObject({ completed: true, spent: 20 });
+    expect(screen.queryByRole("dialog", { name: "Focus" })).toBeNull();
+    delete (navigator as { wakeLock?: unknown }).wakeLock;
+  });
+
+  it("stops without finishing", async () => {
+    saveTodos([todo("Report")], T);
+    open();
+    fireEvent.click(await tasks().findByLabelText("Focus on “Report”"));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Focus" })).getByText("Stop"));
+    expect(await flashed("Under a minute, so nothing was recorded")).toBeTruthy();
+    expect(loadTodos(T)[0].completed).toBe(false);
+  });
+});
+
+describe("swiping and arranging rows", () => {
+  // Earlier than the other tests' 9:40: a swipe's "ignore the next tap" moment can't reach them.
+  beforeEach(() => {
+    at(8, 0);
+  });
+  const rowOf = (text: string) => tasks().getByText(text).closest("li")!;
+  const swipe = (text: string, dx: number, pointerType?: string) => {
+    const down = new MouseEvent("pointerdown", { bubbles: true, cancelable: true, clientX: 200, clientY: 100 });
+    if (pointerType) Object.defineProperty(down, "pointerType", { value: pointerType });
+    act(() => void rowOf(text).querySelector("button[aria-label^='Open']")!.dispatchEvent(down));
+    act(() => void window.dispatchEvent(new MouseEvent("pointermove", { clientX: 200 + dx / 2, clientY: 102 })));
+    act(() => void window.dispatchEvent(new MouseEvent("pointermove", { clientX: 200 + dx, clientY: 104 })));
+    act(() => void window.dispatchEvent(new MouseEvent("pointerup")));
+  };
+
+  it("swipes right to finish and left to move to tomorrow, each with undo", async () => {
+    saveTodos([todo("Report", { start: 900 }), todo("Call")], T);
+    open();
+    await tasks().findByText("Report");
+    swipe("Report", 140);
+    expect(loadTodos(T).find((t) => t.id === "Report")!.completed).toBe(true);
+    expect(await flashed("Done: Report")).toBeTruthy();
+    fireEvent.click(screen.getByText("Undo"));
+    await waitFor(() => expect(loadTodos(T).find((t) => t.id === "Report")!.completed).toBe(false));
+    // The tap at the end of a swipe opens nothing, but a tap a moment later does.
+    fireEvent.click(rowOf("Report").querySelector("button[aria-label^='Open']")!);
+    expect(screen.queryByRole("dialog", { name: "Task details" })).toBeNull();
+    at(8, 1);
+    fireEvent.click(rowOf("Report").querySelector("button[aria-label^='Open']")!);
+    expect(screen.getByRole("dialog", { name: "Task details" })).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Close details"));
+
+    swipe("Call", -140);
+    expect(await flashed("Moved “Call” to tomorrow")).toBeTruthy();
+    expect(loadTodos("2026-11-09")[0]).toMatchObject({ text: "Call", postponed: 1 });
+    fireEvent.click(screen.getByText("Undo"));
+    await waitFor(() => expect(loadTodos(T).find((t) => t.id === "Call")).toEqual(todo("Call")));
+    expect(loadTodos("2026-11-09")).toEqual([]);
+  });
+
+  it("ignores a short swipe, an upward drag, a mouse, and swipes from the controls", async () => {
+    saveTodos([todo("Report")], T);
+    open();
+    await tasks().findByText("Report");
+    swipe("Report", 50);
+    swipe("Report", 140, "mouse");
+    act(() => void rowOf("Report").querySelector("button[aria-label^='Open']")!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 0, clientY: 0 })));
+    act(() => void window.dispatchEvent(new MouseEvent("pointermove", { clientX: 5, clientY: 80 })));
+    act(() => void window.dispatchEvent(new MouseEvent("pointercancel")));
+    act(() => void tasks().getByLabelText("Mark “Report” done").dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
+    expect(loadTodos(T)[0].completed).toBe(false);
+    expect(loadTodos("2026-11-09")).toEqual([]);
+  });
+
+  it("keeps a repeating task's copy on its day", async () => {
+    saveTodos([todo("Daily", { dailyId: "d1" })], T);
+    open();
+    await tasks().findByText("Daily");
+    swipe("Daily", -140);
+    expect(await flashed("Repeating tasks stay on their own day")).toBeTruthy();
+    // Swiping a finished task right does nothing.
+    saveTodos([todo("Daily", { dailyId: "d1", completed: true })], T);
+    fireEvent.click(screen.getByLabelText("Next day"));
+    fireEvent.click(screen.getByLabelText("Previous day"));
+    await screen.findByRole("list", { name: "Done" });
+  });
+
+  it("reorders by dragging the handle, or with the arrow keys", async () => {
+    vi.stubGlobal("scrollBy", vi.fn());
+    saveTodos(["alpha", "beta", "gamma"].map((id, i) => todo(id, { createdAt: `2026-11-01T00:00:0${i}.000Z` })), T);
+    open();
+    await tasks().findByText("alpha");
+    const names = () => tasks().getAllByRole("listitem").filter((li) => li.dataset.task).map((li) => li.dataset.task);
+    expect(names()).toEqual(["alpha", "beta", "gamma"]);
+    names().forEach((id, i) => {
+      rowOf(id!).getBoundingClientRect = () => ({ top: i * 100, height: 100, bottom: i * 100 + 100 }) as DOMRect;
+    });
+    act(() => void tasks().getByLabelText("Drag to reorder gamma").dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, clientY: 250 })));
+    act(() => void window.dispatchEvent(new MouseEvent("pointermove", { clientY: 30 })));
+    expect(screen.getByTestId("drop-line")).toBeTruthy();
+    act(() => void window.dispatchEvent(new MouseEvent("pointerup")));
+    expect(names()).toEqual(["gamma", "alpha", "beta"]);
+    act(() => void tasks().getByLabelText("Drag to reorder alpha").dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, clientY: 150 })));
+    act(() => void window.dispatchEvent(new MouseEvent("pointermove", { clientY: 900 })));
+    expect(screen.getByTestId("drop-line")).toBeTruthy();
+    act(() => void window.dispatchEvent(new MouseEvent("pointerup")));
+    expect(names()).toEqual(["gamma", "beta", "alpha"]);
+    fireEvent.keyDown(tasks().getByLabelText("Drag to reorder alpha"), { key: "ArrowUp" });
+    expect(names()).toEqual(["gamma", "alpha", "beta"]);
+    fireEvent.keyDown(tasks().getByLabelText("Drag to reorder gamma"), { key: "ArrowDown" });
+    expect(names()).toEqual(["alpha", "gamma", "beta"]);
+    fireEvent.keyDown(tasks().getByLabelText("Drag to reorder alpha"), { key: "ArrowUp" }); // already first
+    fireEvent.keyDown(tasks().getByLabelText("Drag to reorder beta"), { key: "ArrowDown" }); // already last
+    fireEvent.keyDown(tasks().getByLabelText("Drag to reorder beta"), { key: "Enter" });
+    expect(names()).toEqual(["alpha", "gamma", "beta"]);
+  });
+});
+
+describe("keys on today", () => {
+  it("F focuses on the current task, Space finishes it, L opens the log", async () => {
+    saveTodos([todo("Report", { start: 570, duration: 90 }), todo("Call", { start: 720 })], T);
+    open();
+    await screen.findByRole("region", { name: "Under way" });
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.keyDown(document.body, { key: "f" });
+    expect(screen.getByRole("dialog", { name: "Focus" })).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.keyDown(document.body, { key: "f" }); // focusing already: reopens the screen
+    expect(screen.getByRole("dialog", { name: "Focus" })).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.keyDown(document.body, { key: " " }); // finishes the session too
+    expect(await flashed("Under a minute, so nothing was recorded")).toBeTruthy();
+    expect(loadTodos(T).find((t) => t.id === "Report")!.completed).toBe(true);
+    fireEvent.keyDown(document.body, { key: " " }); // the next one, between blocks
+    expect(await flashed("Done: Call")).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: " " }); // nothing left
+    fireEvent.keyDown(document.body, { key: "l" });
+    expect(screen.getByLabelText("Weight in kg")).toBeTruthy();
+  });
+
+  it("does nothing on another day, or from a button", async () => {
+    saveTodos([todo("Report", { start: 570, duration: 90 })], T);
+    open();
+    await screen.findByRole("region", { name: "Under way" });
+    fireEvent.keyDown(screen.getByLabelText("Next day"), { key: " " });
+    expect(loadTodos(T)[0].completed).toBe(false);
+    fireEvent.click(screen.getByLabelText("Next day"));
+    await screen.findByText("Mon · Tomorrow");
+    fireEvent.keyDown(document.body, { key: "f" });
+    expect(screen.queryByRole("dialog", { name: "Focus" })).toBeNull();
+  });
+});
+
+describe("the add box's options", () => {
+  it("sets priority, tag, time, length, deadline and note, with the shorthand winning; priority, tag and length stay", async () => {
+    open();
+    fireEvent.click(await screen.findByText("More options"));
+    fireEvent.change(screen.getByLabelText("Priority"), { target: { value: "high" } });
+    fireEvent.change(screen.getByLabelText("Tag"), { target: { value: "work" } });
+    fireEvent.change(screen.getByLabelText("Start time"), { target: { value: "14:00" } });
+    fireEvent.change(screen.getByLabelText("Length"), { target: { value: "30" } });
+    fireEvent.change(screen.getByLabelText("Deadline"), { target: { value: "2026-11-12" } });
+    fireEvent.change(screen.getByLabelText("Note"), { target: { value: "Bring the slides" } });
+    add("Review");
+    expect(loadTodos(T)[0]).toMatchObject({ text: "Review", priority: "high", tag: "work", start: 840, duration: 30, due: "2026-11-12", note: "Bring the slides" });
+    expect((screen.getByLabelText("Priority") as HTMLSelectElement).value).toBe("high");
+    expect((screen.getByLabelText("Start time") as HTMLInputElement).value).toBe("");
+    add("Gym 6pm !low #health");
+    expect(loadTodos(T)[1]).toMatchObject({ text: "Gym", priority: "low", tag: "health", start: 1080, duration: 30 });
+    expect(loadTodos(T)[1].due).toBeUndefined();
+    fireEvent.change(screen.getByLabelText("Priority"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Tag"), { target: { value: "" } });
+    add("Plain");
+    expect(loadTodos(T)[2].priority).toBeUndefined();
+  });
+
+  it("makes a repeat, which has no deadline", async () => {
+    open();
+    fireEvent.click(await screen.findByText("More options"));
+    fireEvent.change(screen.getByLabelText("Deadline"), { target: { value: "2026-11-12" } });
+    fireEvent.click(screen.getByText("↻ Repeat"));
+    expect((screen.getByLabelText("Deadline") as HTMLInputElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("How it repeats"), { target: { value: "every" } });
+    add("Water plants");
+    const t = loadTodos(T).find((x) => x.text === "Water plants")!;
+    expect(t.dailyId).toBeTruthy();
+    expect(t.due).toBeUndefined();
+    fireEvent.click(screen.getByText("↻ Repeat"));
+    expect(screen.getByLabelText("How it repeats")).toBeTruthy();
+    fireEvent.click(screen.getByText("↻ Repeat"));
+    expect(screen.queryByLabelText("How it repeats")).toBeNull();
+    fireEvent.click(screen.getByText("More options"));
+    expect(screen.queryByLabelText("Start time")).toBeNull();
+  });
+});
