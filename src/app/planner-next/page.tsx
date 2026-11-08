@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { getTodayDate, shiftDate, weekday } from "@/lib/todos";
 import { DAY_NAMES, shiftMonth } from "../todos/planner";
 import { Calendar, type CalendarView } from "./Calendar";
+import { More, type MoreView } from "./More";
 import { Plans, type PlansView } from "./Plans";
+import { Search } from "./Search";
+import { useFocusAlert, useReminders } from "./Tools";
 import { Today } from "./Today";
 import { useDay } from "./useDay";
 
@@ -17,28 +19,6 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "plans", label: "Plans" },
   { id: "more", label: "More" },
 ];
-
-// Until each tab is rebuilt, it points to the current planner's pages for the same things.
-const LATER: Record<"more", { what: string; links: [string, string][] }> = {
-  more: { what: "Stats, tags, templates, reminders and backup", links: [["Stats", "/todos/stats"], ["Tags, templates and log items", "/todos"]] },
-};
-
-function Later({ tab }: { tab: "more" }) {
-  const { what, links } = LATER[tab];
-  return (
-    <div className="mx-auto max-w-xl px-4 py-10 text-center">
-      <h2 className="text-2xl font-black uppercase [font-stretch:125%]">{TABS.find((t) => t.id === tab)!.label}</h2>
-      <p className="mt-2 text-sm text-bf-muted">This tab will hold {what}. Until it&apos;s built, they&apos;re in the current planner:</p>
-      <div className="mt-4 flex flex-wrap justify-center gap-2">
-        {links.map(([label, href]) => (
-          <Link key={href + label} href={href} className="rounded-xl bg-bf-s1 px-4 py-2.5 text-sm font-bold">
-            {label} →
-          </Link>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 // "Sun · Today" over "8 Nov"; a day further off shows its year when it isn't this one.
 const dayLabel = (date: string, today: string) => {
@@ -54,7 +34,13 @@ export default function PlannerNextPage() {
   const [tab, setTab] = useState<Tab>("today");
   const [calView, setCalView] = useState<CalendarView>("week");
   const [plansView, setPlansView] = useState<PlansView>("goals");
+  const [moreView, setMoreView] = useState<MoreView>("menu");
   const [linked, setLinked] = useState<{ list?: string; item?: string }>({});
+  // Search opens over whichever tab is showing; null when it's closed.
+  const [search, setSearch] = useState<string | null>(null);
+  // Reminders and the focus alert run whichever tab is open.
+  const reminders = useReminders(day.date === day.today ? day.todos : [], day.now, day.flash);
+  useFocusAlert(day.focus);
 
   // Search and Goals link straight to a day (?date=) or a list item (?list=&item=). The parameters are
   // cleared, so a later reload opens on today.
@@ -69,8 +55,8 @@ export default function PlannerNextPage() {
     }
     if ([...q.keys()].length) window.history.replaceState(null, "", window.location.pathname);
   }, []);
-  const tabRef = useRef({ tab, calView });
-  tabRef.current = { tab, calView };
+  const tabRef = useRef({ tab, calView, search });
+  tabRef.current = { tab, calView, search };
   const { date, setDate, today, reviewDue, message, setMessage, sync, syncStatus } = day;
 
   // ← → change the day (or the week or month in Calendar), T goes back to today, W and M open the
@@ -78,7 +64,8 @@ export default function PlannerNextPage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || (e.target instanceof Element && e.target.closest("input, textarea, select, [contenteditable], [role=dialog]"))) return;
-      const { tab, calView } = tabRef.current;
+      const { tab, calView, search } = tabRef.current;
+      if (search !== null) return;
       const step = (n: number) => setDate((d) => d && (tab !== "calendar" ? shiftDate(d, n) : calView === "week" ? shiftDate(d, 7 * n) : shiftMonth(d, n)));
       const open = (v: CalendarView) => {
         if (tab === "calendar" && calView === v) return setTab("today");
@@ -99,10 +86,18 @@ export default function PlannerNextPage() {
   const tabButton = (t: (typeof TABS)[number], place: "bar" | "header") => (
     <button
       key={t.id}
-      onClick={() => setTab(t.id)}
-      aria-current={tab === t.id ? "page" : undefined}
+      onClick={() => {
+        setSearch(null);
+        // Tapping the open tab again goes back to its start.
+        if (tab === t.id) {
+          if (t.id === "more") setMoreView("menu");
+          if (t.id === "plans") setPlansView("goals");
+        }
+        setTab(t.id);
+      }}
+      aria-current={tab === t.id && search === null ? "page" : undefined}
       className={`relative rounded-xl px-3 py-2 text-xs font-extrabold uppercase [font-stretch:110%] ${
-        tab === t.id ? (place === "bar" ? "bg-bf-s2 text-bf-ink" : "bg-white/15 text-white") : place === "bar" ? "text-bf-muted" : "text-white/60 hover:text-white"
+        tab === t.id && search === null ? (place === "bar" ? "bg-bf-s2 text-bf-ink" : "bg-white/15 text-white") : place === "bar" ? "text-bf-muted" : "text-white/60 hover:text-white"
       }`}
     >
       {t.label}
@@ -118,9 +113,9 @@ export default function PlannerNextPage() {
           <nav aria-label="Planner" className="ml-auto hidden gap-1 lg:flex">
             {TABS.map((t) => tabButton(t, "header"))}
           </nav>
-          <Link href="/todos/search" aria-label="Search the planner" className="ml-auto grid h-9 w-9 place-items-center rounded-[10px] bg-white/10 lg:ml-0">
+          <button onClick={() => setSearch((s) => (s === null ? "" : null))} aria-label="Search the planner" aria-pressed={search !== null} className={`ml-auto grid h-9 w-9 place-items-center rounded-[10px] lg:ml-0 ${search !== null ? "bg-white text-ink" : "bg-white/10"}`}>
             ⌕
-          </Link>
+          </button>
           <button
             onClick={sync}
             disabled={syncStatus === "syncing"}
@@ -131,7 +126,7 @@ export default function PlannerNextPage() {
             <span className={`h-2 w-2 rounded-full ${syncStatus === "error" ? "bg-red-400" : syncStatus === "syncing" ? "animate-pulse bg-gold" : "bg-emerald-400"}`} />
           </button>
         </div>
-        {tab === "today" && label && (
+        {tab === "today" && search === null && label && (
           <div className="mx-auto flex max-w-6xl items-center gap-2 px-3 pb-3 lg:px-6">
             <div className="min-w-0 flex-1">
               <div className="font-bfm text-[11px] uppercase text-white/60">{label.kicker}</div>
@@ -152,8 +147,29 @@ export default function PlannerNextPage() {
         )}
       </header>
 
-      {tab === "today" ? (
-        <Today day={day} />
+      {search !== null ? (
+        <Search
+          initialQuery={search}
+          onClose={() => setSearch(null)}
+          onOpenDay={(d) => {
+            setSearch(null);
+            setDate(d);
+            setTab("today");
+          }}
+          onOpenGoals={() => {
+            setSearch(null);
+            setPlansView("goals");
+            setTab("plans");
+          }}
+          onOpenItem={(list, item) => {
+            setSearch(null);
+            setLinked({ list, item });
+            setPlansView("lists");
+            setTab("plans");
+          }}
+        />
+      ) : tab === "today" ? (
+        <Today day={day} reminders={reminders} onSearch={setSearch} />
       ) : tab === "calendar" && date ? (
         <Calendar
           anchor={date}
@@ -172,6 +188,7 @@ export default function PlannerNextPage() {
           view={plansView}
           onView={(v) => {
             setPlansView(v);
+            setLinked({}); // a linked list item opens once
             day.refresh(); // a finished review clears the dot on the tab
           }}
           onOpenDay={(d) => {
@@ -188,7 +205,20 @@ export default function PlannerNextPage() {
           initialItem={linked.item}
         />
       ) : (
-        <Later tab="more" />
+        <More
+          day={day}
+          reminders={reminders}
+          view={moreView}
+          onView={setMoreView}
+          onOpenDay={(d) => {
+            setDate(d);
+            setTab("today");
+          }}
+          onOpenReview={() => {
+            setPlansView("review");
+            setTab("plans");
+          }}
+        />
       )}
 
       <nav aria-label="Planner tabs" className="fixed inset-x-2 bottom-[calc(0.5rem+env(safe-area-inset-bottom))] z-40 grid grid-cols-4 gap-1 rounded-[18px] bg-bf-s1 p-1.5 shadow-lg ring-1 ring-bf-s2 lg:hidden">

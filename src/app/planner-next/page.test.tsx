@@ -72,7 +72,7 @@ describe("header and days", () => {
     expect(await screen.findByLabelText("Sync failed, try again")).toBeTruthy();
   });
 
-  it("has four tabs, pointing to the current planner for those not built yet, and marks a review due on Sunday", async () => {
+  it("has four tabs, and marks a review due on Sunday", async () => {
     open();
     const bar = within(screen.getByRole("navigation", { name: "Planner tabs" }));
     expect(await bar.findByLabelText("Weekly review is ready")).toBeTruthy();
@@ -82,7 +82,7 @@ describe("header and days", () => {
     fireEvent.click(bar.getByText("Calendar"));
     expect(screen.getByRole("group", { name: "Calendar view" })).toBeTruthy();
     fireEvent.click(bar.getByText("More"));
-    expect(screen.getByRole("link", { name: "Stats →" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Stats/ })).toBeTruthy();
     fireEvent.click(bar.getByText("Today"));
     expect(screen.getByLabelText("Add a task")).toBeTruthy();
     expect(bar.getByText("Today").getAttribute("aria-current")).toBe("page");
@@ -1129,7 +1129,7 @@ describe("filtering the list", () => {
     expect(names()).toEqual(["Report"]);
     fireEvent.change(screen.getByLabelText("Filter this day"), { target: { value: "dentist" } });
     expect(screen.getByText("No tasks match this filter.")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Search every day →" }).getAttribute("href")).toBe("/todos/search?q=dentist");
+    expect(screen.getByRole("button", { name: "Search every day →" })).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Filter this day"), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "Home" }));
     expect(names()).toEqual(["Laundry"]);
@@ -1139,7 +1139,7 @@ describe("filtering the list", () => {
     fireEvent.click(screen.getByLabelText("Previous day"));
     fireEvent.click(screen.getByLabelText("Next day"));
     await waitFor(() => expect(screen.getByText("No tasks match this filter.")).toBeTruthy());
-    expect(screen.queryByRole("link", { name: "Search every day →" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Search every day →" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "All tags" }));
     expect(names()).toEqual(["Other"]);
   });
@@ -1376,5 +1376,230 @@ describe("links into the planner", () => {
     expect(await screen.findByRole("heading", { name: /Gifts/ })).toBeTruthy();
     expect(screen.getByLabelText("Item text")).toBeTruthy(); // the item is open
     expect(window.location.search).toBe("");
+  });
+});
+
+describe("more", () => {
+  const bar = () => within(screen.getByRole("navigation", { name: "Planner tabs" }));
+  const openMore = async (item?: string) => {
+    open();
+    await screen.findByText("8 Nov");
+    fireEvent.click(bar().getByText("More"));
+    if (item) fireEvent.click(menuItem(item));
+  };
+  const back = () => fireEvent.click(screen.getByText("‹ More"));
+  const menuItem = (name: string) => within(screen.getByRole("list", { name: "More screens" })).getByRole("button", { name: new RegExp(`^${name}`) });
+
+  it("lists each screen, opens it, and goes back by the link or the tab", async () => {
+    await openMore();
+    expect(menuItem("Reminders").textContent).toContain("Off");
+    for (const name of ["Stats", "Day log items", "Tags", "Day templates", "Reminders", "Backup", "Sync"]) {
+      fireEvent.click(menuItem(name));
+      expect(screen.getByRole("heading", { name })).toBeTruthy();
+      back();
+    }
+    fireEvent.click(menuItem("Tags"));
+    fireEvent.click(bar().getByText("More"));
+    expect(screen.getByRole("heading", { name: "More" })).toBeTruthy();
+  });
+
+  it("shows stats, with the review and today a tap away", async () => {
+    await openMore("Stats");
+    expect(await screen.findByText("Day log history")).toBeTruthy();
+    fireEvent.click(screen.getByText("Plan your day"));
+    expect(await screen.findByLabelText("Add a task")).toBeTruthy();
+    saveTodos([todo("Taxes", { carriedFrom: "2026-11-04", postponed: 2 })], T);
+    fireEvent.click(bar().getByText("More"));
+    fireEvent.click(await screen.findByText(/in the weekly review/));
+    expect(await screen.findByRole("list", { name: "Steps" })).toBeTruthy();
+  });
+
+  it("adds, renames, reorders and removes day log items, and Today follows", async () => {
+    await openMore("Day log items");
+    fireEvent.change(screen.getByLabelText("Rename Med 1"), { target: { value: "Metformin" } });
+    fireEvent.blur(screen.getByLabelText("Rename Med 1"));
+    fireEvent.change(await screen.findByLabelText("New log item"), { target: { value: "Pushups" } });
+    fireEvent.change(screen.getByLabelText("Kind of item"), { target: { value: "number" } });
+    fireEvent.submit(screen.getByLabelText("New log item"));
+    expect(await screen.findByLabelText("Rename Pushups")).toBeTruthy();
+    expect((screen.getByLabelText("New log item") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("Move Bath up") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Move Pushups down") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText("Move Brush up"));
+    fireEvent.click(await screen.findByLabelText("Move Bath down"));
+    fireEvent.click(screen.getByLabelText("Move Bath down"));
+    fireEvent.click(screen.getByLabelText("Remove Yoga"));
+    await waitFor(() => expect(screen.queryByLabelText("Rename Yoga")).toBeNull());
+    // Refused names keep the old one.
+    fireEvent.change(screen.getByLabelText("New log item"), { target: { value: "bath" } });
+    fireEvent.submit(screen.getByLabelText("New log item"));
+    expect(await flashed("There's already a bath item")).toBeTruthy();
+    const walk = screen.getByLabelText("Rename Walk") as HTMLInputElement;
+    fireEvent.change(walk, { target: { value: "" } });
+    fireEvent.keyDown(walk, { key: "Enter" });
+    fireEvent.blur(walk);
+    expect(await flashed("Give the item a name")).toBeTruthy();
+    expect(walk.value).toBe("Walk");
+
+    fireEvent.click(bar().getByText("Today"));
+    const names = within(await screen.findByRole("group", { name: "Log items" })).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent);
+    const joined = names.join("|");
+    expect(joined.indexOf("Brush")).toBeLessThan(joined.indexOf("Stools"));
+    expect(joined).toContain("Metformin");
+    expect(joined).not.toContain("Yoga");
+  });
+
+  it("adds, renames and removes tags, refusing a duplicate", async () => {
+    await openMore("Tags");
+    fireEvent.change(screen.getByLabelText("New tag"), { target: { value: "Deep work" } });
+    fireEvent.submit(screen.getByLabelText("New tag"));
+    expect(await screen.findByLabelText("Rename Deep work")).toBeTruthy();
+    expect((screen.getByLabelText("New tag") as HTMLInputElement).value).toBe("");
+    fireEvent.change(screen.getByLabelText("New tag"), { target: { value: "home" } });
+    fireEvent.submit(screen.getByLabelText("New tag"));
+    expect(await flashed("There's already a home tag")).toBeTruthy();
+    const work = screen.getByLabelText("Rename Work") as HTMLInputElement;
+    fireEvent.change(work, { target: { value: "Job" } });
+    fireEvent.keyDown(work, { key: "Enter" });
+    fireEvent.blur(work);
+    expect(await screen.findByLabelText("Rename Job")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Rename Job"), { target: { value: "Home" } });
+    fireEvent.blur(screen.getByLabelText("Rename Job"));
+    expect(await flashed("There's already a Home tag")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Remove Job"));
+    await waitFor(() => expect(screen.queryByLabelText("Rename Job")).toBeNull());
+  });
+
+  it("saves the open day as a template and applies one", async () => {
+    saveTodos([todo("Standup", { start: 600, duration: 15 })], T);
+    await openMore("Day templates");
+    expect(screen.getByText(/the day open on Today: /)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Template name"), { target: { value: "Workday" } });
+    fireEvent.submit(screen.getByLabelText("Template name"));
+    expect(await flashed("Saved “Workday” with 1 task")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Apply “Workday”"));
+    expect(await flashed("Everything in “Workday” is already on this day")).toBeTruthy();
+  });
+
+  it("turns reminders on and off, and they fire on any tab", async () => {
+    resetNotifications();
+    vi.stubGlobal("Notification", FakeNotification);
+    await openMore("Reminders");
+    const group = within(screen.getByRole("group", { name: "Reminders" }));
+    fireEvent.click(group.getByText("5 min before"));
+    expect(await flashed("Reminders on while this page is open")).toBeTruthy();
+    expect(group.getByText("5 min before").getAttribute("aria-pressed")).toBe("true");
+    expect(localStorage.getItem("reel-radar-reminder-lead")).toBe("5");
+    fireEvent.click(group.getByText("Off"));
+    expect(localStorage.getItem("reel-radar-reminder-lead")).toBeNull();
+    expect(group.getByText("Off").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("keeps reminding while another tab is open", async () => {
+    resetNotifications();
+    vi.stubGlobal("Notification", FakeNotification);
+    localStorage.setItem("reel-radar-reminder-lead", "5");
+    saveTodos([todo("Meeting", { start: 583, duration: 30 })], T);
+    await openMore();
+    await waitFor(() => expect(FakeNotification.sent.map((n) => n.title)).toEqual(["Meeting"]));
+  });
+
+  it("exports and imports a backup", async () => {
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:x"), revokeObjectURL: vi.fn() }));
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await openMore("Backup");
+    fireEvent.click(screen.getByText("Export"));
+    expect(await flashed("Backup saved")).toBeTruthy();
+    expect(click).toHaveBeenCalled();
+    const input = screen.getByLabelText("Backup file to import");
+    const file = (body: unknown) => new File([JSON.stringify(body)], "b.json");
+    fireEvent.change(input, {
+      target: {
+        files: [
+          file({
+            app: "planner",
+            version: 3,
+            days: { [T]: [todo("x"), todo("y")], [Y]: [todo("z")] },
+            daily: [{ id: "d", text: "D", startDate: T }],
+            log: { [T]: { weight: 71 } },
+            lists: { lists: [{ id: "l", name: "Gifts", createdAt: 1 }], items: [{ id: "i", listId: "l", text: "Scarf", done: false, createdAt: 1 }] },
+          }),
+        ],
+      },
+    });
+    expect(await flashed("Imported 3 todos across 2 days + 1 daily task + 1 day log + 1 list item")).toBeTruthy();
+    expect(loadDayLog(T).weight).toBe(71);
+    fireEvent.change(input, { target: { files: [file({ app: "planner", version: 2, days: { [T]: [todo("w")] }, daily: [] })] } });
+    expect(await flashed("Imported 1 todo across 1 day")).toBeTruthy();
+    fireEvent.change(input, { target: { files: [file({ nope: true })] } });
+    expect(await flashed("Not a planner backup file.")).toBeTruthy();
+    fireEvent.change(input, { target: { files: [] } });
+  });
+
+  it("warns when an export couldn't pull from the server", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:x"), revokeObjectURL: vi.fn() }));
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await openMore("Backup");
+    routeFetch({ "/api/sync": () => new Response("{}", { status: 500 }) });
+    fireEvent.click(screen.getByText("Export"));
+    expect(await flashed("Couldn't reach the server, so the backup only has this device's copy")).toBeTruthy();
+  });
+
+  it("syncs now and shows how it went", async () => {
+    await openMore("Sync");
+    fireEvent.click(screen.getByText("Sync now"));
+    expect(await screen.findByText("Synced", { selector: "[role=status]" })).toBeTruthy();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    routeFetch({ "/api/sync": () => new Response("{}", { status: 500 }) });
+    await waitFor(() => expect((screen.getByText("Sync now") as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByText("Sync now"));
+    expect(await screen.findByText(/Couldn't reach the server\. Changes stay/, { selector: "[role=status]" })).toBeTruthy();
+  });
+});
+
+describe("search", () => {
+  it("opens over any tab and takes you to what it finds", async () => {
+    saveTodos([todo("Dentist")], "2026-11-12");
+    const list = addList("Gifts");
+    addItem(list.id, "Dentist voucher");
+    addGoal("See the dentist");
+    open();
+    await screen.findByText("8 Nov");
+    const find = () => {
+      fireEvent.click(screen.getByLabelText("Search the planner"));
+      fireEvent.change(screen.getByLabelText("Search the whole planner"), { target: { value: "dentist" } });
+    };
+    find();
+    expect(screen.queryByLabelText("Previous day")).toBeNull();
+    // Keys typed elsewhere don't change the day under it.
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    fireEvent.click(screen.getByText("Dentist").closest("button")!);
+    expect(await screen.findByText("12 Nov")).toBeTruthy();
+    find();
+    fireEvent.click(screen.getByText("Dentist voucher").closest("button")!);
+    expect(await screen.findByDisplayValue("Dentist voucher")).toBeTruthy();
+    find();
+    fireEvent.click(screen.getByText("See the dentist").closest("button")!);
+    expect(await screen.findByRole("listitem", { name: "See the dentist" })).toBeTruthy();
+    // The search button closes it again, and so does any tab.
+    fireEvent.click(screen.getByLabelText("Search the planner"));
+    fireEvent.click(screen.getByLabelText("Search the planner"));
+    expect(screen.queryByLabelText("Search the whole planner")).toBeNull();
+    fireEvent.click(screen.getByLabelText("Search the planner"));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Planner tabs" })).getByText("Today"));
+    expect(await screen.findByLabelText("Add a task")).toBeTruthy();
+  });
+
+  it("searches every day from a filter with no matches", async () => {
+    saveTodos([todo("Laundry")], T);
+    saveTodos([todo("Dentist")], "2026-11-12");
+    open();
+    fireEvent.change(await screen.findByLabelText("Filter this day"), { target: { value: "dentist" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search every day →" }));
+    expect((screen.getByLabelText("Search the whole planner") as HTMLInputElement).value).toBe("dentist");
+    expect(screen.getByText("Dentist")).toBeTruthy();
+    fireEvent.click(screen.getByText("Close"));
+    expect(await screen.findByLabelText("Filter this day")).toBeTruthy();
   });
 });

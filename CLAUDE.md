@@ -68,7 +68,10 @@ src/
   app/planner-next/      The new planner (Bold focus), built beside /todos on the same data until it replaces it: useDay (the day's state and sync),
                          Today, CurrentCard, FocusScreen, Attention, LogTiles, DayLogMore, Tasks (rows: swipe, reorder), TaskDetails, AddBox,
                          Schedule (phone Timeline, laptop DayBar), Tools (auto-schedule, templates, reminders, filters), Calendar (week rows or columns, month),
-                         Plans (Goals, Lists, Review: the current goals/lists/review pages' logic, restyled; their tests copied alongside);
+                         Plans (Goals, Lists, Review: the current goals/lists/review pages' logic, restyled; their tests copied alongside),
+                         More (menu: Stats, day log items, tags, templates, reminders, backup, sync), Stats/StatsInsights/StatsParts (the stats page restyled,
+                         plus the log history grid and steps trend), Search (opens over any tab; results call back instead of linking);
+                         page.tsx runs useReminders and useFocusAlert so they fire on every tab;
                          layout.tsx loads its fonts with next/font. ?date= opens a day and ?list=&item= a list item, then the address is cleared
   app/money/             Money page parts: ReviewQueue, shared.tsx
   app/api/               Route handlers: discover, recommendations, similar, search, title,
@@ -100,6 +103,7 @@ src/
     http.ts              cachedJson() for browser-cacheable API responses
     plannerStats.ts      Planner stats aggregation (pure; used by /todos/stats)
     plannerInsights.ts   Sleep hours, day log trends and patterns, planned vs. actual time, review week, month data, goal progress (pure)
+    plannerLogHistory.ts The Stats log history grid: a cell per item per day, tick rate, number average, streak (pure)
     plannerSearch.ts     Finds text in every day's tasks and day notes (pure; used by /todos/search)
     plannerToday.ts      Today's rules: the current-task card's state (todayCard), the progress line (dayProgress), and the schedule's Done column (dayMarks, used by both planners) (pure)
     plannerSettings.ts   Tags, day templates, goals and day log items: a synced doc, useTags(), useGoals(), useLogItems(), tagLabel(), tagColor() ("use client")
@@ -151,7 +155,7 @@ The repo is indexed by CodeGraph (`.codegraph/`). Use `codegraph explore "<symbo
 - **Deadlines**: a todo's `due` is separate from the day it's planned on, so moving or carrying a task keeps it. Only one-off tasks have one: `addTodo`, `setTodoDue` and `makeTodoDaily` enforce that, and `copyTodoToDate` drops it. `getDueTodos()` feeds the tray, and the page leaves those tasks out of Overdue so each shows once. That tray can hold tasks planned ahead, so `syncTrayPlanner()` pulls next month as well as every past one.
 - **Goals**: live in `planner-settings` (no extra doc to read). Todos and daily tasks hold a `goalId`, which each day's copy of a repeat inherits, and `syncDailyFrom` carries a change to later days. A deleted goal's id stays on its tasks and just stops matching. `computeGoalProgress()` is the one place that decides what counts. The percentage covers one-off tasks only, because repeats have no end; every finished copy of a linked repeat counts, including cleared ones (`doneDates`), and missed copies don't.
 - **Day log items**: their definitions (`LogItemDef`: a tick or a number, with an order) live in `planner-settings` as `logItems`, merged like tags; built-ins have no entry until changed, so a doc without the field (from an older device) reads as the seven built-ins. A removed item keeps its entry. A day's values are `DayLog.ticks` (`{ at? }`, minutes after midnight, only for a tick made on the day itself) and `DayLog.counts`, written through `setLogTick()`/`setLogCount()`; `updateDayLog()` and the backup import both clean them with `cleanTicks()`/`cleanCounts()`. Ticks stay out of the schedule's Done column and out of search.
-- **Search**: `/todos/search` pulls everything once on open, then filters this browser's copy, so keep it free of per-keystroke requests. `/todos?date=YYYY-MM-DD` and `/todos/lists?list=<id>&item=<id>` open what a result links to; the planner clears its parameter so a later reload goes back to today.
+- **Search**: `/todos/search` and the new planner's Search pull everything once on open, then filter this browser's copy, so keep them free of per-keystroke requests. `/todos?date=YYYY-MM-DD` and `/todos/lists?list=<id>&item=<id>` open what a result links to; the planner clears its parameter so a later reload goes back to today.
 - **Repeats**: `RepeatRule` (`lib/reminders.ts`) holds one kind at a time on a `DailyTask`: `days`, `every`, `monthDay` or `timesPerWeek`; none means daily. `normalizeRepeat()` enforces that. `repeatsOn()` only knows the calendar; a `timesPerWeek` task also depends on what's done that week, so go through `missingDailyTasks()` with a `doneInWeek` count. Its streak counts weeks, not days. Giving a repeating task's copy a time sets it for later days too (`syncDailyFrom`), which is why auto-schedule skips repeating tasks.
 - **Adding to another day**: pull its month first (`syncPlanner([date])`), so the task lands in the latest copy. If the pull fails, the task stays on this device and merges when it pushes.
 - **Tags**: a `TagId` is any string. Read names and colours with `tagLabel()`/`tagColor()`, and offer choices with `useTags()` (it starts on the built-ins, so the first render matches the prerendered page). Colours come only from `TAG_PALETTE`, validated together, which is why tags stop at `MAX_TAGS`. Removing a tag keeps its entry so old tasks and stats still show it.

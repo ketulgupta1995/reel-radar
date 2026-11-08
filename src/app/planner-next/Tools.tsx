@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { canAutoSchedule, dayWindow, planDay, type DayPlan, type DayWindow, type PlannedBlock } from "@/lib/autoSchedule";
 import { disablePush, enablePush, loadReminderLead, notify, saveReminderLead } from "@/lib/push";
 import { REMINDER_LEADS, reminderBody, reminderKey } from "@/lib/reminders";
@@ -55,6 +54,7 @@ export function useReminders(todayTodos: Todo[], now: number, flash: (text: stri
   };
   return { lead, change };
 }
+export type Reminders = ReturnType<typeof useReminders>;
 
 // Tells you once when a focus session's planned time runs out.
 export function useFocusAlert(focus: FocusSession | null) {
@@ -147,7 +147,7 @@ function AutoPlan({ todos, date, onApplied, onMessage, onClose }: { todos: Todo[
 }
 
 // Save a day's one-off tasks and times as a layout, and add a saved one to this day.
-function Templates({ date, onApplied, onMessage }: { date: string; onApplied: () => void; onMessage: (text: string) => void }) {
+export function Templates({ date, onApplied, onMessage }: { date: string; onApplied: () => void; onMessage: (text: string) => void }) {
   const [templates, setTemplates] = useState<DayTemplate[]>([]);
   const [name, setName] = useState("");
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -217,7 +217,7 @@ function Templates({ date, onApplied, onMessage }: { date: string; onApplied: ()
 }
 
 // The tools above the list: auto-schedule, day templates and reminders.
-export function DayTools({ todos, date, reminders, onApplied, onMessage }: { todos: Todo[]; date: string; reminders: ReturnType<typeof useReminders>; onApplied: () => void; onMessage: (text: string) => void }) {
+export function DayTools({ todos, date, reminders, onApplied, onMessage }: { todos: Todo[]; date: string; reminders: Reminders; onApplied: () => void; onMessage: (text: string) => void }) {
   const [open, setOpen] = useState<"plan" | "templates" | null>(null);
   const toggle = (p: "plan" | "templates") => setOpen((o) => (o === p ? null : p));
   useEffect(() => setOpen(null), [date]);
@@ -295,16 +295,16 @@ export function Filters({ todos, filter, onChange }: { todos: Todo[]; filter: Fi
   );
 }
 
-export function NoMatches({ query }: { query: string }) {
+export function NoMatches({ query, onSearch }: { query: string; onSearch: (q: string) => void }) {
   return (
     <p className="rounded-[14px] bg-bf-s1 p-5 text-center text-sm text-bf-muted">
       No tasks match this filter.
       {query.trim() && (
         <>
           {" "}
-          <Link href={`/todos/search?q=${encodeURIComponent(query.trim())}`} className="font-bold text-bf-ink underline">
+          <button onClick={() => onSearch(query.trim())} className="font-bold text-bf-ink underline">
             Search every day →
-          </Link>
+          </button>
         </>
       )}
     </p>

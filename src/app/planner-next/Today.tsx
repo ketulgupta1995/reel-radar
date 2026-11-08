@@ -13,7 +13,7 @@ import { FocusScreen } from "./FocusScreen";
 import { LogTiles } from "./LogTiles";
 import { DayBar, Timeline, type ScheduleActions } from "./Schedule";
 import { TaskDetails } from "./TaskDetails";
-import { DayTools, Filters, filterTodos, NO_FILTER, NoMatches, useFocusAlert, useReminders, type Filter } from "./Tools";
+import { DayTools, Filters, filterTodos, NO_FILTER, NoMatches, type Filter, type Reminders } from "./Tools";
 import { Tasks } from "./Tasks";
 import type { Day } from "./useDay";
 
@@ -48,7 +48,7 @@ function currentTask(todos: Todo[], now: number, focusId?: string): Todo | null 
 }
 
 // The day shown: progress, what's on now, what needs a decision, the day log, the add box and the tasks.
-export function Today({ day }: { day: Day }) {
+export function Today({ day, reminders, onSearch }: { day: Day; reminders: Reminders; onSearch: (q: string) => void }) {
   const { date, today, todos, log, setLog, now, focus, setFocus, refresh, flash, removed } = day;
   const [logOpen, setLogOpen] = useState(false);
   const [destination, setDestination] = useState<Destination>({ kind: "day" });
@@ -56,8 +56,6 @@ export function Today({ day }: { day: Day }) {
   const [focusScreen, setFocusScreen] = useState(false);
   const [view, setView] = useState<"list" | "timeline">("list");
   const [filter, setFilter] = useState<Filter>(NO_FILTER);
-  const reminders = useReminders(date === today ? todos : [], now, flash);
-  useFocusAlert(focus);
   const inputRef = useRef<HTMLInputElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
@@ -228,7 +226,7 @@ export function Today({ day }: { day: Day }) {
           <div className={`flex-col gap-2.5 ${view === "timeline" ? "hidden lg:flex" : "flex"}`}>
             {todos.length > 0 && <Filters todos={todos} filter={filter} onChange={setFilter} />}
             {todos.length > 0 && !shown.length ? (
-              <NoMatches query={filter.query} />
+              <NoMatches query={filter.query} onSearch={onSearch} />
             ) : (
               <Tasks
                 todos={shown}
