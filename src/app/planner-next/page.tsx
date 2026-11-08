@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { getTodayDate, shiftDate, weekday } from "@/lib/todos";
-import { DAY_NAMES } from "../todos/planner";
+import { DAY_NAMES, shiftMonth } from "../todos/planner";
+import { Calendar, type CalendarView } from "./Calendar";
 import { Today } from "./Today";
 import { useDay } from "./useDay";
 
@@ -17,13 +18,12 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 // Until each tab is rebuilt, it points to the current planner's pages for the same things.
-const LATER: Record<Exclude<Tab, "today">, { what: string; links: [string, string][] }> = {
-  calendar: { what: "the week and month views", links: [["Open the week view", "/todos"]] },
+const LATER: Record<Exclude<Tab, "today" | "calendar">, { what: string; links: [string, string][] }> = {
   plans: { what: "Goals, Lists and the weekly review", links: [["Goals", "/todos/goals"], ["Lists", "/todos/lists"], ["Weekly review", "/todos/review"]] },
   more: { what: "Stats, tags, templates, reminders and backup", links: [["Stats", "/todos/stats"], ["Tags, templates and log items", "/todos"]] },
 };
 
-function Later({ tab }: { tab: Exclude<Tab, "today"> }) {
+function Later({ tab }: { tab: Exclude<Tab, "today" | "calendar"> }) {
   const { what, links } = LATER[tab];
   return (
     <div className="mx-auto max-w-xl px-4 py-10 text-center">
@@ -52,15 +52,28 @@ const dayLabel = (date: string, today: string) => {
 export default function PlannerNextPage() {
   const day = useDay();
   const [tab, setTab] = useState<Tab>("today");
+  const [calView, setCalView] = useState<CalendarView>("week");
+  const tabRef = useRef({ tab, calView });
+  tabRef.current = { tab, calView };
   const { date, setDate, today, reviewDue, message, setMessage, sync, syncStatus } = day;
 
-  // ← → change day, T goes back to today.
+  // ← → change the day (or the week or month in Calendar), T goes back to today, W and M open the
+  // week and month and, pressed again, go back to the day.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || (e.target instanceof Element && e.target.closest("input, textarea, select, [contenteditable], [role=dialog]"))) return;
-      if (e.key === "ArrowLeft") setDate((d) => d && shiftDate(d, -1));
-      else if (e.key === "ArrowRight") setDate((d) => d && shiftDate(d, 1));
+      const { tab, calView } = tabRef.current;
+      const step = (n: number) => setDate((d) => d && (tab !== "calendar" ? shiftDate(d, n) : calView === "week" ? shiftDate(d, 7 * n) : shiftMonth(d, n)));
+      const open = (v: CalendarView) => {
+        if (tab === "calendar" && calView === v) return setTab("today");
+        setCalView(v);
+        setTab("calendar");
+      };
+      if (e.key === "ArrowLeft") step(-1);
+      else if (e.key === "ArrowRight") step(1);
       else if (e.key === "t") setDate(getTodayDate());
+      else if (e.key === "w") open("week");
+      else if (e.key === "m") open("month");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -123,7 +136,24 @@ export default function PlannerNextPage() {
         )}
       </header>
 
-      {tab === "today" ? <Today day={day} /> : <Later tab={tab} />}
+      {tab === "today" ? (
+        <Today day={day} />
+      ) : tab === "calendar" && date ? (
+        <Calendar
+          anchor={date}
+          view={calView}
+          now={day.now}
+          onView={setCalView}
+          onAnchor={setDate}
+          onOpenDay={(d) => {
+            setDate(d);
+            setTab("today");
+          }}
+          flash={day.flash}
+        />
+      ) : (
+        <Later tab={tab as Exclude<Tab, "today" | "calendar">} />
+      )}
 
       <nav aria-label="Planner tabs" className="fixed inset-x-2 bottom-[calc(0.5rem+env(safe-area-inset-bottom))] z-40 grid grid-cols-4 gap-1 rounded-[18px] bg-bf-s1 p-1.5 shadow-lg ring-1 ring-bf-s2 lg:hidden">
         {TABS.map((t) => tabButton(t, "bar"))}

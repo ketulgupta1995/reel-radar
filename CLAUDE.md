@@ -67,7 +67,8 @@ src/
                          Deadlines, ClockTimePicker, shared planner.tsx
   app/planner-next/      The new planner (Bold focus), built beside /todos on the same data until it replaces it: useDay (the day's state and sync),
                          Today, CurrentCard, FocusScreen, Attention, LogTiles, DayLogMore, Tasks (rows: swipe, reorder), TaskDetails, AddBox,
-                         Schedule (phone Timeline, laptop DayBar), Tools (auto-schedule, templates, reminders, filters); layout.tsx loads its fonts with next/font
+                         Schedule (phone Timeline, laptop DayBar), Tools (auto-schedule, templates, reminders, filters), Calendar (week rows or columns, month);
+                         layout.tsx loads its fonts with next/font
   app/money/             Money page parts: ReviewQueue, shared.tsx
   app/api/               Route handlers: discover, recommendations, similar, search, title,
                          person/[id], sync, media/[id], books/gutenberg/[id], books/librivox, usage, push, push/send, money/family (starter family from the env),

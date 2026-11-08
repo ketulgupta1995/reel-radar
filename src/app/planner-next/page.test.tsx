@@ -80,7 +80,7 @@ describe("header and days", () => {
     expect(screen.getByRole("link", { name: "Goals →" }).getAttribute("href")).toBe("/todos/goals");
     expect(screen.queryByLabelText("Previous day")).toBeNull();
     fireEvent.click(bar.getByText("Calendar"));
-    expect(screen.getByText(/week and month views/)).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Calendar view" })).toBeTruthy();
     fireEvent.click(bar.getByText("More"));
     expect(screen.getByRole("link", { name: "Stats →" })).toBeTruthy();
     fireEvent.click(bar.getByText("Today"));
@@ -1149,5 +1149,163 @@ describe("filtering the list", () => {
     open();
     fireEvent.click(await screen.findByText("Plan tomorrow →"));
     expect(await screen.findByText("Mon · Tomorrow")).toBeTruthy();
+  });
+});
+
+
+// A drag from the week, with what its drop handler reads, and modifier keys or a position if given.
+const weekDrag = (kind: "dragOver" | "drop", el: Element, id: string, from: string, extra: Record<string, unknown> = {}) => {
+  const event = createEvent[kind](el, { dataTransfer: { getData: (k: string) => (k === "text/todo-id" ? id : k === "text/todo-date" ? from : ""), dropEffect: "" } });
+  for (const [k, v] of Object.entries(extra)) Object.defineProperty(event, k, { value: v });
+  fireEvent(el, event);
+};
+
+describe("calendar", () => {
+  const openCalendar = async () => {
+    open();
+    fireEvent.click(within(await screen.findByRole("navigation", { name: "Planner tabs" })).getByText("Calendar"));
+  };
+  const row = (date: string) => document.querySelector<HTMLElement>(`[data-day='${date}']`)!;
+
+  it("shows the week as a row a day on a phone, opens a day, and steps by week", async () => {
+    saveTodos([todo("Gym", { start: 420, completed: true }), todo("Report", { start: 570, tag: "work" }), todo("Loose")], T);
+    saveTodos([todo("Missed", { start: 600 })], "2026-11-03");
+    await openCalendar();
+    expect(await screen.findByText("Nov 2 – Nov 8")).toBeTruthy();
+    expect(screen.getAllByText("1/4 done · 3h planned").length).toBeGreaterThan(0);
+    expect(within(row(T)).getByText("1/3")).toBeTruthy();
+    expect(within(row(T)).getByText("+1 any time")).toBeTruthy();
+    expect(row("2026-11-03").querySelector("[title^='Missed']")!.className).toContain("opacity-35"); // not done, day gone
+    fireEvent.click(screen.getByLabelText("Next week"));
+    expect(await screen.findByText("Nov 9 – Nov 15")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Previous week"));
+    fireEvent.click(within(row("2026-11-03")).getByLabelText(/^Open /));
+    expect(await screen.findByText("Tue")).toBeTruthy();
+    expect(screen.getByText("3 Nov")).toBeTruthy();
+    expect(screen.getByLabelText("Add a task")).toBeTruthy();
+  });
+
+  it("moves a dragged block to another day at the same time, or copies it with Ctrl", async () => {
+    saveTodos([todo("Report", { start: 570, duration: 90 }), todo("Daily", { dailyId: "d1", start: 420 })], T);
+    await openCalendar();
+    await screen.findByText("Nov 2 – Nov 8");
+    const block = row(T).querySelector<HTMLElement>("[title^='Report']")!;
+    const setData = vi.fn();
+    fireEvent(block, createEvent.dragStart(block, { dataTransfer: { setData } }));
+    expect(setData).toHaveBeenCalledWith("text/todo-date", T);
+    weekDrag("dragOver", row("2026-11-05"), "Report", T, { ctrlKey: true });
+    expect(row("2026-11-05").className).toContain("ring-gold");
+    fireEvent.dragLeave(row("2026-11-05"));
+    weekDrag("drop", row("2026-11-05"), "Report", T, { ctrlKey: true });
+    expect(await flashed("Copied to Thu, Nov 5, 2026")).toBeTruthy();
+    expect(loadTodos("2026-11-05")[0]).toMatchObject({ text: "Report", start: 570 });
+    weekDrag("drop", row("2026-11-04"), "Report", T);
+    expect(await flashed("Moved to Wed, Nov 4, 2026")).toBeTruthy();
+    expect(loadTodos("2026-11-04")[0]).toMatchObject({ text: "Report", start: 570, duration: 90 });
+    expect(loadTodos(T).map((t) => t.id)).toEqual(["Daily"]);
+    weekDrag("drop", row("2026-11-04"), "Daily", T);
+    expect(await flashed(/Repeating tasks stay on their own day/)).toBeTruthy();
+    weekDrag("drop", row("2026-11-04"), "gone", T); // nothing to move
+    expect(loadTodos("2026-11-04")).toHaveLength(1);
+  });
+
+  it("shows seven columns on a laptop: drop at a time, into To do, resize, tick and open", async () => {
+    saveTodos([todo("Report", { start: 570, duration: 60 }), ...["A", "B", "C", "D", "E"].map((x) => todo(x))], T);
+    await openCalendar();
+    await screen.findByText("Nov 2 – Nov 8");
+    const column = document.querySelector<HTMLElement>(`[data-day-column='2026-11-06']`)!;
+    column.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+    weekDrag("dragOver", column, "Report", T, { clientY: 64 * 14 });
+    expect(within(column).getByText("2 PM")).toBeTruthy();
+    weekDrag("dragOver", column, "Report", T, { clientY: 64 * 14, altKey: true });
+    expect(within(column).getByText(/Copy ·/)).toBeTruthy();
+    fireEvent.dragLeave(column);
+    weekDrag("drop", column, "Report", T, { clientY: 64 * 14 });
+    expect(loadTodos("2026-11-06")[0]).toMatchObject({ text: "Report", start: 840 });
+    const strip = document.querySelector<HTMLElement>(`[data-todo-strip='2026-11-07']`)!;
+    weekDrag("dragOver", strip, "Report", "2026-11-06");
+    fireEvent.dragLeave(strip);
+    weekDrag("drop", strip, "Report", "2026-11-06");
+    expect(loadTodos("2026-11-07")[0].start).toBeUndefined();
+    // Today's To do strip shows four, then a count that opens the day.
+    const todayStrip = document.querySelector<HTMLElement>(`[data-todo-strip='${T}']`)!;
+    expect(within(todayStrip).getAllByText(/^[A-E]$/)).toHaveLength(4);
+    const chip = within(todayStrip).getByText("A");
+    const setData = vi.fn();
+    fireEvent(chip, createEvent.dragStart(chip, { dataTransfer: { setData } }));
+    expect(setData).toHaveBeenCalledWith("text/todo-id", "A");
+
+    saveTodos([todo("Block", { start: 600, duration: 60 })], "2026-11-05");
+    fireEvent.click(screen.getByLabelText("Next week"));
+    fireEvent.click(screen.getByLabelText("Previous week"));
+    const block = await waitFor(() => document.querySelector<HTMLElement>("[data-block='Block']")!);
+    fireEvent.click(within(block).getByLabelText("Mark “Block” done"));
+    expect(loadTodos("2026-11-05")[0].completed).toBe(true);
+    act(() => void within(block).getByTestId("resize-handle").dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, clientY: 0 })));
+    act(() => void window.dispatchEvent(new MouseEvent("pointermove", { clientY: 32 })));
+    expect(within(block).getByText("10 AM – 11:30 AM")).toBeTruthy();
+    fireEvent(block, createEvent.dragStart(block, { dataTransfer: { setData: vi.fn() } }));
+    act(() => void window.dispatchEvent(new MouseEvent("pointerup")));
+    expect(loadTodos("2026-11-05")[0].duration).toBe(90);
+    fireEvent.click(within(document.querySelector<HTMLElement>(`[data-todo-strip='${T}']`)!).getByText("+1 more")); // drawn afresh after the week changed
+    expect(await screen.findByText("Sun · Today")).toBeTruthy();
+  });
+
+  it("opens a day from a column's header, a block or a chip", async () => {
+    saveTodos([todo("Block", { start: 600 }), todo("Chip")], "2026-11-04");
+    await openCalendar();
+    const header = (await screen.findAllByLabelText("Open Wed, Nov 4, 2026")).find((b) => b.className.includes("rounded-t"))!;
+    fireEvent.click(header);
+    expect(await screen.findByText("4 Nov")).toBeTruthy();
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Planner tabs" })).getByText("Calendar"));
+    fireEvent.click(await waitFor(() => document.querySelector<HTMLElement>("[data-block='Block']")!));
+    expect(await screen.findByText("4 Nov")).toBeTruthy();
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Planner tabs" })).getByText("Calendar"));
+    fireEvent.click(within(await waitFor(() => document.querySelector<HTMLElement>("[data-todo-strip='2026-11-04']")!)).getByText("Chip"));
+    expect(await screen.findByText("4 Nov")).toBeTruthy();
+  });
+
+  it("shows the month as a heatmap with each day's log score, and a table", async () => {
+    saveTodos([todo("a", { completed: true }), todo("b", { completed: true }), todo("c")], "2026-11-03");
+    saveTodos(Array.from({ length: 8 }, (_, i) => todo(`d${i}`, { completed: true })), T);
+    updateDayLog("2026-11-03", { ticks: { bath: {}, brush: {} }, counts: { walk: 4000 } });
+    await openCalendar();
+    fireEvent.click(await screen.findByRole("button", { name: "month" }));
+    expect(await screen.findByText("November 2026")).toBeTruthy();
+    expect(screen.getByText("10", { selector: "div" })).toBeTruthy(); // finished this month
+    expect(screen.getByText("of 30")).toBeTruthy();
+    expect(screen.getByText("Nov 8", { selector: "div" })).toBeTruthy(); // best day
+    const third = screen.getByLabelText("Nov 3: 2 of 3 tasks finished, log 3 of 7");
+    expect(third.textContent).toContain("3/7");
+    expect(third.className).toContain("bg-gold/25");
+    expect(screen.getByLabelText("Nov 8: 8 of 8 tasks finished").className).toContain("bg-gold ");
+    expect(screen.getByLabelText("Nov 20: nothing planned").className).toContain("opacity-60");
+    expect(screen.getByText("View as table")).toBeTruthy();
+    expect(screen.getAllByRole("row")).toHaveLength(3); // header, Nov 3, Nov 8
+    fireEvent.click(screen.getByLabelText("Next month"));
+    expect(await screen.findByText("December 2026")).toBeTruthy();
+    expect(screen.getByText("nothing finished yet")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Previous month"));
+    fireEvent.click(await screen.findByLabelText("Nov 3: 2 of 3 tasks finished, log 3 of 7"));
+    expect(await screen.findByText("3 Nov")).toBeTruthy();
+  });
+
+  it("W and M open the week and month and, again, go back; arrows step by the view", async () => {
+    open();
+    await screen.findByText("Sun · Today");
+    fireEvent.keyDown(window, { key: "w" });
+    expect(await screen.findByText("Nov 2 – Nov 8")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(await screen.findByText("Nov 9 – Nov 15")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "m" });
+    expect(await screen.findByText("November 2026")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(await screen.findByText("December 2026")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "m" });
+    expect(await screen.findByLabelText("Add a task")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "t" });
+    fireEvent.keyDown(window, { key: "w" });
+    fireEvent.keyDown(window, { key: "w" });
+    expect(await screen.findByText("Sun · Today")).toBeTruthy();
   });
 });
