@@ -4,12 +4,10 @@ import { useState } from "react";
 import { SLIPPING_AFTER, postponeCount, type Todo } from "@/lib/todos";
 
 // Shown on a task that keeps getting pushed back: stop carrying it, or make it smaller.
-// tone: the dark planner's colours, or the new planner's light-or-dark palette.
-export function SlippingHint({ todo, onDrop, onAddStep, tone = "dark" }: { todo: Todo; onDrop: () => void; onAddStep: (text: string) => void; tone?: "dark" | "bf" }) {
+export function SlippingHint({ todo, onDrop, onAddStep }: { todo: Todo; onDrop: () => void; onAddStep: (text: string) => void }) {
   const [adding, setAdding] = useState(false);
   const [step, setStep] = useState("");
   if (todo.completed || postponeCount(todo) < SLIPPING_AFTER) return null;
-  const bf = tone === "bf";
 
   const addStep = (e: React.FormEvent) => {
     e.preventDefault();
@@ -19,20 +17,20 @@ export function SlippingHint({ todo, onDrop, onAddStep, tone = "dark" }: { todo:
   };
 
   return (
-    <div className={`mt-2 rounded-lg px-3 py-2 text-xs ${bf ? "bg-gold font-semibold text-bf-ontag" : "border border-gold/25 bg-gold/5 text-white/75"}`}>
+    <div className={`mt-2 rounded-lg px-3 py-2 text-xs bg-gold font-semibold text-bf-ontag`}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="min-w-0 flex-1 basis-40">Postponed {postponeCount(todo)} times. Drop it or break it down?</span>
-        <button onClick={onDrop} className={bf ? "font-bold underline" : "font-medium text-white/80 hover:text-white"}>
+        <button onClick={onDrop} className="font-bold underline">
           Drop it
         </button>
-        <button onClick={() => setAdding((v) => !v)} aria-expanded={adding} className={bf ? "font-bold underline" : "font-medium text-gold hover:brightness-110"}>
+        <button onClick={() => setAdding((v) => !v)} aria-expanded={adding} className="font-bold underline">
           Break it down
         </button>
       </div>
       {adding && (
         <>
           {!!todo.subtasks?.length && (
-            <ul className={`mt-2 space-y-0.5 ${bf ? "" : "text-white/60"}`}>
+            <ul className="mt-2 space-y-0.5">
               {todo.subtasks.map((s) => (
                 <li key={s.id} className="break-words">
                   · {s.text}
@@ -46,9 +44,9 @@ export function SlippingHint({ todo, onDrop, onAddStep, tone = "dark" }: { todo:
               onChange={(e) => setStep(e.target.value)}
               placeholder="A smaller first step"
               aria-label={`A smaller step for “${todo.text}”`}
-              className={bf ? "min-w-0 flex-1 rounded-lg bg-white/70 px-2 py-1 text-bf-ontag placeholder:text-bf-ontag/60 focus:outline-none" : "min-w-0 flex-1 rounded-lg border border-white/10 bg-panel px-2 py-1 text-white placeholder-white/35 focus:border-gold/50 focus:outline-none"}
+              className="min-w-0 flex-1 rounded-lg bg-white/70 px-2 py-1 text-bf-ontag placeholder:text-bf-ontag/60 focus:outline-none"
             />
-            <button type="submit" className={bf ? "rounded-full bg-bf-ontag px-3 py-1 font-bold text-white" : "rounded-full border border-white/20 px-3 py-1 text-white/80 hover:border-gold/50 hover:text-gold"}>
+            <button type="submit" className="rounded-full bg-bf-ontag px-3 py-1 font-bold text-white">
               Add step
             </button>
           </form>

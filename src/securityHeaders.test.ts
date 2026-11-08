@@ -15,3 +15,11 @@ describe("security headers", () => {
     expect(headers["Permissions-Policy"]).toBe("camera=(), microphone=(self), geolocation=()");
   });
 });
+
+describe("planner redirects", () => {
+  it("send the old planner pages to /todos, for now only (not cached as permanent)", async () => {
+    const rules: { source: string; destination: string; permanent: boolean }[] = await nextConfig.redirects();
+    expect(rules.map((r) => r.source).sort()).toEqual(["/planner-next", "/todos/goals", "/todos/lists", "/todos/review", "/todos/search", "/todos/stats"]);
+    expect(rules.every((r) => r.destination === "/todos" && !r.permanent)).toBe(true);
+  });
+});

@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { Todo, getTodayDate, shiftDate } from "@/lib/todos";
 import {
-  TimeBlock,
   clampStart,
   fmtDuration,
   fmtTime,
@@ -74,86 +73,5 @@ describe("layoutBlocks", () => {
     // A 15-minute block is drawn ~21 minutes tall, so one starting right after is pushed below it.
     const lanes = layoutBlocks([todo("a", { start: 540, duration: 15 }), todo("b", { start: 555, duration: 15 })]);
     expect(lanes.get("b")?.shift).toBeCloseTo(5.625);
-  });
-});
-
-describe("TimeBlock", () => {
-  const block = (t: Todo, props: Partial<Parameters<typeof TimeBlock>[0]> = {}) => {
-    const onSelect = vi.fn();
-    const onToggle = vi.fn();
-    const onCommit = vi.fn();
-    const { result } = renderHook(() => useBlockResize(onCommit));
-    const view = render(
-      <TimeBlock todo={t} date="2026-03-02" lane={0} lanes={1} resize={result.current} onSelect={onSelect} onToggle={onToggle} {...props} />
-    );
-    return { onSelect, onToggle, onCommit, result, view };
-  };
-
-  it("shows the task and its time, and selects or toggles it", () => {
-    const t = todo("Write", { note: "draft", spent: 30, tag: "work", priority: "high" });
-    const { onSelect, onToggle, view } = block(t, { selected: true });
-    expect(screen.getByText("9 AM – 10 AM · ⏱ 30m")).toBeTruthy();
-    expect(view.container.firstElementChild!.getAttribute("title")).toBe("Write · 9 AM–10 AM\ndraft");
-    fireEvent.click(screen.getByText("Write"));
-    expect(onSelect).toHaveBeenCalledWith(t);
-    fireEvent.click(screen.getByLabelText("Mark as complete"));
-    expect(onToggle).toHaveBeenCalledWith(t);
-    expect(onSelect).toHaveBeenCalledTimes(1);
-  });
-
-  it("shows only the start in the compact week view, and nothing for short blocks", () => {
-    block(todo("Week", { completed: true }), { compact: true });
-    expect(screen.getByText("9 AM")).toBeTruthy();
-    expect(screen.getByLabelText("Mark as incomplete")).toBeTruthy();
-    block(todo("Short", { duration: 30 }));
-    expect(screen.queryByText(/9 AM – 9:30 AM/)).toBeNull();
-  });
-
-  it("records the block's id and day when dragged", () => {
-    block(todo("Drag"));
-    const data: Record<string, string> = {};
-    const dataTransfer = { setData: (k: string, v: string) => (data[k] = v), effectAllowed: "" };
-    fireEvent.dragStart(screen.getByText("Drag").closest("[draggable]")!, { dataTransfer });
-    expect(data).toEqual({ "text/todo-id": "Drag", "text/todo-date": "2026-03-02" });
-  });
-
-  it("resizes by dragging the bottom edge, snapping to 15 minutes", () => {
-    vi.useFakeTimers();
-    const { onCommit, result } = block(todo("Long"));
-    const handle = screen.getByTitle("Drag to change length");
-    pointer(handle, "pointerdown", 100);
-    pointer(window, "pointermove", 100 + 64); // one hour down
-    expect(result.current.preview).toEqual({ id: "Long", duration: 120 });
-    pointer(window, "pointerup", 164);
-    expect(onCommit).toHaveBeenCalledWith(expect.objectContaining({ id: "Long" }), "2026-03-02", 120);
-    expect(result.current.preview).toBeNull();
-    expect(result.current.active.current).toBe(true); // swallows the click that follows
-    act(() => void vi.runAllTimers());
-    expect(result.current.active.current).toBe(false);
-  });
-
-  it("doesn't commit a drag that ends where it started, and ignores clicks during one", () => {
-    const { onCommit, onSelect, result } = block(todo("Same"));
-    pointer(screen.getByTitle("Drag to change length"), "pointerdown", 100);
-    fireEvent.click(screen.getByText("Same"));
-    expect(onSelect).not.toHaveBeenCalled();
-    const dataTransfer = { setData: vi.fn() };
-    fireEvent.dragStart(screen.getByText("Same").closest("[draggable]")!, { dataTransfer });
-    expect(dataTransfer.setData).not.toHaveBeenCalled();
-    pointer(window, "pointercancel", 100);
-    expect(onCommit).not.toHaveBeenCalled();
-    expect(result.current.preview).toBeNull();
-  });
-
-  it("previews the new length while resizing", () => {
-    const t = todo("Grow");
-    const onCommit = vi.fn();
-    const { result } = renderHook(() => useBlockResize(onCommit));
-    pointer(document.body, "pointerdown", 0); // nothing listening yet
-    act(() => result.current.start({ clientY: 0, stopPropagation() {}, preventDefault() {} } as React.PointerEvent, t, "d"));
-    pointer(window, "pointermove", 32);
-    render(<TimeBlock todo={t} date="d" lane={0} lanes={1} resize={result.current} onSelect={vi.fn()} onToggle={vi.fn()} />);
-    expect(screen.getByText("9 AM – 10:30 AM · 1h 30m")).toBeTruthy();
-    pointer(window, "pointerup", 32);
   });
 });

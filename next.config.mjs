@@ -9,9 +9,19 @@ export const securityHeaders = [
   { key: 'Permissions-Policy', value: 'camera=(), microphone=(self), geolocation=()' },
 ];
 
+// The planner's old pages became tabs of /todos (Nov 2026). Old bookmarks and links land there; a
+// redirect keeps its query string, so /todos/lists?list=…&item=… still opens that item.
+export const plannerRedirects = [
+  ...['stats', 'lists', 'review', 'goals', 'search'].map((page) => ({ source: `/todos/${page}`, destination: '/todos', permanent: false })),
+  { source: '/planner-next', destination: '/todos', permanent: false },
+];
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: { remotePatterns: [{ protocol: 'https', hostname: 'image.tmdb.org' }] },
+  async redirects() {
+    return plannerRedirects;
+  },
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];
   },

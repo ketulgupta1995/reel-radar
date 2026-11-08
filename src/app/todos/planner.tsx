@@ -1,10 +1,9 @@
 "use client";
 
-// Pieces shared by the day planner, the week view and the stats page.
+// Pieces shared by the planner's screens: dates, lengths, block layout and resizing.
 
 import { useRef, useState } from "react";
-import { DEFAULT_DURATION, getTodayDate, shiftDate, type Priority, type Todo } from "@/lib/todos";
-import { tagColor } from "@/lib/plannerSettings";
+import { DEFAULT_DURATION, getTodayDate, shiftDate, type Todo } from "@/lib/todos";
 import { fmtTime } from "@/lib/reminders";
 
 export { fmtTime };
@@ -13,14 +12,6 @@ export const HOUR_PX = 64;
 export const SNAP = 15; // minutes
 const MIN_BLOCK_PX = 22; // shortest a block is drawn, so its text stays readable
 const MIN_BLOCK_MINUTES = (MIN_BLOCK_PX / HOUR_PX) * 60;
-
-export const PRIORITY_STYLE: Record<Priority, { dot: string; label: string; block: string }> = {
-  high: { dot: "bg-red-500", label: "High", block: "border-red-400/60 bg-red-500/20" },
-  medium: { dot: "bg-yellow-400", label: "Medium", block: "border-yellow-400/60 bg-yellow-400/15" },
-  low: { dot: "bg-sky-400", label: "Low", block: "border-sky-400/60 bg-sky-400/15" },
-};
-export const NO_PRIORITY_BLOCK = "border-white/25 bg-white/10";
-const DONE_BLOCK = "border-white/15 bg-[#1b1b27]";
 
 export const DAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"];
 export const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -110,101 +101,4 @@ export function useBlockResize(onCommit: (todo: Todo, date: string, duration: nu
   };
 
   return { preview, active, start };
-}
-
-export function TimeBlock({
-  todo,
-  date,
-  lane,
-  lanes,
-  shift = 0,
-  selected,
-  compact,
-  resize,
-  onSelect,
-  onToggle,
-}: {
-  todo: Todo;
-  date: string;
-  lane: number;
-  lanes: number;
-  shift?: number; // minutes the block is drawn below its start, to clear the block before it
-  selected?: boolean;
-  compact?: boolean; // week view: narrower columns
-  resize: BlockResize;
-  onSelect: (todo: Todo) => void;
-  onToggle: (todo: Todo) => void;
-}) {
-  const resizing = resize.preview?.id === todo.id;
-  const duration = resizing ? resize.preview!.duration : todo.duration ?? DEFAULT_DURATION;
-  // Done blocks use an opaque fill: a faded translucent one lets the grid lines and neighbours show through.
-  const style = todo.completed
-    ? DONE_BLOCK
-    : todo.priority
-    ? PRIORITY_STYLE[todo.priority].block
-    : NO_PRIORITY_BLOCK;
-  const start = todo.start!;
-  return (
-    <div
-      draggable
-      onDragStart={(e) => {
-        if (resize.active.current) return e.preventDefault();
-        e.dataTransfer.setData("text/todo-id", todo.id);
-        e.dataTransfer.setData("text/todo-date", date);
-        e.dataTransfer.effectAllowed = "copyMove";
-      }}
-      onClick={(e) => {
-        e.stopPropagation();
-        if (!resize.active.current) onSelect(todo);
-      }}
-      className={`group absolute z-10 cursor-grab overflow-hidden rounded-lg border text-xs transition-[box-shadow,opacity] active:cursor-grabbing ${style} ${
-        compact ? "px-1.5 py-0.5" : "px-2 py-1"
-      } ${selected || resizing ? "z-20 ring-2 ring-gold" : ""} ${todo.completed ? "text-white/50" : ""}`}
-      style={{
-        top: ((start + shift) / 60) * HOUR_PX + 1,
-        height: Math.max((duration / 60) * HOUR_PX - 2, MIN_BLOCK_PX),
-        left: `${(lane / lanes) * 100}%`,
-        width: `calc(${100 / lanes}% - 3px)`,
-        ...(todo.tag ? { borderLeftColor: tagColor(todo.tag), borderLeftWidth: 4 } : {}),
-      }}
-      title={`${todo.text} · ${fmtTime(start)}–${fmtTime(start + duration)}${todo.note ? `\n${todo.note}` : ""}`}
-    >
-      <div className="flex items-start gap-1.5">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggle(todo);
-          }}
-          className={`mt-px flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border ${
-            todo.completed ? "border-gold bg-gold text-black" : "border-white/50"
-          }`}
-          aria-label={todo.completed ? "Mark as incomplete" : "Mark as complete"}
-        >
-          {todo.completed && <span className="text-[9px] leading-none">✓</span>}
-        </button>
-        <span className={`min-w-0 flex-1 truncate font-medium ${todo.completed ? "line-through" : ""}`}>{todo.text}</span>
-      </div>
-      {(resizing || duration >= 45) && (
-        <div className="mt-0.5 truncate text-[10px] text-white/55">
-          {resizing
-            ? `${fmtTime(start)} – ${fmtTime(start + duration)} · ${fmtDuration(duration)}`
-            : compact
-            ? fmtTime(start)
-            : `${fmtTime(start)} – ${fmtTime(start + duration)}${todo.spent ? ` · ⏱ ${fmtDuration(todo.spent)}` : ""}`}
-        </div>
-      )}
-      {/* resize handle */}
-      <div
-        onPointerDown={(e) => resize.start(e, todo, date)}
-        className="absolute inset-x-0 bottom-0 flex h-2.5 cursor-ns-resize touch-none items-end justify-center"
-        title="Drag to change length"
-      >
-        <span
-          className={`mb-0.5 h-0.5 w-6 rounded-full bg-white/60 transition-opacity ${
-            selected || resizing ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-          }`}
-        />
-      </div>
-    </div>
-  );
 }
