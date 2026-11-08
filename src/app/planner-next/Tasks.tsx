@@ -131,6 +131,9 @@ function Row({ todo, date, today, streak, reorder, actions }: { todo: Todo; date
       data-task={todo.id}
       {...(!todo.completed ? { "data-reorder-id": todo.id } : {})}
       onPointerDown={swipe.start}
+      // On a laptop, drag a task onto the day bar to schedule it.
+      draggable={!todo.completed}
+      onDragStart={(e) => e.dataTransfer.setData("text/todo-id", todo.id)}
       style={swipe.dx || shift ? { transform: `translate(${swipe.dx}px, ${shift}px)` } : undefined}
       className={`relative flex min-h-[58px] touch-pan-y items-center gap-3 overflow-hidden rounded-[14px] bg-bf-s1 pr-1.5 ${swipe.dx || lifted ? "z-10 shadow-lg" : "transition"} ${todo.completed ? "opacity-60" : ""} ${
         swipe.dx > SWIPE ? "ring-2 ring-emerald-500" : swipe.dx < -SWIPE ? "ring-2 ring-sky-500" : ""

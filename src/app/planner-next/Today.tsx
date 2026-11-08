@@ -1,17 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { deleteTodo, loadTodos, moveTodoToDate, reorderTodo, restoreTodo, shiftDate, sortTodos, startFocus, stopFocus, toggleTodo, type Todo } from "@/lib/todos";
+import { addTodo, DEFAULT_DURATION, deleteTodo, loadTodos, scheduleTodo, moveTodoToDate, reorderTodo, restoreTodo, shiftDate, sortTodos, startFocus, stopFocus, toggleTodo, type Todo } from "@/lib/todos";
 import { dayProgress, todayCard } from "@/lib/plannerToday";
 import type { Goal } from "@/lib/plannerSettings";
-import { fmtDuration } from "../todos/planner";
+import { clampStart, fmtDuration, getRelativeDateLabel } from "../todos/planner";
 import { AddBox, type Destination } from "./AddBox";
 import { Attention } from "./Attention";
 import { CurrentCard } from "./CurrentCard";
 import { DayLogMore } from "./DayLogMore";
 import { FocusScreen } from "./FocusScreen";
 import { LogTiles } from "./LogTiles";
+import { DayBar, Timeline, type ScheduleActions } from "./Schedule";
 import { TaskDetails } from "./TaskDetails";
+import { DayTools, Filters, filterTodos, NO_FILTER, NoMatches, useFocusAlert, useReminders, type Filter } from "./Tools";
 import { Tasks } from "./Tasks";
 import type { Day } from "./useDay";
 
@@ -52,6 +54,10 @@ export function Today({ day }: { day: Day }) {
   const [destination, setDestination] = useState<Destination>({ kind: "day" });
   const [openId, setOpenId] = useState<string | null>(null);
   const [focusScreen, setFocusScreen] = useState(false);
+  const [view, setView] = useState<"list" | "timeline">("list");
+  const [filter, setFilter] = useState<Filter>(NO_FILTER);
+  const reminders = useReminders(date === today ? todos : [], now, flash);
+  useFocusAlert(focus);
   const inputRef = useRef<HTMLInputElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
@@ -122,6 +128,25 @@ export function Today({ day }: { day: Day }) {
       refresh();
     });
   };
+  const schedule: ScheduleActions = {
+    onOpen: (t) => setOpenId(t.id),
+    onTick: tick,
+    onPlace: (id, start) => {
+      const t = todos.find((x) => x.id === id);
+      if (!t) return;
+      const duration = t.duration ?? DEFAULT_DURATION;
+      scheduleTodo(id, { start: clampStart(start, duration), duration }, date);
+      refresh();
+    },
+    onLength: (t, duration) => {
+      scheduleTodo(t.id, { start: clampStart(t.start!, duration), duration }, date);
+      refresh();
+    },
+    onQuickAdd: (start, text) => {
+      addTodo(text, date, undefined, { start, duration: DEFAULT_DURATION });
+      refresh();
+    },
+  };
   const moveBy = (t: Todo, delta: -1 | 1) => {
     const ids = sortTodos(todos).filter((x) => !x.completed).map((x) => x.id);
     const at = ids.indexOf(t.id);
@@ -152,6 +177,7 @@ export function Today({ day }: { day: Day }) {
   };
 
   const opened = openId ? todos.find((t) => t.id === openId) : undefined;
+  const shown = filterTodos(todos, filter);
   const card = isToday && (
     <CurrentCard todos={todos} now={now} focus={focus} onFinish={tick} onFocus={beginFocus} onStopFocus={endFocus} onOpenFocus={() => setFocusScreen(true)} onWrapUp={openLog} />
   );
@@ -162,28 +188,60 @@ export function Today({ day }: { day: Day }) {
     </div>
   );
 
-  // Phone: one column, card → attention → log → tasks. Laptop: card beside the log, tasks beside attention.
+  // Phone: one column, card → attention → log → tasks (or the timeline). Laptop: card beside the log, the day bar
+  // across the page, then tasks beside attention.
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-2.5 px-3 pb-36 pt-3 lg:px-6 lg:pb-12">
       <Progress todos={todos} />
       <div className="grid items-start gap-2.5 lg:grid-cols-[1.4fr_1fr] lg:gap-4">
         {card && <div className="order-1 lg:col-start-1 lg:row-start-1">{card}</div>}
-        <div className="order-2 lg:col-start-2 lg:row-start-2">
+        <div className="order-2 lg:col-start-2 lg:row-start-3">
           <Attention day={day} onAddStep={addStep} />
         </div>
         <div className="order-3 lg:col-start-2 lg:row-start-1">{logPanel}</div>
-        <div className="order-4 flex flex-col gap-2.5 lg:col-start-1 lg:row-start-2">
+        <div className="order-4 hidden lg:col-span-2 lg:row-start-2 lg:block lg:pt-5">
+          <DayBar todos={todos} log={log} date={date} now={isToday ? now : null} actions={schedule} />
+        </div>
+        <div className="order-5 flex flex-col gap-2.5 lg:col-start-1 lg:row-start-3">
           <AddBox date={date} destination={destination} onDestination={setDestination} inputRef={inputRef} onAdded={refresh} onMessage={flash} />
-          <Tasks
-            todos={todos}
-            date={date}
-            today={today}
-            onReorder={(id, before) => {
-              reorderTodo(id, before, date);
-              refresh();
-            }}
-            actions={{ onTick: tick, onFocus: beginFocus, onOpen: (t) => setOpenId(t.id), onSwipeDone: swipeDone, onSwipeTomorrow: toTomorrow, onMoveBy: moveBy }}
-          />
+          <div role="group" aria-label="Show" className="flex gap-1.5 lg:hidden">
+            {(["list", "timeline"] as const).map((v) => (
+              <button key={v} onClick={() => setView(v)} aria-pressed={view === v} className={`flex-1 rounded-xl py-2.5 text-[13px] font-extrabold uppercase [font-stretch:115%] ${view === v ? "bg-bf-ink text-bf-bg" : "bg-bf-s1 text-bf-muted"}`}>
+                {v}
+              </button>
+            ))}
+          </div>
+          {view === "timeline" && (
+            <div className="lg:hidden">
+              <Timeline todos={todos} log={log} date={date} now={isToday ? now : null} actions={schedule} />
+            </div>
+          )}
+          <DayTools todos={todos} date={date} reminders={reminders} onApplied={refresh} onMessage={flash} />
+          {todos.length > 0 && todos.every((t) => t.completed) && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-[14px] bg-gold px-3.5 py-2.5 text-sm font-bold text-bf-ontag">
+              <span>All done for {getRelativeDateLabel(date)}. Take a breath, or get a head start.</span>
+              <button onClick={() => day.setDate(shiftDate(date, 1))} className="rounded-[10px] bg-bf-ontag px-3 py-1.5 text-xs text-white">
+                Plan {getRelativeDateLabel(shiftDate(date, 1)).toLowerCase()} →
+              </button>
+            </div>
+          )}
+          <div className={`flex-col gap-2.5 ${view === "timeline" ? "hidden lg:flex" : "flex"}`}>
+            {todos.length > 0 && <Filters todos={todos} filter={filter} onChange={setFilter} />}
+            {todos.length > 0 && !shown.length ? (
+              <NoMatches query={filter.query} />
+            ) : (
+              <Tasks
+                todos={shown}
+                date={date}
+                today={today}
+                onReorder={(id, before) => {
+                  reorderTodo(id, before, date);
+                  refresh();
+                }}
+                actions={{ onTick: tick, onFocus: beginFocus, onOpen: (t) => setOpenId(t.id), onSwipeDone: swipeDone, onSwipeTomorrow: toTomorrow, onMoveBy: moveBy }}
+              />
+            )}
+          </div>
         </div>
       </div>
       {opened && <TaskDetails todo={opened} date={date} onClose={() => setOpenId(null)} onChanged={refresh} onFocus={beginFocus} onMessage={flash} onRemoved={removed} />}

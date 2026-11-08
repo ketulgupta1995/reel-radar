@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { routeFetch } from "@/test/pages";
 import { addList, loadItems } from "@/lib/lists";
 import { addGoal, loadGoals } from "@/lib/plannerSettings";
@@ -184,7 +184,7 @@ describe("the card at the top", () => {
     expect(screen.queryByRole("region", { name: /Under way|Free time|Wrap up|All done/ })).toBeNull();
     expect(screen.getByText("Nothing planned yet. Add the first task above.")).toBeTruthy();
     fireEvent.click(screen.getByLabelText("Previous day"));
-    expect(await screen.findByText("Gym")).toBeTruthy();
+    expect((await screen.findAllByText("Gym")).length).toBeGreaterThan(0);
     expect(screen.queryByRole("region", { name: /Under way|Free time/ })).toBeNull();
   });
 });
@@ -849,5 +849,305 @@ describe("the add box's options", () => {
     expect(screen.queryByLabelText("How it repeats")).toBeNull();
     fireEvent.click(screen.getByText("More options"));
     expect(screen.queryByLabelText("Start time")).toBeNull();
+  });
+});
+
+class FakeNotification {
+  static permission: NotificationPermission = "granted";
+  static requestPermission = vi.fn(async () => FakeNotification.permission);
+  static sent: { title: string; body?: string }[] = [];
+  constructor(title: string, opts?: { body?: string }) {
+    FakeNotification.sent.push({ title, body: opts?.body });
+  }
+}
+const resetNotifications = () => {
+  FakeNotification.permission = "granted";
+  FakeNotification.sent = [];
+};
+
+// jsdom has no DragEvent: give the event what the drop handlers read.
+const dragTo = (kind: "dragOver" | "drop", el: HTMLElement, id: string, at: { clientX?: number; clientY?: number }) => {
+  const event = createEvent[kind](el, { dataTransfer: { getData: (k: string) => (k === "text/todo-id" ? id : ""), setData: () => {} } });
+  for (const [k, v] of Object.entries(at)) Object.defineProperty(event, k, { value: v });
+  fireEvent(event.target === el ? el : el, event);
+};
+const box = (el: HTMLElement, r: Partial<DOMRect>) => {
+  el.getBoundingClientRect = () => ({ top: 0, left: 0, width: 0, height: 0, ...r }) as DOMRect;
+};
+
+describe("the timeline (phone)", () => {
+  const show = async () => {
+    fireEvent.click(await screen.findByRole("button", { name: "timeline" }));
+    const grid = screen.getByTestId("timeline-grid");
+    box(grid, { top: 0 });
+    return grid;
+  };
+
+  it("shows blocks, the time now and the Done column, and opens or ticks a block", async () => {
+    updateDayLog(T, { wake: "06:40", drinks: [{ at: 560, ml: 250 }], water: 250 });
+    saveTodos([todo("Report", { start: 570, duration: 90, tag: "work", spent: 20 }), todo("Gym", { start: 420, duration: 45, completed: true, doneAt: new Date(2026, 10, 8, 7, 50).getTime() }), todo("Short", { start: 720, duration: 15 })], T);
+    open();
+    await show();
+    const timeline = within(screen.getByRole("region", { name: "Timeline" }));
+    expect(timeline.getByLabelText("Now, 9:40 AM")).toBeTruthy();
+    expect(timeline.getByText("9:30 AM – 11 AM · ⏱ 20m")).toBeTruthy();
+    expect(timeline.getByText("Done")).toBeTruthy();
+    expect(timeline.getAllByTestId("day-mark").map((m) => m.textContent)).toEqual(["🌅 Woke 6:40 AM", "💧 250 ml · 9:15 AM", "✓ Gym7:50 AM"]);
+    expect(screen.getByRole("list", { name: "Tasks" }).closest(".hidden")).toBeTruthy(); // the list is the other view, on a phone
+    fireEvent.click(timeline.getByLabelText("Mark “Report” done"));
+    expect(loadTodos(T).find((t) => t.id === "Report")!.completed).toBe(true);
+    fireEvent.click(timeline.getByText("Short"));
+    expect(screen.getByRole("dialog", { name: "Task details" })).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Close details"));
+    fireEvent.click(screen.getByRole("button", { name: "list" }));
+    expect(screen.getByRole("list", { name: "Tasks" }).closest(".hidden")).toBeNull();
+  });
+
+  it("adds a task in a tapped slot, and Escape leaves it", async () => {
+    open();
+    const grid = await show();
+    fireEvent.click(grid, { clientY: 14.5 * 64 + 10 });
+    const input = screen.getByLabelText("What's planned at 2:30 PM?");
+    fireEvent.change(input, { target: { value: "Call the bank" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.blur(input); // Enter already added it
+    expect(loadTodos(T)).toMatchObject([{ text: "Call the bank", start: 870, duration: 60 }]);
+    fireEvent.click(grid, { clientY: 64 * 20 });
+    fireEvent.keyDown(screen.getByLabelText("What's planned at 8 PM?"), { key: "Escape" });
+    fireEvent.click(grid.querySelector("[data-slot]")!, { clientY: 64 * 3 });
+    fireEvent.change(screen.getByLabelText("What's planned at 3 AM?"), { target: { value: "  " } });
+    fireEvent.blur(screen.getByLabelText("What's planned at 3 AM?"));
+    expect(loadTodos(T)).toHaveLength(1);
+  });
+
+  it("moves a block by dragging it, and changes its length by its bottom edge", async () => {
+    saveTodos([todo("Report", { start: 570, duration: 60 })], T);
+    open();
+    const grid = await show();
+    dragTo("dragOver", grid, "Report", { clientY: 64 * 13 });
+    expect(within(grid).getByText("1 PM")).toBeTruthy();
+    fireEvent.dragLeave(grid);
+    dragTo("drop", grid, "Report", { clientY: 64 * 13 });
+    expect(loadTodos(T)[0]).toMatchObject({ start: 780, duration: 60 });
+    dragTo("drop", grid, "", { clientY: 64 * 2 }); // nothing being dragged
+    dragTo("drop", grid, "gone", { clientY: 64 * 2 });
+    expect(loadTodos(T)[0].start).toBe(780);
+    const block = grid.querySelector<HTMLElement>("[data-block='Report']")!;
+    const start = createEvent.dragStart(block, { dataTransfer: { setData: vi.fn() } });
+    fireEvent(block, start);
+    act(() => void within(block).getByTestId("resize-handle").dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, clientY: 100 })));
+    act(() => void window.dispatchEvent(new MouseEvent("pointermove", { clientY: 132 })));
+    expect(within(block).getByText(/2:30 PM · 1h 30m/)).toBeTruthy();
+    fireEvent(block, createEvent.dragStart(block, { dataTransfer: { setData: vi.fn() } })); // no drag while resizing
+    act(() => void window.dispatchEvent(new MouseEvent("pointerup")));
+    expect(loadTodos(T)[0]).toMatchObject({ start: 780, duration: 90 });
+    fireEvent.click(block); // the click after resizing doesn't open it
+    expect(screen.queryByRole("dialog", { name: "Task details" })).toBeNull();
+  });
+});
+
+describe("the day bar (laptop)", () => {
+  // 6 AM to midnight across 1080px: a minute a pixel, from x = 0 at 6 AM.
+  const bar = async () => {
+    const el = await screen.findByTestId("day-bar");
+    box(el, { left: 0, width: 1080 });
+    return el;
+  };
+
+  it("schedules a task dropped on it, moves blocks, and opens one", async () => {
+    saveTodos([todo("Report", { start: 570, duration: 90, tag: "work" }), todo("Dentist")], T);
+    open();
+    const el = await bar();
+    dragTo("dragOver", el, "Dentist", { clientX: 240 });
+    expect(within(el).getByText("10 AM")).toBeTruthy();
+    fireEvent.dragLeave(el);
+    dragTo("drop", el, "Dentist", { clientX: 240 });
+    expect(loadTodos(T).find((t) => t.id === "Dentist")).toMatchObject({ start: 600, duration: 60 });
+    dragTo("drop", el, "", { clientX: 10 });
+    fireEvent.click(el.querySelector("[data-block='Report']")!);
+    expect(screen.getByRole("dialog", { name: "Task details" })).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Close details"));
+    // A task row can be dragged onto it.
+    const row = tasks().getByText("Report").closest("li")!;
+    const setData = vi.fn();
+    fireEvent(row, createEvent.dragStart(row, { dataTransfer: { setData } }));
+    expect(setData).toHaveBeenCalledWith("text/todo-id", "Report");
+  });
+
+  it("starts earlier when a block does, changes length by the right edge, and adds in a gap", async () => {
+    saveTodos([todo("Early", { start: 300, duration: 30 })], T);
+    open();
+    const el = await bar(); // now from 5 AM: 1140 minutes over 1080px
+    expect(within(el).getByText("5")).toBeTruthy();
+    const block = el.querySelector<HTMLElement>("[data-block='Early']")!;
+    act(() => void within(block).getByTestId("resize-edge").dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, clientX: 30 })));
+    act(() => void window.dispatchEvent(new MouseEvent("pointermove", { clientX: 60 })));
+    fireEvent(block, createEvent.dragStart(block, { dataTransfer: { setData: vi.fn() } }));
+    act(() => void window.dispatchEvent(new MouseEvent("pointerup")));
+    expect(loadTodos(T)[0].duration).toBe(60);
+    fireEvent.click(block);
+    expect(screen.queryByRole("dialog", { name: "Task details" })).toBeNull();
+    fireEvent.click(el, { clientX: 1080 * (15 * 60 - 300) / 1140 + 5 });
+    fireEvent.change(screen.getByLabelText("What's planned at 3 PM?"), { target: { value: "Tea" } });
+    fireEvent.keyDown(screen.getByLabelText("What's planned at 3 PM?"), { key: "Enter" });
+    expect(loadTodos(T).find((t) => t.text === "Tea")).toMatchObject({ start: 900 });
+    // A resize that ends where it started changes nothing.
+    act(() => void within(el.querySelector<HTMLElement>("[data-block='Early']")!).getByTestId("resize-edge").dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, clientX: 30 })));
+    act(() => void window.dispatchEvent(new MouseEvent("pointercancel")));
+    expect(loadTodos(T)[0].duration).toBe(60);
+  });
+
+  it("puts what was done underneath, close marks on separate rows", async () => {
+    updateDayLog(T, { wake: "06:40", drinks: [{ at: 405, ml: 250 }] });
+    open();
+    await bar();
+    const marks = within(screen.getByRole("region", { name: "Day bar" })).getAllByTestId("day-mark");
+    expect(marks.map((m) => [m.textContent, m.style.top])).toEqual([
+      ["🌅 Woke 6:40 AM", "0px"],
+      ["💧 250 ml · 6:45 AM", "22px"],
+    ]);
+  });
+});
+
+describe("day tools", () => {
+  it("proposes times for unscheduled tasks, lets each be changed or left out, and applies the plan", async () => {
+    updateDayLog(T, { wake: "07:00", sleep: "23:00" });
+    saveTodos([todo("Write", { priority: "high", duration: 60 }), todo("Read", { duration: 30 }), todo("Calls", { duration: 45 }), todo("Daily", { dailyId: "d1" })], T);
+    open();
+    fireEvent.click(await screen.findByText("✨ Auto-schedule"));
+    const plan = within(screen.getByRole("region", { name: "Proposed schedule" }));
+    expect(plan.getByText(/Proposed between 7 AM and 11 PM, most important first/)).toBeTruthy();
+    expect(plan.getByText(/Left out 1 repeating task/)).toBeTruthy();
+    fireEvent.change(plan.getByLabelText("Start time for “Read”"), { target: { value: "16:00" } });
+    fireEvent.change(plan.getByLabelText("Start time for “Read”"), { target: { value: "" } }); // ignored
+    fireEvent.change(plan.getByLabelText("Length of “Read”"), { target: { value: "45" } });
+    fireEvent.click(plan.getByLabelText("Leave “Calls” out"));
+    fireEvent.click(plan.getByText("Apply"));
+    expect(await flashed("Scheduled 2 tasks")).toBeTruthy();
+    expect(loadTodos(T).find((t) => t.id === "Read")).toMatchObject({ start: 960, duration: 45 });
+    expect(loadTodos(T).find((t) => t.id === "Write")!.start).toBeDefined();
+    expect(loadTodos(T).find((t) => t.id === "Calls")!.start).toBeUndefined();
+    fireEvent.click(screen.getByText("✨ Auto-schedule"));
+    fireEvent.click(within(screen.getByRole("region", { name: "Proposed schedule" })).getByText("Cancel"));
+    expect(screen.queryByRole("region", { name: "Proposed schedule" })).toBeNull();
+  });
+
+  it("says when there's no free time, and what didn't fit", async () => {
+    updateDayLog(T, { wake: "22:00", sleep: "23:00" }); // an hour free, tonight
+    saveTodos([todo("Big", { duration: 240 })], T);
+    open();
+    fireEvent.click(await screen.findByText("✨ Auto-schedule"));
+    const plan = within(screen.getByRole("region", { name: "Proposed schedule" }));
+    expect(plan.getByText(/No free time between/)).toBeTruthy();
+    expect(plan.getByText("Didn't fit: Big")).toBeTruthy();
+    expect((plan.getByText("Apply") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("saves a day as a template, applies it to another day, and deletes it after a second tap", async () => {
+    open();
+    fireEvent.click(await screen.findByText("Templates ▾"));
+    const panel = () => within(screen.getByRole("region", { name: "Day templates" }));
+    expect(panel().getByText(/Save a day's tasks and times as a layout/)).toBeTruthy();
+    fireEvent.change(panel().getByLabelText("Template name"), { target: { value: "Workday" } });
+    fireEvent.submit(panel().getByLabelText("Template name"));
+    expect(await flashed("This day has no one-off tasks to save")).toBeTruthy();
+    fireEvent.submit(panel().getByLabelText("Template name")); // still named: tries again
+    saveTodos([todo("Standup", { start: 600, duration: 15 }), todo("Review")], T);
+    fireEvent.submit(panel().getByLabelText("Template name"));
+    expect(await flashed("Saved “Workday” with 2 tasks")).toBeTruthy();
+    fireEvent.submit(panel().getByLabelText("Template name")); // emptied: nothing
+    fireEvent.click(screen.getByLabelText("Next day"));
+    fireEvent.click(await screen.findByText("Templates ▾"));
+    fireEvent.click(panel().getByLabelText("Apply “Workday”"));
+    expect(await flashed("Added 2 tasks from “Workday”")).toBeTruthy();
+    expect(loadTodos("2026-11-09").map((t) => t.text).sort()).toEqual(["Review", "Standup"]);
+    fireEvent.click(panel().getByLabelText("Apply “Workday”"));
+    expect(await flashed("Everything in “Workday” is already on this day")).toBeTruthy();
+    fireEvent.click(panel().getByLabelText("Delete “Workday”"));
+    fireEvent.click(panel().getByText("Delete it?"));
+    expect(panel().queryByText("Workday")).toBeNull();
+    fireEvent.click(screen.getByText("Templates ▴"));
+    expect(screen.queryByRole("region", { name: "Day templates" })).toBeNull();
+  });
+
+  it("turns reminders on, or explains why it can't, and off again", async () => {
+    resetNotifications();
+    open();
+    const select = await screen.findByLabelText("Reminders");
+    fireEvent.change(select, { target: { value: "5" } });
+    expect(await flashed("This browser can't show notifications")).toBeTruthy();
+    vi.stubGlobal("Notification", FakeNotification);
+    FakeNotification.permission = "denied";
+    fireEvent.change(select, { target: { value: "5" } });
+    expect(await flashed("Notifications are blocked for this site")).toBeTruthy();
+    FakeNotification.permission = "default";
+    FakeNotification.requestPermission.mockResolvedValueOnce("granted");
+    fireEvent.change(select, { target: { value: "10" } });
+    expect(await flashed("Reminders on while this page is open")).toBeTruthy();
+    expect(localStorage.getItem("reel-radar-reminder-lead")).toBe("10");
+    expect((select as HTMLSelectElement).value).toBe("10");
+    fireEvent.change(select, { target: { value: "" } });
+    expect(localStorage.getItem("reel-radar-reminder-lead")).toBeNull();
+  });
+
+  it("reminds about a block coming up while the page is open, once", async () => {
+    resetNotifications();
+    vi.stubGlobal("Notification", FakeNotification);
+    localStorage.setItem("reel-radar-reminder-lead", "5");
+    saveTodos([todo("Meeting", { start: 583, duration: 30 })], T);
+    open();
+    await waitFor(() => expect(FakeNotification.sent.map((n) => n.title)).toEqual(["Meeting"]));
+    fireEvent.click(screen.getByLabelText("Next day"));
+    fireEvent.click(screen.getByLabelText("Previous day"));
+    await tasks().findByText("Meeting");
+    expect(FakeNotification.sent).toHaveLength(1);
+  });
+
+  it("says once when a focus session's planned time is up", async () => {
+    resetNotifications();
+    vi.stubGlobal("Notification", FakeNotification);
+    saveTodos([todo("Sprint", { start: 570, duration: 15, spent: 20 })], T);
+    open();
+    fireEvent.click(await tasks().findByLabelText("Focus on “Sprint”"));
+    await waitFor(() => expect(FakeNotification.sent).toEqual([{ title: "Time's up: Sprint", body: "Your planned time for this block is over." }]));
+    expect(screen.getByTestId("focus-big-clock").textContent).toMatch(/^\+5:00$/);
+  });
+});
+
+describe("filtering the list", () => {
+  it("shows all, open or done tasks, by words and by tag, and offers to search every day", async () => {
+    saveTodos([todo("Report", { tag: "work", note: "quarterly numbers" }), todo("Laundry", { tag: "home" }), todo("Gym", { completed: true })], T);
+    open();
+    await tasks().findByText("Report");
+    const names = () => [...(screen.queryByRole("list", { name: "Tasks" })?.querySelectorAll("li[data-task]") ?? []), ...(screen.queryByRole("list", { name: "Done" })?.querySelectorAll("li[data-task]") ?? [])].map((li) => (li as HTMLElement).dataset.task);
+    fireEvent.click(screen.getByRole("button", { name: "active (2)" }));
+    expect(names()).toEqual(["Report", "Laundry"]);
+    fireEvent.click(screen.getByRole("button", { name: "done (1)" }));
+    expect(names()).toEqual(["Gym"]);
+    fireEvent.click(screen.getByRole("button", { name: "all" }));
+    fireEvent.change(screen.getByLabelText("Filter this day"), { target: { value: "QUARTERLY" } });
+    expect(names()).toEqual(["Report"]);
+    fireEvent.change(screen.getByLabelText("Filter this day"), { target: { value: "dentist" } });
+    expect(screen.getByText("No tasks match this filter.")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Search every day →" }).getAttribute("href")).toBe("/todos/search?q=dentist");
+    fireEvent.change(screen.getByLabelText("Filter this day"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    expect(names()).toEqual(["Laundry"]);
+    // The chosen tag stays offered on a day without it.
+    fireEvent.click(screen.getByLabelText("Next day"));
+    saveTodos([todo("Other", { tag: "work" })], "2026-11-09");
+    fireEvent.click(screen.getByLabelText("Previous day"));
+    fireEvent.click(screen.getByLabelText("Next day"));
+    await waitFor(() => expect(screen.getByText("No tasks match this filter.")).toBeTruthy());
+    expect(screen.queryByRole("link", { name: "Search every day →" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "All tags" }));
+    expect(names()).toEqual(["Other"]);
+  });
+
+  it("when everything's done, offers to plan the next day", async () => {
+    saveTodos([todo("Gym", { completed: true })], T);
+    open();
+    fireEvent.click(await screen.findByText("Plan tomorrow →"));
+    expect(await screen.findByText("Mon · Tomorrow")).toBeTruthy();
   });
 });

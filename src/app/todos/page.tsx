@@ -25,6 +25,7 @@ import {
   layoutBlocks,
 } from "./planner";
 import { weekStart } from "@/lib/plannerStats";
+import { dayMarks, type DayMark } from "@/lib/plannerToday";
 import {
   loadTodos,
   addTodo,
@@ -100,7 +101,7 @@ import { PlannerTools } from "./PlannerTools";
 import { canAutoSchedule, dayWindow, planDay, type DayPlan, type DayWindow, type PlannedBlock } from "@/lib/autoSchedule";
 import { allTags, loadGoals, tagColor, tagLabel, useGoals, useLogItems, useTags } from "@/lib/plannerSettings";
 import { REMINDER_LEADS, reminderBody, reminderKey } from "@/lib/reminders";
-import { disablePush, enablePush, notify } from "@/lib/push";
+import { disablePush, enablePush, loadReminderLead, notify, saveReminderLead } from "@/lib/push";
 
 type Filter = "all" | "active" | "done";
 type MobileView = "tasks" | "schedule";
@@ -120,26 +121,6 @@ function stepDate(date: string, view: View, n: number): string {
   return view === "month" ? shiftMonth(date, n) : shiftDate(date, view === "week" ? 7 * n : n);
 }
 const formatMonth = (date: string) => new Date(date + "T00:00:00").toLocaleDateString("en-US", { month: "long", year: "numeric" });
-
-const REMINDER_KEY = "reel-radar-reminder-lead"; // minutes before a block starts; unset = off
-
-function loadReminderLead(): number | null {
-  try {
-    const v = localStorage.getItem(REMINDER_KEY);
-    return v === null ? null : Number(v);
-  } catch {
-    return null;
-  }
-}
-
-function saveReminderLead(lead: number | null): void {
-  try {
-    if (lead === null) localStorage.removeItem(REMINDER_KEY);
-    else localStorage.setItem(REMINDER_KEY, String(lead));
-  } catch {
-    // Storage unavailable: the setting just won't persist.
-  }
-}
 
 const NEXT_PRIORITY: Record<string, Priority | undefined> = {
   none: "high",
@@ -1341,34 +1322,6 @@ const MARK_PX = 22; // height of one mark pill plus a little air
 // The Done column's width, and the same width kept clear of blocks. Written out in full for Tailwind.
 const MARK_COLUMN = "w-[clamp(7.5rem,38%,13rem)]";
 const MARK_COLUMN_RIGHT = "right-[clamp(7.5rem,38%,13rem)]";
-
-type DayMark = { key: string; at: number; text: string; time?: string; tone: string; title?: string };
-
-// Wake, sleep and water marks on the schedule. Drinks within the same quarter hour are added together.
-function dayMarks(log: DayLog, todos: Todo[], date: string): DayMark[] {
-  const marks: DayMark[] = [];
-  const clock = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3));
-  if (log.wake) marks.push({ key: "wake", at: clock(log.wake), text: `🌅 Woke ${fmtTime(clock(log.wake))}`, tone: "amber" });
-  if (log.sleep) marks.push({ key: "sleep", at: clock(log.sleep), text: `😴 Sleep ${fmtTime(clock(log.sleep))}`, tone: "violet" });
-  const slots = new Map<number, number>();
-  for (const d of log.drinks ?? []) slots.set(snap(d.at), (slots.get(snap(d.at)) ?? 0) + d.ml);
-  slots.forEach((ml, at) => marks.push({ key: `water-${at}`, at, text: `💧 ${ml} ml · ${fmtTime(at)}`, tone: "sky" }));
-  // Tasks and checklist items ticked off on this day, at the time they were ticked.
-  const doneToday = (ms?: number) => ms !== undefined && toDateString(new Date(ms)) === date;
-  const minuteOf = (ms: number) => new Date(ms).getHours() * 60 + new Date(ms).getMinutes();
-  for (const t of todos) {
-    if (t.completed && doneToday(t.doneAt)) {
-      const time = fmtTime(minuteOf(t.doneAt!));
-      marks.push({ key: `done-${t.id}`, at: minuteOf(t.doneAt!), text: `✓ ${t.text}`, time, tone: "emerald", title: `${t.text} · done ${time}` });
-    }
-    for (const st of t.subtasks ?? [])
-      if (st.done && doneToday(st.doneAt)) {
-        const time = fmtTime(minuteOf(st.doneAt!));
-        marks.push({ key: `done-${t.id}-${st.id}`, at: minuteOf(st.doneAt!), text: `✓ ${st.text}`, time, tone: "emerald", title: `${st.text} (${t.text}) · done ${time}` });
-      }
-  }
-  return marks;
-}
 
 function DayMarkers({ marks }: { marks: DayMark[] }) {
   const tones: Record<string, string> = {

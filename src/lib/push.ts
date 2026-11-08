@@ -75,3 +75,24 @@ export function notify(title: string, options: NotificationOptions): void {
     .then((reg) => (reg ? reg.showNotification(title, { icon: "/icon-192.png", ...options }) : showDirectly(title, options)))
     .catch(() => showDirectly(title, options));
 }
+
+// How long before each block this device reminds you, kept in this browser (both planners share it).
+const REMINDER_KEY = "reel-radar-reminder-lead"; // minutes before a block starts; unset = off
+
+export function loadReminderLead(): number | null {
+  try {
+    const v = localStorage.getItem(REMINDER_KEY);
+    return v === null ? null : Number(v);
+  } catch {
+    return null;
+  }
+}
+
+export function saveReminderLead(lead: number | null): void {
+  try {
+    if (lead === null) localStorage.removeItem(REMINDER_KEY);
+    else localStorage.setItem(REMINDER_KEY, String(lead));
+  } catch {
+    // Storage unavailable: the setting just won't persist.
+  }
+}

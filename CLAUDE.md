@@ -66,7 +66,8 @@ src/
   app/todos/             Planner page parts: AddTaskForm, TaskTrays, TodoItem, NextUp, WeekView, MonthView, AutoSchedule, RepeatPicker, PlannerTools, Slipping,
                          Deadlines, ClockTimePicker, shared planner.tsx
   app/planner-next/      The new planner (Bold focus), built beside /todos on the same data until it replaces it: useDay (the day's state and sync),
-                         Today, CurrentCard, FocusScreen, Attention, LogTiles, DayLogMore, Tasks (rows: swipe, reorder), TaskDetails, AddBox; layout.tsx loads its fonts with next/font
+                         Today, CurrentCard, FocusScreen, Attention, LogTiles, DayLogMore, Tasks (rows: swipe, reorder), TaskDetails, AddBox,
+                         Schedule (phone Timeline, laptop DayBar), Tools (auto-schedule, templates, reminders, filters); layout.tsx loads its fonts with next/font
   app/money/             Money page parts: ReviewQueue, shared.tsx
   app/api/               Route handlers: discover, recommendations, similar, search, title,
                          person/[id], sync, media/[id], books/gutenberg/[id], books/librivox, usage, push, push/send, money/family (starter family from the env),
@@ -82,7 +83,7 @@ src/
     todos.ts             Todo and daily-task model and logic, planner sync ("use client")
     plannerBackup.ts     Planner export/import: days, daily tasks, day log, lists, tags, templates, goals, log items ("use client")
     reminders.ts         Reminder rules shared by the page and the server (no "use client")
-    push.ts              Browser side of reminders: service worker, subscribing, notify()
+    push.ts              Browser side of reminders: service worker, subscribing, notify(), the saved lead (loadReminderLead/saveReminderLead, shared by both planners)
     pushReminders.ts     Server side of reminders: subscriptions, what's due, sending
     webPush.ts           VAPID signing and RFC 8291 encryption with Node crypto (server only)
     lists.ts             Planner lists (wishlist, things to remember): items, quick-add parsing, sync ("use client")
@@ -98,7 +99,7 @@ src/
     plannerStats.ts      Planner stats aggregation (pure; used by /todos/stats)
     plannerInsights.ts   Sleep hours, day log trends and patterns, planned vs. actual time, review week, month data, goal progress (pure)
     plannerSearch.ts     Finds text in every day's tasks and day notes (pure; used by /todos/search)
-    plannerToday.ts      The new planner's Today: the current-task card's state (todayCard) and the progress line (dayProgress) (pure)
+    plannerToday.ts      Today's rules: the current-task card's state (todayCard), the progress line (dayProgress), and the schedule's Done column (dayMarks, used by both planners) (pure)
     plannerSettings.ts   Tags, day templates, goals and day log items: a synced doc, useTags(), useGoals(), useLogItems(), tagLabel(), tagColor() ("use client")
     autoSchedule.ts      Proposes a day's plan from free time, priority and length (pure)
     quickAdd.ts          Reads the add-box shorthand: time, length, tag, priority, date, deadline, repeat

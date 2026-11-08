@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dayProgress, todayCard } from "./plannerToday";
+import { dayMarks, dayProgress, todayCard } from "./plannerToday";
 import type { Todo } from "./todos";
 
 const t = (id: string, extra: Partial<Todo> = {}): Todo => ({ id, text: id, completed: false, createdAt: "2026-11-08T00:00:00.000Z", ...extra });
@@ -50,5 +50,32 @@ describe("dayProgress", () => {
       plannedMinutes: 105,
     });
     expect(dayProgress([])).toEqual({ done: 0, total: 0, doneMinutes: 0, plannedMinutes: 0 });
+  });
+});
+
+describe("dayMarks", () => {
+  const D = "2026-11-08";
+  const ms = (h: number, m: number, day = 8) => new Date(2026, 10, day, h, m).getTime();
+  it("marks wake, sleep, water by the quarter hour, and what was ticked that day", () => {
+    const marks = dayMarks(
+      { wake: "06:40", sleep: "23:10", drinks: [{ at: 482, ml: 250 }, { at: 488, ml: 250 }, { at: 600, ml: 500 }] },
+      [
+        t("Gym", { completed: true, doneAt: ms(7, 50), subtasks: [{ id: "s", text: "Stretch", done: true, doneAt: ms(7, 20) }, { id: "u", text: "Run", done: false }] }),
+        t("Old", { completed: true, doneAt: ms(9, 0, 7) }), // ticked the day before
+        t("Open"),
+      ],
+      D
+    );
+    expect(marks.map((m) => [m.key, m.at, m.text])).toEqual([
+      ["wake", 400, "🌅 Woke 6:40 AM"],
+      ["sleep", 1390, "😴 Sleep 11:10 PM"],
+      ["water-480", 480, "💧 250 ml · 8 AM"],
+      ["water-495", 495, "💧 250 ml · 8:15 AM"],
+      ["water-600", 600, "💧 500 ml · 10 AM"],
+      ["done-Gym", 470, "✓ Gym"],
+      ["done-Gym-s", 440, "✓ Stretch"],
+    ]);
+    expect(marks.find((m) => m.key === "done-Gym")).toMatchObject({ time: "7:50 AM", tone: "emerald", title: "Gym · done 7:50 AM" });
+    expect(dayMarks({}, [], D)).toEqual([]);
   });
 });
