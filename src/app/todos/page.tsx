@@ -68,6 +68,8 @@ import {
   sortTodos,
   reorderTodo,
   updateDayLog,
+  setLogCount,
+  setLogTick,
   addWater,
   WATER_STEP,
   WATER_GOAL,
@@ -96,7 +98,7 @@ import { AutoSchedulePanel } from "./AutoSchedule";
 import MonthView from "./MonthView";
 import { PlannerTools } from "./PlannerTools";
 import { canAutoSchedule, dayWindow, planDay, type DayPlan, type DayWindow, type PlannedBlock } from "@/lib/autoSchedule";
-import { allTags, loadGoals, tagColor, tagLabel, useGoals, useTags } from "@/lib/plannerSettings";
+import { allTags, loadGoals, tagColor, tagLabel, useGoals, useLogItems, useTags } from "@/lib/plannerSettings";
 import { REMINDER_LEADS, reminderBody, reminderKey } from "@/lib/reminders";
 import { disablePush, enablePush, notify } from "@/lib/push";
 
@@ -1474,16 +1476,22 @@ function DayLogCard({ date, version, onChange }: { date: string; version: number
       {hasNotes && !open && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-gold" aria-label="has notes" />}
     </button>
   );
+  const items = <LogItemChips date={date} log={log} onChange={setLog} />;
   if (!open)
     return (
-      <div className="mb-4 flex items-center gap-2 rounded-2xl border border-white/15 bg-white/[.05] px-3 py-2">
-        {toggle}
-        <div className="shrink-0">{waterButton("More water", WATER_STEP, "+ Glass")}</div>
+      <div className="mb-4 space-y-2 rounded-2xl border border-white/15 bg-white/[.05] px-3 py-2">
+        <div className="flex items-center gap-2">
+          {toggle}
+          <div className="shrink-0">{waterButton("More water", WATER_STEP, "+ Glass")}</div>
+        </div>
+        {items}
       </div>
     );
   return (
     <div className="relative z-[35] mb-4 space-y-3 rounded-3xl border border-white/15 bg-white/[.05] p-3 backdrop-blur-xl sm:p-4">
       {toggle}
+      {items}
+      <TickTimes log={log} />
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         <ClockTimePicker
           label="Woke up"
@@ -1573,6 +1581,90 @@ function DayLogCard({ date, version, onChange }: { date: string; version: number
       </div>
     </div>
   );
+}
+
+// The day's log items as one row of chips: tap to tick, or to type a number such as steps walked.
+function LogItemChips({ date, log, onChange }: { date: string; log: DayLog; onChange: (log: DayLog) => void }) {
+  const items = useLogItems();
+  const [editing, setEditing] = useState<string | null>(null);
+  const [text, setText] = useState("");
+  if (!items.length) return null;
+  const done = items.filter((i) => (i.kind === "tick" ? log.ticks?.[i.id] : log.counts?.[i.id])).length;
+  const chip = "shrink-0 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs transition";
+  const off = `${chip} border-white/15 text-white/70 hover:border-gold/50 hover:text-gold`;
+  const on = `${chip} border-gold/50 bg-gold/15 text-gold`;
+  const save = (id: string) => {
+    const n = parseInt(text.replace(/[^\d]/g, ""), 10);
+    onChange(setLogCount(date, id, Number.isFinite(n) ? n : undefined));
+    setEditing(null);
+  };
+  return (
+    <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none]" role="group" aria-label="Log items">
+      <span className="shrink-0 text-xs tabular-nums text-white/50" aria-label={`${done} of ${items.length} logged`}>
+        {done}/{items.length}
+      </span>
+      {items.map((i) => {
+        if (i.kind === "tick") {
+          const ticked = !!log.ticks?.[i.id];
+          return (
+            <button
+              key={i.id}
+              type="button"
+              aria-pressed={ticked}
+              onClick={() => {
+                const d = new Date();
+                onChange(setLogTick(date, i.id, !ticked, date === getTodayDate() ? d.getHours() * 60 + d.getMinutes() : undefined));
+              }}
+              className={ticked ? on : off}
+            >
+              {ticked ? "✓" : "○"} {i.label}
+            </button>
+          );
+        }
+        const n = log.counts?.[i.id];
+        if (editing === i.id)
+          return (
+            <input
+              key={i.id}
+              autoFocus
+              type="text"
+              inputMode="numeric"
+              aria-label={`${i.label}${i.unit ? `, ${i.unit}` : ""}`}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onBlur={() => save(i.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") save(i.id);
+                if (e.key === "Escape") setEditing(null);
+              }}
+              className="w-24 shrink-0 rounded-full border border-gold/50 bg-panel px-2.5 py-1 text-xs text-white focus:outline-none"
+            />
+          );
+        return (
+          <button
+            key={i.id}
+            type="button"
+            onClick={() => {
+              setText(n ? String(n) : "");
+              setEditing(i.id);
+            }}
+            className={n ? on : off}
+          >
+            {i.label}
+            {n ? ` · ${n.toLocaleString("en-IN")}${i.unit ? ` ${i.unit}` : ""}` : ""}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// When each item was ticked, for the opened log. Ticks made after the day have no time.
+function TickTimes({ log }: { log: DayLog }) {
+  const items = useLogItems();
+  const timed = items.filter((i) => log.ticks?.[i.id]?.at !== undefined);
+  if (!timed.length) return null;
+  return <p className="text-xs text-white/50">Ticked: {timed.map((i) => `${i.label} ${fmtTime(log.ticks![i.id].at!)}`).join(" · ")}</p>;
 }
 
 function moodLine(total: number, active: number, percent: number): string {

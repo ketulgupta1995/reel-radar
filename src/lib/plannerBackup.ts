@@ -11,6 +11,8 @@ import {
   saveDailyTasks,
   saveTodos,
   syncAllPlanner,
+  cleanCounts,
+  cleanTicks,
   updateDayLog,
   type DailyTask,
   type DayLog,
@@ -92,6 +94,8 @@ function cleanDayLog(raw: unknown): DayLog {
   if (Array.isArray(l.drinks)) {
     log.drinks = l.drinks.filter((d) => typeof d?.at === "number" && typeof d?.ml === "number").map((d) => ({ at: d.at, ml: d.ml }));
   }
+  if (l.ticks !== undefined) log.ticks = cleanTicks(l.ticks);
+  if (l.counts !== undefined) log.counts = cleanCounts(l.counts);
   return log;
 }
 

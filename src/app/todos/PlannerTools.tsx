@@ -1,21 +1,40 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MAX_TAGS, addTag, deleteTemplate, loadTemplates, removeTag, renameTag, useTags, type DayTemplate, type TagDef } from "@/lib/plannerSettings";
+import {
+  MAX_LOG_ITEMS,
+  MAX_TAGS,
+  addLogItem,
+  addTag,
+  deleteTemplate,
+  loadTemplates,
+  moveLogItem,
+  removeLogItem,
+  removeTag,
+  renameLogItem,
+  renameTag,
+  useLogItems,
+  useTags,
+  type DayTemplate,
+  type LogItemDef,
+  type TagDef,
+} from "@/lib/plannerSettings";
 import { SYNC_EVENT } from "@/lib/sync";
 import { applyTemplate, saveDayAsTemplate, type Todo } from "@/lib/todos";
 
 const FIELD = "min-w-0 rounded-lg border border-white/10 bg-panel px-2 py-1 text-white placeholder-white/35 focus:border-gold/50 focus:outline-none";
 const SMALL_BUTTON = "shrink-0 rounded-full border border-white/20 px-3 py-1 text-white/80 hover:border-gold/50 hover:text-gold disabled:cursor-not-allowed disabled:opacity-40";
 
-// Day templates and tag editing, tucked behind two small buttons under the add box.
+type Panel = "templates" | "tags" | "log items";
+
+// Day templates, tag editing and the day log's items, tucked behind small buttons under the add box.
 export function PlannerTools({ date, onApplied, onMessage }: { date: string; onApplied: (todos: Todo[]) => void; onMessage: (text: string) => void }) {
-  const [open, setOpen] = useState<"templates" | "tags" | null>(null);
-  const toggle = (panel: "templates" | "tags") => setOpen((o) => (o === panel ? null : panel));
+  const [open, setOpen] = useState<Panel | null>(null);
+  const toggle = (panel: Panel) => setOpen((o) => (o === panel ? null : panel));
   return (
     <div className="mb-4 text-xs">
       <div className="flex gap-3 px-1 text-white/55">
-        {(["templates", "tags"] as const).map((panel) => (
+        {(["templates", "tags", "log items"] as const).map((panel) => (
           <button key={panel} onClick={() => toggle(panel)} aria-expanded={open === panel} className="capitalize hover:text-gold">
             {panel} {open === panel ? "▴" : "▾"}
           </button>
@@ -23,6 +42,7 @@ export function PlannerTools({ date, onApplied, onMessage }: { date: string; onA
       </div>
       {open === "templates" && <Templates date={date} onApplied={onApplied} onMessage={onMessage} />}
       {open === "tags" && <Tags onMessage={onMessage} />}
+      {open === "log items" && <LogItems onMessage={onMessage} />}
     </div>
   );
 }
@@ -156,6 +176,75 @@ function TagRow({ tag, onMessage }: { tag: TagDef; onMessage: (text: string) => 
         className={`${FIELD} flex-1`}
       />
       <button onClick={() => removeTag(tag.id)} aria-label={`Remove ${tag.label}`} className="shrink-0 text-white/45 hover:text-white">
+        Remove
+      </button>
+    </li>
+  );
+}
+
+function LogItems({ onMessage }: { onMessage: (text: string) => void }) {
+  const items = useLogItems();
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState<LogItemDef["kind"]>("tick");
+  const add = (e: React.FormEvent) => {
+    e.preventDefault();
+    const problem = addLogItem(name, kind);
+    if (problem) onMessage(problem);
+    else setName("");
+  };
+  return (
+    <div className="mt-2 rounded-xl border border-white/10 bg-panel/60 p-3">
+      <ul className="space-y-1.5">
+        {items.map((item, i) => (
+          <LogItemRow key={item.id + item.label} item={item} first={i === 0} last={i === items.length - 1} onMessage={onMessage} />
+        ))}
+      </ul>
+      <form onSubmit={add} className="mt-2 flex gap-2">
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="New item" aria-label="New log item" className={`${FIELD} flex-1`} />
+        <select value={kind} onChange={(e) => setKind(e.target.value as LogItemDef["kind"])} aria-label="Kind of item" className={FIELD}>
+          <option value="tick">Tick</option>
+          <option value="number">Number</option>
+        </select>
+        <button type="submit" disabled={items.length >= MAX_LOG_ITEMS} className={SMALL_BUTTON}>
+          Add
+        </button>
+      </form>
+      <p className="mt-2 text-white/45">Tick items are done or not each day; number items take a count, such as steps. A removed item keeps its history.</p>
+    </div>
+  );
+}
+
+function LogItemRow({ item, first, last, onMessage }: { item: LogItemDef; first: boolean; last: boolean; onMessage: (text: string) => void }) {
+  const [label, setLabel] = useState(item.label);
+  const commit = () => {
+    if (label.trim() === item.label) return;
+    const problem = renameLogItem(item.id, label);
+    if (problem) {
+      onMessage(problem);
+      setLabel(item.label);
+    }
+  };
+  const arrow = "shrink-0 px-1 text-white/45 hover:text-white disabled:opacity-25";
+  return (
+    <li className="flex items-center gap-2">
+      <span className="w-12 shrink-0 text-white/45">{item.kind === "tick" ? "Tick" : item.unit ?? "Number"}</span>
+      <input
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+        }}
+        aria-label={`Rename ${item.label}`}
+        className={`${FIELD} flex-1`}
+      />
+      <button onClick={() => moveLogItem(item.id, -1)} disabled={first} aria-label={`Move ${item.label} up`} className={arrow}>
+        ↑
+      </button>
+      <button onClick={() => moveLogItem(item.id, 1)} disabled={last} aria-label={`Move ${item.label} down`} className={arrow}>
+        ↓
+      </button>
+      <button onClick={() => removeLogItem(item.id)} aria-label={`Remove ${item.label}`} className="shrink-0 text-white/45 hover:text-white">
         Remove
       </button>
     </li>

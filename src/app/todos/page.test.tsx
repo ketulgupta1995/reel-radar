@@ -169,6 +169,60 @@ describe("arranging tasks", () => {
 
 describe("day log", () => {
 
+  const items = () => within(screen.getByRole("group", { name: "Log items" }));
+
+  it("ticks log items in one tap, closed or open, with the time for today", async () => {
+    render(<TodosPage />);
+    expect(items().getByLabelText("0 of 7 logged")).toBeTruthy();
+    fireEvent.click(items().getByRole("button", { name: "○ Bath" }));
+    expect(items().getByRole("button", { name: "✓ Bath" }).getAttribute("aria-pressed")).toBe("true");
+    expect(Math.abs(loadDayLog(T).ticks!.bath.at! - nowMinutes())).toBeLessThanOrEqual(1);
+    expect(items().getByLabelText("1 of 7 logged")).toBeTruthy();
+    expect(screen.queryByText(/^Ticked:/)).toBeNull(); // times only when opened
+    openDayLog();
+    expect(screen.getByText(/^Ticked: Bath \d{1,2}:\d{2} (AM|PM)$/)).toBeTruthy();
+    fireEvent.click(items().getByRole("button", { name: "○ Med 1" }));
+    fireEvent.click(items().getByRole("button", { name: "✓ Bath" }));
+    expect(loadDayLog(T).ticks).toEqual({ med1: { at: expect.any(Number) } });
+    expect(screen.getByText(/^Ticked: Med 1 /)).toBeTruthy();
+    // A tick made later, for another day, has no time.
+    fireEvent.click(screen.getByLabelText("Previous day"));
+    await waitFor(() => expect(items().getByLabelText("0 of 7 logged")).toBeTruthy());
+    fireEvent.click(items().getByRole("button", { name: "○ Yoga" }));
+    expect(loadDayLog(Y).ticks).toEqual({ yoga: {} });
+    expect(screen.queryByText(/^Ticked:/)).toBeNull();
+  });
+
+  it("takes steps walked as a number, and clears or keeps them", () => {
+    render(<TodosPage />);
+    fireEvent.click(items().getByRole("button", { name: "Walk" }));
+    const box = items().getByLabelText("Walk, steps");
+    fireEvent.change(box, { target: { value: "6,240" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(loadDayLog(T).counts).toEqual({ walk: 6240 });
+    expect(items().getByRole("button", { name: "Walk · 6,240 steps" })).toBeTruthy();
+    // Escape leaves it as it was; blurring saves.
+    fireEvent.click(items().getByRole("button", { name: /^Walk/ }));
+    expect((items().getByLabelText("Walk, steps") as HTMLInputElement).value).toBe("6240");
+    fireEvent.change(items().getByLabelText("Walk, steps"), { target: { value: "1" } });
+    fireEvent.keyDown(items().getByLabelText("Walk, steps"), { key: "Escape" });
+    expect(loadDayLog(T).counts).toEqual({ walk: 6240 });
+    fireEvent.click(items().getByRole("button", { name: /^Walk/ }));
+    fireEvent.change(items().getByLabelText("Walk, steps"), { target: { value: "" } });
+    fireEvent.blur(items().getByLabelText("Walk, steps"));
+    expect(loadDayLog(T)).toEqual({});
+    expect(items().getByRole("button", { name: "Walk" })).toBeTruthy();
+  });
+
+  it("keeps ticks when the rest of the day's log changes", () => {
+    render(<TodosPage />);
+    fireEvent.click(items().getByRole("button", { name: "○ Brush" }));
+    fireEvent.click(screen.getByLabelText("More water"));
+    openDayLog();
+    fireEvent.change(screen.getByLabelText("Weight in kg"), { target: { value: "70" } });
+    expect(loadDayLog(T)).toMatchObject({ ticks: { brush: { at: expect.any(Number) } }, water: 250, weight: 70 });
+  });
+
   it("stays one line until opened, showing the day so far, with a glass of water to hand", () => {
     updateDayLog(T, { wake: "07:15", weight: 72.5 });
     render(<TodosPage />);
@@ -1178,6 +1232,56 @@ describe("templates and tags", () => {
     fireEvent.blur(work);
     expect(await flashed("There's already a Home tag")).toBeTruthy();
     expect(work.value).toBe("Work");
+  });
+});
+
+describe("day log items", () => {
+  const items = () => within(screen.getByRole("group", { name: "Log items" }));
+  const chips = () => items().getAllByRole("button").map((b) => b.textContent!.replace(/^[✓○] /, ""));
+
+  it("adds, renames, reorders and removes items, and the day log follows", async () => {
+    render(<TodosPage />);
+    fireEvent.click(screen.getByText(/^log items/));
+    fireEvent.change(screen.getByLabelText("Rename Med 1"), { target: { value: "Metformin" } });
+    fireEvent.blur(screen.getByLabelText("Rename Med 1"));
+    await waitFor(() => expect(chips()).toContain("Metformin"));
+
+    fireEvent.change(screen.getByLabelText("New log item"), { target: { value: "Pushups" } });
+    fireEvent.change(screen.getByLabelText("Kind of item"), { target: { value: "number" } });
+    fireEvent.submit(screen.getByLabelText("New log item"));
+    expect(await screen.findByLabelText("Rename Pushups")).toBeTruthy();
+    expect((screen.getByLabelText("New log item") as HTMLInputElement).value).toBe("");
+    expect(chips().at(-1)).toBe("Pushups");
+    fireEvent.click(items().getByRole("button", { name: "Pushups" }));
+    expect(items().getByLabelText("Pushups")).toBeTruthy(); // a number item, with no unit
+
+    expect((screen.getByLabelText("Move Bath up") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Move Pushups down") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText("Move Brush up"));
+    await waitFor(() => expect(chips().slice(0, 2)).toEqual(["Brush", "Bath"]));
+    fireEvent.click(screen.getByLabelText("Move Brush down"));
+    await waitFor(() => expect(chips().slice(0, 2)).toEqual(["Bath", "Brush"]));
+
+    // A removed item stops showing, and its ticks stay in the log.
+    fireEvent.click(items().getByRole("button", { name: "○ Yoga" }));
+    fireEvent.click(screen.getByLabelText("Remove Yoga"));
+    await waitFor(() => expect(chips()).not.toContain("Yoga"));
+    expect(loadDayLog(T).ticks).toHaveProperty("yoga");
+    expect(items().getByLabelText("0 of 7 logged")).toBeTruthy();
+  });
+
+  it("refuses a duplicate or empty name, keeping the old name", async () => {
+    render(<TodosPage />);
+    fireEvent.click(screen.getByText(/^log items/));
+    fireEvent.change(screen.getByLabelText("New log item"), { target: { value: "bath" } });
+    fireEvent.submit(screen.getByLabelText("New log item"));
+    expect(await flashed("There's already a bath item")).toBeTruthy();
+    const yoga = screen.getByLabelText("Rename Yoga") as HTMLInputElement;
+    fireEvent.change(yoga, { target: { value: "" } });
+    fireEvent.keyDown(yoga, { key: "Enter" });
+    fireEvent.blur(yoga);
+    expect(await flashed("Give the item a name")).toBeTruthy();
+    expect(yoga.value).toBe("Yoga");
   });
 });
 

@@ -5,8 +5,8 @@ import { merge3, same } from "@/lib/syncDocs";
 import { SYNC_EVENT, markDirty, registerDocs } from "@/lib/sync";
 import type { Priority } from "@/lib/todos";
 
-// The planner's own settings, one synced doc: changes to tags, saved day templates, and goals. Built-in
-// tags have no entry until they're renamed or removed. A removed tag keeps its entry, so tasks and
+// The planner's own settings, one synced doc: changes to tags, saved day templates, goals, and day log
+// items. Built-in tags and log items have no entry until they're changed. A removed tag keeps its entry, so tasks and
 // stats that use it still show its name and colour; it just isn't offered any more.
 
 export type TagDef = { id: string; label: string; color: string; removed?: boolean };
@@ -27,14 +27,29 @@ export type DayTemplate = { id: string; name: string; items: TemplateItem[]; cre
 
 export type Goal = { id: string; name: string; by?: string; createdAt: number; doneAt?: number }; // by: YYYY-MM-DD; doneAt: when it was achieved
 
+// Something to tick off or count in each day's log. Like a tag, a removed item keeps its entry, so its
+// history still shows.
+export type LogItemDef = { id: string; label: string; kind: "tick" | "number"; order: number; unit?: string; removed?: boolean };
+
+export const BUILTIN_LOG_ITEMS: LogItemDef[] = [
+  { id: "bath", label: "Bath", kind: "tick" },
+  { id: "brush", label: "Brush", kind: "tick" },
+  { id: "stools", label: "Stools", kind: "tick" },
+  { id: "med1", label: "Med 1", kind: "tick" },
+  { id: "med2", label: "Med 2", kind: "tick" },
+  { id: "walk", label: "Walk", kind: "number", unit: "steps" },
+  { id: "yoga", label: "Yoga", kind: "tick" },
+].map((item, order) => ({ ...item, order }) as LogItemDef);
+export const MAX_LOG_ITEMS = 20;
+
 type Entry<T> = { value: T; updatedAt: number };
-type SettingsDoc = { tags: Entry<TagDef>[]; templates: Entry<DayTemplate>[]; goals: Entry<Goal>[] };
+type SettingsDoc = { tags: Entry<TagDef>[]; templates: Entry<DayTemplate>[]; goals: Entry<Goal>[]; logItems?: Entry<LogItemDef>[] }; // logItems: missing in a doc from before they existed
 
 export const SETTINGS_DOC = "planner-settings";
 const STORAGE_KEY = "reel-radar-" + SETTINGS_DOC;
 const TAGS_EVENT = "reel-radar-tags";
 
-const emptyDoc = (): SettingsDoc => ({ tags: [], templates: [], goals: [] });
+const emptyDoc = (): SettingsDoc => ({ tags: [], templates: [], goals: [], logItems: [] });
 
 // Labels and colours are read for every row drawn, so the parsed doc is kept until it changes.
 let cached: { raw: string | null; doc: SettingsDoc } = { raw: null, doc: emptyDoc() };
@@ -46,7 +61,8 @@ function readDoc(): SettingsDoc {
   let doc = emptyDoc();
   try {
     const parsed = JSON.parse(raw || "null");
-    if (parsed) doc = { tags: Array.isArray(parsed.tags) ? parsed.tags : [], templates: Array.isArray(parsed.templates) ? parsed.templates : [], goals: Array.isArray(parsed.goals) ? parsed.goals : [] };
+    const list = (k: keyof SettingsDoc) => (Array.isArray(parsed[k]) ? parsed[k] : []);
+    if (parsed) doc = { tags: list("tags"), templates: list("templates"), goals: list("goals"), logItems: list("logItems") };
   } catch {
     // Unreadable: treat it as empty.
   }
@@ -63,13 +79,14 @@ export const mergeSettings = (local: SettingsDoc, server: SettingsDoc, base?: Se
   tags: merge3(local.tags || [], server.tags || [], base?.tags, idOf, newer),
   templates: merge3(local.templates || [], server.templates || [], base?.templates, idOf, newer),
   goals: merge3(local.goals || [], server.goals || [], base?.goals, idOf, newer),
+  logItems: merge3(local.logItems || [], server.logItems || [], base?.logItems, idOf, newer),
 });
 
 registerDocs((key) =>
   key === SETTINGS_DOC ? { read: readDoc, write: writeDoc, merge: mergeSettings, empty: emptyDoc, flushDelay: 3000 } : undefined
 );
 
-function save(tags: TagDef[], templates: DayTemplate[], goals: Goal[] = allGoals()): void {
+function save(tags: TagDef[], templates: DayTemplate[], goals: Goal[] = allGoals(), logItems: LogItemDef[] = storedLogItems()): void {
   const doc = readDoc();
   const now = Date.now();
   const stamp = <T extends { id: string }>(next: T[], before: Entry<T>[]): Entry<T>[] => {
@@ -79,7 +96,7 @@ function save(tags: TagDef[], templates: DayTemplate[], goals: Goal[] = allGoals
       return o && same(o.value, value) ? o : { value, updatedAt: now };
     });
   };
-  const next = { tags: stamp(tags, doc.tags), templates: stamp(templates, doc.templates), goals: stamp(goals, doc.goals) };
+  const next = { tags: stamp(tags, doc.tags), templates: stamp(templates, doc.templates), goals: stamp(goals, doc.goals), logItems: stamp(logItems, doc.logItems ?? []) };
   if (same(next, doc)) return;
   writeDoc(next);
   markDirty(SETTINGS_DOC);
@@ -89,6 +106,7 @@ function save(tags: TagDef[], templates: DayTemplate[], goals: Goal[] = allGoals
 const storedTags = () => readDoc().tags.map((e) => e.value);
 const allTemplates = () => readDoc().templates.map((e) => e.value);
 const allGoals = () => readDoc().goals.map((e) => e.value);
+const storedLogItems = () => (readDoc().logItems ?? []).map((e) => e.value);
 
 // ---------------- Tags ----------------
 
@@ -254,11 +272,91 @@ export function useGoals(): Goal[] {
   return goals;
 }
 
+// ---------------- Day log items ----------------
+
+const logMemo = { doc: null as SettingsDoc | null, items: BUILTIN_LOG_ITEMS };
+
+// Every log item, removed ones too, in their order: the built-ins (with any changes), then the user's.
+export function allLogItems(): LogItemDef[] {
+  const doc = readDoc();
+  if (logMemo.doc !== doc) {
+    const stored = (doc.logItems ?? []).map((e) => e.value);
+    const changed = new Map(stored.map((i) => [i.id, i]));
+    const builtin = new Set(BUILTIN_LOG_ITEMS.map((i) => i.id));
+    logMemo.doc = doc;
+    logMemo.items = [...BUILTIN_LOG_ITEMS.map((i) => changed.get(i.id) ?? i), ...stored.filter((i) => !builtin.has(i.id))].sort((a, b) => a.order - b.order);
+  }
+  return logMemo.items;
+}
+
+export const activeLogItems = (): LogItemDef[] => allLogItems().filter((i) => !i.removed);
+
+function storeLogItems(changed: LogItemDef[]): void {
+  const ids = new Set(changed.map((i) => i.id));
+  save(storedTags(), allTemplates(), allGoals(), [...storedLogItems().filter((i) => !ids.has(i.id)), ...changed]);
+}
+
+// Add an item at the end of the list. A removed item of the same name and kind comes back. Returns why
+// it couldn't, or null when it worked.
+export function addLogItem(label: string, kind: LogItemDef["kind"]): string | null {
+  const name = cleanLabel(label);
+  if (!name) return "Give the item a name";
+  const active = activeLogItems();
+  if (active.some((i) => sameLabel(i.label, name))) return `There's already a ${name} item`;
+  if (active.length >= MAX_LOG_ITEMS) return `You can have up to ${MAX_LOG_ITEMS} items. Remove one first.`;
+  const order = Math.max(-1, ...allLogItems().map((i) => i.order)) + 1;
+  const old = allLogItems().find((i) => i.removed && i.kind === kind && sameLabel(i.label, name));
+  storeLogItems([old ? { ...old, label: name, order, removed: undefined } : { id: crypto.randomUUID(), label: name, kind, order }].map(withoutUndefined));
+  return null;
+}
+
+const withoutUndefined = (i: LogItemDef): LogItemDef => Object.fromEntries(Object.entries(i).filter(([, v]) => v !== undefined)) as LogItemDef;
+
+export function renameLogItem(id: string, label: string): string | null {
+  const item = allLogItems().find((i) => i.id === id);
+  const name = cleanLabel(label);
+  if (!item) return "That item is gone";
+  if (!name) return "Give the item a name";
+  if (activeLogItems().some((i) => i.id !== id && sameLabel(i.label, name))) return `There's already a ${name} item`;
+  storeLogItems([{ ...item, label: name }]);
+  return null;
+}
+
+export function removeLogItem(id: string): void {
+  const item = allLogItems().find((i) => i.id === id);
+  if (item) storeLogItems([{ ...item, removed: true }]);
+}
+
+// Swap an item with its neighbour among the items still in use (-1 = up, 1 = down).
+export function moveLogItem(id: string, by: -1 | 1): void {
+  const active = activeLogItems();
+  const i = active.findIndex((x) => x.id === id);
+  const other = active[i + by];
+  if (i < 0 || !other) return;
+  storeLogItems([{ ...active[i], order: other.order }, { ...other, order: active[i].order }]);
+}
+
+// The items to offer, for React: the built-ins on the first render (pages are prerendered), then the real ones.
+export function useLogItems(): LogItemDef[] {
+  const [items, setItems] = useState(BUILTIN_LOG_ITEMS);
+  useEffect(() => {
+    const refresh = () => setItems(activeLogItems());
+    refresh();
+    window.addEventListener(SYNC_EVENT, refresh);
+    window.addEventListener(TAGS_EVENT, refresh);
+    return () => {
+      window.removeEventListener(SYNC_EVENT, refresh);
+      window.removeEventListener(TAGS_EVENT, refresh);
+    };
+  }, []);
+  return items;
+}
+
 // ---------------- Backup ----------------
 
-export type SettingsBackup = { tags: TagDef[]; templates: DayTemplate[]; goals: Goal[] };
+export type SettingsBackup = { tags: TagDef[]; templates: DayTemplate[]; goals: Goal[]; logItems: LogItemDef[] };
 
-export const settingsBackup = (): SettingsBackup => ({ tags: storedTags(), templates: allTemplates(), goals: allGoals() });
+export const settingsBackup = (): SettingsBackup => ({ tags: storedTags(), templates: allTemplates(), goals: allGoals(), logItems: storedLogItems() });
 
 const cleanItem = (raw: unknown): TemplateItem | null => {
   const i = raw as Partial<TemplateItem> | null;
@@ -277,8 +375,8 @@ const cleanItem = (raw: unknown): TemplateItem | null => {
 
 // Add tags, templates and goals from a backup: the same id takes the backup's copy, and nothing is deleted.
 // Backups are untrusted, so a colour must be one of the palette's; any other becomes the first.
-export function restoreSettings(backup: unknown): { tags: number; templates: number; goals: number } {
-  const b = (backup ?? {}) as { tags?: unknown; templates?: unknown; goals?: unknown };
+export function restoreSettings(backup: unknown): { tags: number; templates: number; goals: number; logItems: number } {
+  const b = (backup ?? {}) as { tags?: unknown; templates?: unknown; goals?: unknown; logItems?: unknown };
   const tags = (Array.isArray(b.tags) ? b.tags : []).flatMap((raw): TagDef[] => {
     const t = raw as Partial<TagDef> | null;
     if (typeof t?.id !== "string" || typeof t.label !== "string" || !cleanLabel(t.label)) return [];
@@ -302,7 +400,19 @@ export function restoreSettings(backup: unknown): { tags: number; templates: num
       ...(typeof g.doneAt === "number" ? { doneAt: g.doneAt } : {}),
     }];
   });
+  const logItems = (Array.isArray(b.logItems) ? b.logItems : []).flatMap((raw): LogItemDef[] => {
+    const i = raw as Partial<LogItemDef> | null;
+    if (typeof i?.id !== "string" || typeof i.label !== "string" || !cleanLabel(i.label) || (i.kind !== "tick" && i.kind !== "number")) return [];
+    return [{
+      id: i.id,
+      label: cleanLabel(i.label),
+      kind: i.kind,
+      order: typeof i.order === "number" && Number.isFinite(i.order) ? i.order : 0,
+      ...(typeof i.unit === "string" && i.unit.trim() ? { unit: i.unit.trim().slice(0, 12) } : {}),
+      ...(i.removed === true ? { removed: true } : {}),
+    }];
+  });
   const byId = <T extends { id: string }>(current: T[], incoming: T[]) => [...current.filter((c) => !incoming.some((i) => i.id === c.id)), ...incoming];
-  save(byId(storedTags(), tags), byId(allTemplates(), templates), byId(allGoals(), goals));
-  return { tags: tags.length, templates: templates.length, goals: goals.length };
+  save(byId(storedTags(), tags), byId(allTemplates(), templates), byId(allGoals(), goals), byId(storedLogItems(), logItems));
+  return { tags: tags.length, templates: templates.length, goals: goals.length, logItems: logItems.length };
 }

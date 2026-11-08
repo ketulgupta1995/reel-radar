@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen } from "@testing-library/react";
-import { MAX_TAGS, TAG_PALETTE, activeTags, addGoal, addTag, allTags, deleteGoal, deleteTemplate, loadGoals, loadTemplates, mergeSettings, removeTag, renameTag, restoreSettings, saveTemplate, setGoalDone, settingsBackup, tagColor, tagLabel, updateGoal, useGoals, useTags } from "./plannerSettings";
+import { BUILTIN_LOG_ITEMS, MAX_LOG_ITEMS, MAX_TAGS, TAG_PALETTE, activeLogItems, activeTags, addGoal, addLogItem, addTag, allLogItems, allTags, moveLogItem, removeLogItem, renameLogItem, useLogItems, deleteGoal, deleteTemplate, loadGoals, loadTemplates, mergeSettings, removeTag, renameTag, restoreSettings, saveTemplate, setGoalDone, settingsBackup, tagColor, tagLabel, updateGoal, useGoals, useTags } from "./plannerSettings";
 import { SYNC_EVENT, syncKeys } from "./sync";
 import { jsonResponse } from "@/test/fixtures";
 
@@ -131,7 +131,7 @@ describe("sync", () => {
     const server = { tags: [entry("a", "Server", 3), entry("gone", "G", 1), entry("theirs", "T", 2)], templates: [], goals: [] };
     const merged = mergeSettings(local, server, base);
     expect(merged.tags.map((e) => e.value.label).sort()).toEqual(["Local", "M", "T"]);
-    expect(mergeSettings({} as never, {} as never)).toEqual({ tags: [], templates: [], goals: [] });
+    expect(mergeSettings({} as never, {} as never)).toEqual({ tags: [], templates: [], goals: [], logItems: [] });
   });
 
   it("is a synced doc that pushes after a change", async () => {
@@ -170,7 +170,7 @@ describe("restoring from a backup", () => {
         null,
       ],
     });
-    expect(r).toEqual({ tags: 3, templates: 2, goals: 0 });
+    expect(r).toEqual({ tags: 3, templates: 2, goals: 0, logItems: 0 });
     expect(tagColor("evil")).toBe(TAG_PALETTE[0]);
     expect(allTags().find((t) => t.id === "off")).toMatchObject({ removed: true, color: TAG_PALETTE[0] });
     const day = loadTemplates().find((t) => t.id === "t")!;
@@ -192,8 +192,8 @@ describe("restoring from a backup", () => {
   });
 
   it("ignores a missing or misshapen section", () => {
-    expect(restoreSettings(undefined)).toEqual({ tags: 0, templates: 0, goals: 0 });
-    expect(restoreSettings({ tags: "x", templates: 3 })).toEqual({ tags: 0, templates: 0, goals: 0 });
+    expect(restoreSettings(undefined)).toEqual({ tags: 0, templates: 0, goals: 0, logItems: 0 });
+    expect(restoreSettings({ tags: "x", templates: 3, logItems: "no" })).toEqual({ tags: 0, templates: 0, goals: 0, logItems: 0 });
   });
 });
 
@@ -270,5 +270,114 @@ describe("goals", () => {
     act(() => void addGoal("Read"));
     expect(screen.getByText("Run,Read")).toBeTruthy();
     unmount();
+  });
+});
+
+describe("day log items", () => {
+  const labels = () => activeLogItems().map((i) => i.label);
+
+  it("starts with the seven built-ins, Walk counted in steps, and stores nothing", () => {
+    expect(labels()).toEqual(["Bath", "Brush", "Stools", "Med 1", "Med 2", "Walk", "Yoga"]);
+    expect(activeLogItems().find((i) => i.id === "walk")).toMatchObject({ kind: "number", unit: "steps" });
+    expect(settingsBackup().logItems).toEqual([]);
+  });
+
+  it("adds at the end, and says why it can't", () => {
+    expect(addLogItem("  Vitamins ", "tick")).toBeNull();
+    expect(addLogItem("Water intake", "number")).toBeNull();
+    expect(labels().slice(-2)).toEqual(["Vitamins", "Water intake"]);
+    expect(activeLogItems().at(-1)!.kind).toBe("number");
+    expect(addLogItem(" ", "tick")).toBe("Give the item a name");
+    expect(addLogItem("bath", "tick")).toBe("There's already a bath item");
+    for (let i = activeLogItems().length; i < MAX_LOG_ITEMS; i++) addLogItem(`Item ${i}`, "tick");
+    expect(addLogItem("One more", "tick")).toMatch(/up to 20 items/);
+  });
+
+  it("renames, keeping its id", () => {
+    expect(renameLogItem("med1", "Metformin")).toBeNull();
+    expect(allLogItems().find((i) => i.id === "med1")!.label).toBe("Metformin");
+    expect(renameLogItem("med1", "")).toBe("Give the item a name");
+    expect(renameLogItem("med1", "Yoga")).toBe("There's already a Yoga item");
+    expect(renameLogItem("gone", "x")).toBe("That item is gone");
+  });
+
+  it("reorders among the items in use, and stops at the ends", () => {
+    moveLogItem("brush", -1);
+    expect(labels().slice(0, 2)).toEqual(["Brush", "Bath"]);
+    moveLogItem("brush", -1);
+    moveLogItem("yoga", 1);
+    expect(labels()[0]).toBe("Brush");
+    expect(labels().at(-1)).toBe("Yoga");
+    removeLogItem("walk");
+    moveLogItem("yoga", -1); // skips the removed Walk
+    expect(labels().slice(-2)).toEqual(["Yoga", "Med 2"]);
+    moveLogItem("gone", 1);
+  });
+
+  it("keeps a removed item for its history, and brings it back by name and kind", () => {
+    removeLogItem("yoga");
+    expect(labels()).not.toContain("Yoga");
+    expect(allLogItems().find((i) => i.id === "yoga")).toMatchObject({ removed: true });
+    expect(addLogItem("YOGA", "number")).toBeNull(); // a different kind is a new item
+    removeLogItem(activeLogItems().at(-1)!.id);
+    expect(addLogItem("yoga", "tick")).toBeNull();
+    const back = activeLogItems().find((i) => i.id === "yoga")!;
+    expect(back.label).toBe("yoga");
+    expect(back.removed).toBeUndefined();
+    expect(labels().at(-1)).toBe("yoga"); // back at the end
+    removeLogItem("gone");
+  });
+
+  it("merges by item with the newer edit winning, and keeps them from a doc that predates them", () => {
+    const item = (label: string, updatedAt: number) => ({ value: { ...BUILTIN_LOG_ITEMS[0], label }, updatedAt });
+    const merged = mergeSettings(
+      { tags: [], templates: [], goals: [], logItems: [item("Shower", 5)] },
+      { tags: [], templates: [], goals: [], logItems: [item("Bathe", 3)] }
+    );
+    expect(merged.logItems!.map((e) => e.value.label)).toEqual(["Shower"]);
+    const kept = mergeSettings({ tags: [], templates: [], goals: [], logItems: [item("Shower", 5)] }, { tags: [], templates: [], goals: [] }, { tags: [], templates: [], goals: [] });
+    expect(kept.logItems!.map((e) => e.value.label)).toEqual(["Shower"]);
+  });
+
+  it("reads an old stored doc without them as the built-ins", () => {
+    localStorage.setItem("reel-radar-planner-settings", JSON.stringify({ tags: [], templates: [], goals: [] }));
+    expect(labels()).toHaveLength(7);
+    addTag("Deep work"); // saving the doc for another reason adds no items
+    expect(settingsBackup().logItems).toEqual([]);
+  });
+
+  it("restores well-formed items from a backup and skips the rest", () => {
+    const r = restoreSettings({
+      logItems: [
+        { id: "vit", label: " Vitamins ", kind: "tick", order: 9, unit: " pills " },
+        { id: "bath", label: "Shower", kind: "tick", order: "x", removed: true },
+        { id: "bad", label: "Bad", kind: "slider", order: 1 },
+        { id: "blank", label: " ", kind: "tick" },
+        { id: 4, label: "x", kind: "tick" },
+        null,
+      ],
+    });
+    expect(r.logItems).toBe(2);
+    expect(allLogItems().find((i) => i.id === "vit")).toEqual({ id: "vit", label: "Vitamins", kind: "tick", order: 9, unit: "pills" });
+    expect(allLogItems().find((i) => i.id === "bath")).toMatchObject({ label: "Shower", order: 0, removed: true });
+    expect(settingsBackup().logItems.map((i) => i.id).sort()).toEqual(["bath", "vit"]);
+  });
+
+  it("useLogItems starts on the built-ins, then follows changes", () => {
+    renameLogItem("bath", "Shower");
+    function Probe() {
+      return <p>{useLogItems().map((i) => i.label).join(",")}</p>;
+    }
+    render(<Probe />);
+    expect(screen.getByText(/^Shower,Brush/)).toBeTruthy();
+    act(() => {
+      addLogItem("Floss", "tick");
+    });
+    expect(screen.getByText(/,Floss$/)).toBeTruthy();
+    act(() => {
+      localStorage.setItem("reel-radar-planner-settings", JSON.stringify({ tags: [], templates: [], goals: [] }));
+      window.dispatchEvent(new Event(SYNC_EVENT));
+    });
+    expect(screen.getByText(/^Bath,Brush/)).toBeTruthy();
   });
 });

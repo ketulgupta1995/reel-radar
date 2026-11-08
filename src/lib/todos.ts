@@ -84,8 +84,10 @@ type LogItem = { date: string; log: DayLog; updatedAt: number };
 type LogDoc = { items: LogItem[] };
 
 // A day's log: when you woke and slept (HH:MM), the water you drank (millilitres, and when each drink was
-// logged as minutes after midnight), and a short review.
-export type DayLog = { wake?: string; sleep?: string; water?: number; drinks?: { at: number; ml: number }[]; weight?: number; well?: string; bad?: string; improve?: string; reviewedAt?: number }; // reviewedAt: on a week's Sunday, when its weekly review was finished
+// logged as minutes after midnight), a short review, and the log items (plannerSettings): `ticks` holds
+// the ticked ones, with when they were ticked (minutes after midnight) if that was on the day itself,
+// and `counts` the numbers (steps walked).
+export type DayLog = { wake?: string; sleep?: string; water?: number; drinks?: { at: number; ml: number }[]; weight?: number; well?: string; bad?: string; improve?: string; reviewedAt?: number; ticks?: Record<string, { at?: number }>; counts?: Record<string, number> }; // reviewedAt: on a week's Sunday, when its weekly review was finished
 
 const DAILY_DOC = "planner-daily";
 const LOG_DOC = "planner-log";
@@ -443,12 +445,48 @@ export function updateDayLog(date: string, change: { [K in keyof DayLog]?: DayLo
   if (log.drinks && !log.drinks.length) delete log.drinks;
   if (log.weight !== undefined && !(log.weight > 0 && log.weight < 1000)) delete log.weight;
   for (const k of ["well", "bad", "improve"] as const) if (!log[k]?.trim()) delete log[k];
+  if (log.ticks) log.ticks = cleanTicks(log.ticks);
+  if (log.counts) log.counts = cleanCounts(log.counts);
+  if (log.ticks && !Object.keys(log.ticks).length) delete log.ticks;
+  if (log.counts && !Object.keys(log.counts).length) delete log.counts;
   (Object.keys(log) as (keyof DayLog)[]).forEach((k) => log[k] === undefined && delete log[k]);
   if (sameJson(old, log)) return old;
   const rest = doc.items.filter((i) => i.date !== date);
   writeDoc(LOG_DOC, { items: Object.keys(log).length ? [...rest, { date, log, updatedAt: Date.now() }] : rest });
   markDirty(LOG_DOC);
   return log;
+}
+
+const isMinute = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0 && n < 24 * 60;
+const MAX_COUNT = 10_000_000;
+
+// Ticks and counts from anywhere (a backup included) keep only well-formed entries.
+export function cleanTicks(raw: unknown): Record<string, { at?: number }> {
+  if (!raw || typeof raw !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(raw as Record<string, unknown>).flatMap(([id, t]) =>
+      t && typeof t === "object" ? [[id, isMinute((t as { at?: unknown }).at) ? { at: (t as { at: number }).at } : {}]] : []
+    )
+  );
+}
+
+export function cleanCounts(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(raw as Record<string, unknown>).filter((e): e is [string, number] => typeof e[1] === "number" && Number.isFinite(e[1]) && e[1] > 0 && e[1] < MAX_COUNT)
+  );
+}
+
+// Tick a log item, or untick it. `at` (minutes after midnight) is when, for a tick made on the day itself.
+export function setLogTick(date: string, id: string, ticked: boolean, at?: number): DayLog {
+  const { [id]: _old, ...rest } = loadDayLog(date).ticks ?? {};
+  return updateDayLog(date, { ticks: ticked ? { ...rest, [id]: at !== undefined ? { at } : {} } : rest });
+}
+
+// Set a counted item (steps walked); nothing, or zero, clears it.
+export function setLogCount(date: string, id: string, n: number | undefined): DayLog {
+  const { [id]: _old, ...rest } = loadDayLog(date).counts ?? {};
+  return updateDayLog(date, { counts: n && n > 0 ? { ...rest, [id]: Math.round(n) } : rest });
 }
 
 // Add (or, with a negative amount, remove) water; never below zero. `at` (minutes after midnight) records

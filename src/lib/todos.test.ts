@@ -6,6 +6,8 @@ import {
   loadDayLog,
   updateDayLog,
   addWater,
+  setLogCount,
+  setLogTick,
   DEFAULT_DURATION,
   Todo,
   addSpentTime,
@@ -603,6 +605,51 @@ describe("day log", () => {
     updateDayLog(D1, { wake: undefined });
     expect(loadDayLog(D1)).toEqual({});
     expect(JSON.parse(localStorage.getItem("reel-radar-planner-log")!).items).toEqual([]);
+  });
+
+  it("ticks log items with the time, unticks them, and drops what's left empty", () => {
+    setLogTick(D1, "bath", true, 475);
+    setLogTick(D1, "yoga", true); // ticked later, for a past day: no time
+    expect(loadDayLog(D1).ticks).toEqual({ bath: { at: 475 }, yoga: {} });
+    setLogTick(D1, "bath", false);
+    expect(loadDayLog(D1).ticks).toEqual({ yoga: {} });
+    setLogTick(D1, "yoga", false);
+    expect(loadDayLog(D1)).toEqual({});
+  });
+
+  it("counts items such as steps, rounding, and clears them with nothing or zero", () => {
+    setLogCount(D1, "walk", 3240.6);
+    setLogCount(D1, "pushups", 20);
+    expect(loadDayLog(D1).counts).toEqual({ walk: 3241, pushups: 20 });
+    setLogCount(D1, "walk", 0);
+    setLogCount(D1, "pushups", undefined);
+    expect(loadDayLog(D1)).toEqual({});
+  });
+
+  it("keeps only well-formed ticks and counts", () => {
+    updateDayLog(D1, {
+      ticks: { ok: { at: 60 }, late: { at: 99999 }, half: { at: 1.5 }, bad: 5 as never, none: null as never },
+      counts: { walk: 5000, neg: -1, big: 1e12, nan: NaN, text: "9" as never },
+    });
+    expect(loadDayLog(D1)).toEqual({ ticks: { ok: { at: 60 }, late: {}, half: {} }, counts: { walk: 5000 } });
+    updateDayLog(D1, { ticks: "x" as never, counts: [] as never });
+    expect(loadDayLog(D1)).toEqual({});
+  });
+
+  it("keeps ticks and counts when another part of the day's log changes", () => {
+    setLogTick(D1, "med1", true, 495);
+    setLogCount(D1, "walk", 4000);
+    updateDayLog(D1, { wake: "06:40" });
+    addWater(D1, 250, 500);
+    updateDayLog(D1, { weight: 71.4 });
+    expect(loadDayLog(D1)).toMatchObject({ ticks: { med1: { at: 495 } }, counts: { walk: 4000 }, wake: "06:40", water: 250 });
+  });
+
+  it("reads a day log stored before log items existed", () => {
+    localStorage.setItem("reel-radar-planner-log", JSON.stringify({ items: [{ date: D1, updatedAt: 1, log: { wake: "07:00", water: 500 } }] }));
+    expect(loadDayLog(D1)).toEqual({ wake: "07:00", water: 500 });
+    setLogTick(D1, "bath", true, 430);
+    expect(loadDayLog(D1)).toEqual({ wake: "07:00", water: 500, ticks: { bath: { at: 430 } } });
   });
 });
 

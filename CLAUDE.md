@@ -78,7 +78,7 @@ src/
     analysis.ts          Analytics aggregation
     storage.ts           Reel Radar state: load/save, merge, export/import, useStorageSync()
     todos.ts             Todo and daily-task model and logic, planner sync ("use client")
-    plannerBackup.ts     Planner export/import: days, daily tasks, day log, lists, tags, templates, goals ("use client")
+    plannerBackup.ts     Planner export/import: days, daily tasks, day log, lists, tags, templates, goals, log items ("use client")
     reminders.ts         Reminder rules shared by the page and the server (no "use client")
     push.ts              Browser side of reminders: service worker, subscribing, notify()
     pushReminders.ts     Server side of reminders: subscriptions, what's due, sending
@@ -96,7 +96,7 @@ src/
     plannerStats.ts      Planner stats aggregation (pure; used by /todos/stats)
     plannerInsights.ts   Sleep hours, day log trends and patterns, planned vs. actual time, review week, month data, goal progress (pure)
     plannerSearch.ts     Finds text in every day's tasks and day notes (pure; used by /todos/search)
-    plannerSettings.ts   Tags, day templates and goals: a synced doc, useTags(), useGoals(), tagLabel(), tagColor() ("use client")
+    plannerSettings.ts   Tags, day templates, goals and day log items: a synced doc, useTags(), useGoals(), useLogItems(), tagLabel(), tagColor() ("use client")
     autoSchedule.ts      Proposes a day's plan from free time, priority and length (pure)
     quickAdd.ts          Reads the add-box shorthand: time, length, tag, priority, date, deadline, repeat
     usageStats.ts        Database reads/writes per local day (pure; used by /todos/stats)
@@ -144,6 +144,7 @@ The repo is indexed by CodeGraph (`.codegraph/`). Use `codegraph explore "<symbo
 - **Postponing**: `postponeCount()` is the one reader of a todo's `postponed` (tasks older than that field count once if they have `carriedFrom`). `carryOverdueTo()` and `moveTodoToDate()` raise it; a move only counts when an unfinished task leaves today or a past day for a later one, not when future plans are rearranged. Overdue covers one-off tasks only, because every day gets its own daily copy. Todo ids are unique across a month doc: `saveTodos` treats the same id on another day as a move.
 - **Deadlines**: a todo's `due` is separate from the day it's planned on, so moving or carrying a task keeps it. Only one-off tasks have one: `addTodo`, `setTodoDue` and `makeTodoDaily` enforce that, and `copyTodoToDate` drops it. `getDueTodos()` feeds the tray, and the page leaves those tasks out of Overdue so each shows once. That tray can hold tasks planned ahead, so `syncTrayPlanner()` pulls next month as well as every past one.
 - **Goals**: live in `planner-settings` (no extra doc to read). Todos and daily tasks hold a `goalId`, which each day's copy of a repeat inherits, and `syncDailyFrom` carries a change to later days. A deleted goal's id stays on its tasks and just stops matching. `computeGoalProgress()` is the one place that decides what counts. The percentage covers one-off tasks only, because repeats have no end; every finished copy of a linked repeat counts, including cleared ones (`doneDates`), and missed copies don't.
+- **Day log items**: their definitions (`LogItemDef`: a tick or a number, with an order) live in `planner-settings` as `logItems`, merged like tags; built-ins have no entry until changed, so a doc without the field (from an older device) reads as the seven built-ins. A removed item keeps its entry. A day's values are `DayLog.ticks` (`{ at? }`, minutes after midnight, only for a tick made on the day itself) and `DayLog.counts`, written through `setLogTick()`/`setLogCount()`; `updateDayLog()` and the backup import both clean them with `cleanTicks()`/`cleanCounts()`. Ticks stay out of the schedule's Done column and out of search.
 - **Search**: `/todos/search` pulls everything once on open, then filters this browser's copy, so keep it free of per-keystroke requests. `/todos?date=YYYY-MM-DD` and `/todos/lists?list=<id>&item=<id>` open what a result links to; the planner clears its parameter so a later reload goes back to today.
 - **Repeats**: `RepeatRule` (`lib/reminders.ts`) holds one kind at a time on a `DailyTask`: `days`, `every`, `monthDay` or `timesPerWeek`; none means daily. `normalizeRepeat()` enforces that. `repeatsOn()` only knows the calendar; a `timesPerWeek` task also depends on what's done that week, so go through `missingDailyTasks()` with a `doneInWeek` count. Its streak counts weeks, not days. Giving a repeating task's copy a time sets it for later days too (`syncDailyFrom`), which is why auto-schedule skips repeating tasks.
 - **Adding to another day**: pull its month first (`syncPlanner([date])`), so the task lands in the latest copy. If the pull fails, the task stays on this device and merges when it pushes.

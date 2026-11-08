@@ -2,8 +2,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { exportPlanner, importPlanner } from "./plannerBackup";
 import { addItem, addList, loadItems, loadLists } from "./lists";
-import { activeTags, addGoal, addTag, loadGoals, loadTemplates, renameTag, tagLabel } from "./plannerSettings";
-import { addTodo, getTodayDate, loadDailyTasks, loadDayLog, loadTodos, saveDayAsTemplate, saveTodos, updateDayLog, type Todo } from "./todos";
+import { activeLogItems, activeTags, addGoal, addLogItem, addTag, loadGoals, loadTemplates, renameLogItem, renameTag, tagLabel } from "./plannerSettings";
+import { addTodo, getTodayDate, loadDailyTasks, loadDayLog, loadTodos, saveDayAsTemplate, saveTodos, setLogCount, setLogTick, updateDayLog, type Todo } from "./todos";
 import { jsonResponse } from "@/test/fixtures";
 
 const D1 = "2026-03-01";
@@ -107,6 +107,27 @@ describe("import", () => {
     expect(r).toEqual({ todos: 3, days: 2, daily: 1, logs: 1, lists: 1, items: 1, tags: 0, templates: 0, goals: 0 });
     const { backup: again } = await captureExport();
     expect(again).toEqual(backup);
+  });
+
+  it("round-trips day log ticks and counts, and the log items list", async () => {
+    setLogTick(D1, "bath", true, 475);
+    setLogTick(D1, "yoga", true);
+    setLogCount(D1, "walk", 6200);
+    renameLogItem("med1", "Metformin");
+    addLogItem("Vitamins", "tick");
+    const { backup } = await captureExport();
+    localStorage.clear();
+    await importPlanner(backupFile(backup));
+    expect(loadDayLog(D1)).toEqual({ ticks: { bath: { at: 475 }, yoga: {} }, counts: { walk: 6200 } });
+    expect(activeLogItems().map((i) => i.label)).toContain("Metformin");
+    expect(activeLogItems().at(-1)!.label).toBe("Vitamins");
+    const { backup: again } = await captureExport();
+    expect(again).toEqual(backup);
+  });
+
+  it("keeps only well-formed ticks and counts from a backup", async () => {
+    await importPlanner(backupFile({ app: "planner", days: {}, log: { [D1]: { ticks: { ok: { at: 60 }, bad: "x", late: { at: -4 } }, counts: { walk: "lots", run: 12 } } } }));
+    expect(loadDayLog(D1)).toEqual({ ticks: { ok: { at: 60 }, late: {} }, counts: { run: 12 } });
   });
 
   it("round-trips goals, and task deadlines and goal links", async () => {
