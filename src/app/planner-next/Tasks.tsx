@@ -190,8 +190,9 @@ function Row({ todo, date, today, streak, reorder, actions }: { todo: Todo; date
 const DropLine = () => <li aria-hidden data-testid="drop-line" className="-my-0.5 h-1 rounded-full bg-gold" />;
 
 // The day's tasks in their order (time order unless rearranged), and a Done group at the bottom with when each was ticked.
-export function Tasks({ todos, date, today, actions, onReorder }: { todos: Todo[]; date: string; today: string; actions: RowActions; onReorder: (id: string, before: string | null) => void }) {
+export function Tasks({ todos, date, today, actions, onReorder, onClearDone }: { todos: Todo[]; date: string; today: string; actions: RowActions; onReorder: (id: string, before: string | null) => void; onClearDone: () => void }) {
   const [doneOpen, setDoneOpen] = useState(true);
+  const [clearing, setClearing] = useState(false);
   const reorder = useListReorder(onReorder);
   const open = sortTodos(todos).filter((t) => !t.completed);
   const done = todos.filter((t) => t.completed).sort((a, b) => (a.doneAt ?? 0) - (b.doneAt ?? 0));
@@ -214,9 +215,23 @@ export function Tasks({ todos, date, today, actions, onReorder }: { todos: Todo[
             <span aria-hidden>{doneOpen ? "▴" : "▾"}</span>
           </button>
           {doneOpen && (
-            <ul aria-label="Done" className="flex flex-col gap-1.5">
-              {done.map(row)}
-            </ul>
+            <>
+              <ul aria-label="Done" className="flex flex-col gap-1.5">
+                {done.map(row)}
+              </ul>
+              {/* Takes them off the day; asks once more, since there's no undo (a repeat's copy stays done for its streak). */}
+              <button
+                onClick={() => {
+                  if (!clearing) return setClearing(true);
+                  setClearing(false);
+                  onClearDone();
+                }}
+                onBlur={() => setClearing(false)}
+                className={`mt-1.5 px-0.5 py-1 text-xs font-bold ${clearing ? "text-bf-late" : "text-bf-muted"}`}
+              >
+                {clearing ? `Clear ${done.length} done? Tap again` : "Clear completed"}
+              </button>
+            </>
           )}
         </>
       )}

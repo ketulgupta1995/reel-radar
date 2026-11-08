@@ -11,6 +11,7 @@ import { Search } from "./Search";
 import { useFocusAlert, useReminders } from "./Tools";
 import { Today } from "./Today";
 import { useDay } from "./useDay";
+import { WeekStrip } from "./WeekStrip";
 
 type Tab = "today" | "calendar" | "plans" | "more";
 const TABS: { id: Tab; label: string }[] = [
@@ -146,6 +147,14 @@ export default function PlannerNextPage() {
           </div>
         )}
       </header>
+      {/* Scrolls away with the page, so the sticky header stays short on a phone. */}
+      {tab === "today" && search === null && date && today && (
+        <div className="bg-ink pb-3 text-white">
+          <div className="mx-auto max-w-6xl px-3 lg:px-6">
+            <WeekStrip date={date} today={today} todos={day.todos} onPick={setDate} />
+          </div>
+        </div>
+      )}
 
       {search !== null ? (
         <Search

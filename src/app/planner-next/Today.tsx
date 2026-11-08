@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { addTodo, DEFAULT_DURATION, deleteTodo, loadTodos, scheduleTodo, moveTodoToDate, reorderTodo, restoreTodo, shiftDate, sortTodos, startFocus, stopFocus, toggleTodo, type Todo } from "@/lib/todos";
+import { addTodo, clearCompletedTodos, DEFAULT_DURATION, deleteTodo, loadTodos, scheduleTodo, moveTodoToDate, reorderTodo, restoreTodo, shiftDate, sortTodos, startFocus, stopFocus, toggleTodo, type Todo } from "@/lib/todos";
 import { dayProgress, todayCard } from "@/lib/plannerToday";
 import type { Goal } from "@/lib/plannerSettings";
 import { clampStart, fmtDuration, getRelativeDateLabel } from "../todos/planner";
@@ -235,6 +235,12 @@ export function Today({ day, reminders, onSearch }: { day: Day; reminders: Remin
                 onReorder={(id, before) => {
                   reorderTodo(id, before, date);
                   refresh();
+                }}
+                onClearDone={() => {
+                  const before = todos.filter((t) => t.completed).length;
+                  clearCompletedTodos(date);
+                  refresh();
+                  flash(`Cleared ${before} done ${before === 1 ? "task" : "tasks"}`);
                 }}
                 actions={{ onTick: tick, onFocus: beginFocus, onOpen: (t) => setOpenId(t.id), onSwipeDone: swipeDone, onSwipeTomorrow: toTomorrow, onMoveBy: moveBy }}
               />

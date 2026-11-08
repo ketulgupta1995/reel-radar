@@ -67,7 +67,7 @@ src/
                          Deadlines, ClockTimePicker, shared planner.tsx
   app/planner-next/      The new planner (Bold focus), built beside /todos on the same data until it replaces it: useDay (the day's state and sync),
                          Today, CurrentCard, FocusScreen, Attention, LogTiles, DayLogMore, Tasks (rows: swipe, reorder), TaskDetails, AddBox,
-                         Schedule (phone Timeline, laptop DayBar), Tools (auto-schedule, templates, reminders, filters), Calendar (week rows or columns, month),
+                         Schedule (phone Timeline, laptop DayBar), Tools (auto-schedule, templates, reminders, filters), Calendar (week rows or columns, month), WeekStrip (days around the one shown, under the header),
                          Plans (Goals, Lists, Review: the current goals/lists/review pages' logic, restyled; their tests copied alongside),
                          More (menu: Stats, day log items, tags, templates, reminders, backup, sync), Stats/StatsInsights/StatsParts (the stats page restyled,
                          plus the log history grid and steps trend), Search (opens over any tab; results call back instead of linking);

@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { routeFetch } from "@/test/pages";
+import { renderToString } from "react-dom/server";
+import { jsonResponse } from "@/test/fixtures";
+import { requests, routeFetch } from "@/test/pages";
 import { addItem, addList, loadItems } from "@/lib/lists";
 import { addGoal, loadGoals } from "@/lib/plannerSettings";
 import { getFocusSession, loadDayLog, loadTodos, saveTodos, updateDayLog, type Todo } from "@/lib/todos";
@@ -1601,5 +1603,109 @@ describe("search", () => {
     expect(screen.getByText("Dentist")).toBeTruthy();
     fireEvent.click(screen.getByText("Close"));
     expect(await screen.findByLabelText("Filter this day")).toBeTruthy();
+  });
+});
+
+describe("checklist extras", () => {
+  it("clears finished tasks after a second tap", async () => {
+    saveTodos([todo("Gym", { completed: true, doneAt: 1 }), todo("Read", { completed: true, doneAt: 2 }), todo("Taxes")], T);
+    open();
+    fireEvent.click(await screen.findByText("Clear completed"));
+    expect(loadTodos(T)).toHaveLength(3);
+    fireEvent.click(screen.getByText("Clear 2 done? Tap again"));
+    expect(await flashed("Cleared 2 done tasks")).toBeTruthy();
+    expect(loadTodos(T).map((t) => t.text)).toEqual(["Taxes"]);
+    expect(screen.queryByText("Clear completed")).toBeNull();
+  });
+
+  it("forgets a first tap on Clear completed when focus moves away", async () => {
+    saveTodos([todo("Gym", { completed: true })], T);
+    open();
+    fireEvent.click(await screen.findByText("Clear completed"));
+    fireEvent.blur(screen.getByText("Clear 1 done? Tap again"));
+    expect(screen.getByText("Clear completed")).toBeTruthy();
+  });
+
+  it("shows the days around this one, with how much got done, and opens one", async () => {
+    saveTodos([todo("A", { completed: true }), todo("B")], "2026-11-06");
+    saveTodos([todo("C", { completed: true })], "2026-11-10");
+    open();
+    const strip = within(await screen.findByRole("group", { name: "Days around this one" }));
+    expect(strip.getAllByRole("button")).toHaveLength(7);
+    expect(strip.getByLabelText(/Nov 8.*nothing planned/).getAttribute("aria-current")).toBe("date");
+    expect(strip.getByLabelText(/Nov 6.*1 of 2 done/)).toBeTruthy();
+    fireEvent.click(strip.getByLabelText(/Nov 10.*1 of 1 done/));
+    expect(await screen.findByText("10 Nov")).toBeTruthy();
+    expect(within(screen.getByRole("group", { name: "Days around this one" })).getByLabelText(/Nov 8/).textContent).toContain("8");
+  });
+
+  it("has the app switcher in the header", async () => {
+    open();
+    expect(await screen.findByRole("link", { name: /Home/ })).toBeTruthy();
+  });
+
+  it("renders on the server without reading the browser", () => {
+    const html = renderToString(<PlannerNextPage />);
+    expect(html).toContain("Today");
+    expect(html).not.toContain("8 Nov"); // the day comes from the browser's clock, after mount
+  });
+});
+
+describe("push reminders", () => {
+  const fakeWorker = () => {
+    const subscribe = vi.fn(async () => ({ endpoint: "https://fcm.googleapis.com/x", toJSON: () => ({ endpoint: "https://fcm.googleapis.com/x" }) }));
+    const reg = { pushManager: { getSubscription: vi.fn(async () => null), subscribe }, showNotification: vi.fn(async (_title: string) => {}) };
+    Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: { register: vi.fn(async () => reg), ready: Promise.resolve(reg), getRegistration: vi.fn(async () => reg) } });
+    vi.stubGlobal("PushManager", class {});
+    return reg;
+  };
+  beforeEach(() => {
+    resetNotifications();
+    vi.stubGlobal("Notification", FakeNotification);
+  });
+  afterEach(() => {
+    delete (navigator as unknown as { serviceWorker?: unknown }).serviceWorker;
+  });
+
+  it("subscribes the device when reminders go on, so they arrive with the app closed", async () => {
+    fakeWorker();
+    const fetch = routeFetch({ "/api/push": { publicKey: "AQAB" } });
+    open();
+    fireEvent.change(await screen.findByLabelText("Reminders"), { target: { value: "10" } });
+    expect(await flashed("Reminders on, even with the app closed")).toBeTruthy();
+    const post = requests(fetch, "/api/push").find((r) => r.init?.method === "POST")!;
+    expect(JSON.parse(post.init!.body as string)).toMatchObject({ lead: 10, timeZone: expect.any(String) });
+  });
+
+  it("falls back to the open page when the server has no push set up", async () => {
+    fakeWorker();
+    routeFetch({ "/api/push": () => jsonResponse({}, { status: 503 }) });
+    open();
+    fireEvent.change(await screen.findByLabelText("Reminders"), { target: { value: "5" } });
+    expect(await flashed("Reminders on while this page is open")).toBeTruthy();
+  });
+
+  it("refreshes the subscription on open when reminders were already on, and shows page reminders through the worker", async () => {
+    const reg = fakeWorker();
+    const fetch = routeFetch({ "/api/push": { publicKey: "AQAB" } });
+    localStorage.setItem("reel-radar-reminder-lead", "5");
+    saveTodos([todo("Meeting", { start: 583, duration: 30 })], T);
+    open();
+    await waitFor(() => expect(requests(fetch, "/api/push").some((r) => r.init?.method === "POST")).toBe(true));
+    await waitFor(() => expect(reg.showNotification).toHaveBeenCalled());
+    expect(reg.showNotification.mock.calls[0][0]).toBe("Meeting");
+    expect(FakeNotification.sent).toEqual([]);
+  });
+
+  it("unsubscribes when reminders go off", async () => {
+    const reg = fakeWorker();
+    const unsubscribe = vi.fn(async () => true);
+    reg.pushManager.getSubscription.mockResolvedValue({ endpoint: "https://fcm.googleapis.com/x", unsubscribe } as never);
+    const fetch = routeFetch({ "/api/push": { publicKey: "AQAB" } });
+    localStorage.setItem("reel-radar-reminder-lead", "5");
+    open();
+    fireEvent.change(await screen.findByLabelText("Reminders"), { target: { value: "" } });
+    await waitFor(() => expect(requests(fetch, "/api/push").some((r) => r.init?.method === "DELETE")).toBe(true));
+    expect(unsubscribe).toHaveBeenCalled();
   });
 });
