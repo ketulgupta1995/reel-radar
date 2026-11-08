@@ -66,7 +66,8 @@ export function useVoiceRecorder(onDone: (blob: Blob, seconds: number) => void) 
 }
 
 // A mic button that records while on, with the time so far.
-export function VoiceButton({ onRecorded, disabled }: { onRecorded: (blob: Blob, seconds: number) => void; disabled?: boolean }) {
+// tone: the dark planner's colours, or the new planner's light-or-dark palette.
+export function VoiceButton({ onRecorded, disabled, tone = "dark" }: { onRecorded: (blob: Blob, seconds: number) => void; disabled?: boolean; tone?: "dark" | "bf" }) {
   const { seconds, error, start, stop, recording } = useVoiceRecorder(onRecorded);
   return (
     <span className="inline-flex flex-col">
@@ -79,6 +80,8 @@ export function VoiceButton({ onRecorded, disabled }: { onRecorded: (blob: Blob,
         className={`flex h-10 items-center gap-1.5 rounded-xl border px-3 text-sm transition disabled:opacity-40 ${
           recording
             ? "animate-pulse border-red-400/60 bg-red-500/15 text-red-200"
+            : tone === "bf"
+            ? "border-transparent bg-bf-s2 font-bold text-bf-ink"
             : "border-white/15 bg-white/5 text-white/80 hover:border-gold/40 hover:text-gold"
         }`}
       >
@@ -90,7 +93,7 @@ export function VoiceButton({ onRecorded, disabled }: { onRecorded: (blob: Blob,
 }
 
 // An item's photos (as thumbnails that open full size) and voice notes (as players).
-export function MediaStrip({ media, onRemove }: { media: MediaRef[]; onRemove?: (m: MediaRef) => void }) {
+export function MediaStrip({ media, onRemove, tone = "dark" }: { media: MediaRef[]; onRemove?: (m: MediaRef) => void; tone?: "dark" | "bf" }) {
   const [open, setOpen] = useState<MediaRef | null>(null);
   const images = media.filter((m) => m.kind === "image");
   const voices = media.filter((m) => m.kind === "voice");
@@ -132,7 +135,7 @@ export function MediaStrip({ media, onRemove }: { media: MediaRef[]; onRemove?: 
       {voices.map((m) => (
         <span key={m.id} className="relative flex items-center gap-2">
           <audio controls preload="none" src={mediaUrl(m.id)} className="h-9 w-full max-w-xs" aria-label="Voice note" />
-          {m.seconds !== undefined && <span className="text-xs text-white/50">{fmtSeconds(m.seconds)}</span>}
+          {m.seconds !== undefined && <span className={`text-xs ${tone === "bf" ? "font-bfm text-bf-muted" : "text-white/50"}`}>{fmtSeconds(m.seconds)}</span>}
           {remove(m)}
         </span>
       ))}

@@ -6,6 +6,7 @@ import { AppSwitcher } from "@/components/AppSwitcher";
 import { getTodayDate, shiftDate, weekday } from "@/lib/todos";
 import { DAY_NAMES, shiftMonth } from "../todos/planner";
 import { Calendar, type CalendarView } from "./Calendar";
+import { Plans, type PlansView } from "./Plans";
 import { Today } from "./Today";
 import { useDay } from "./useDay";
 
@@ -18,12 +19,11 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 // Until each tab is rebuilt, it points to the current planner's pages for the same things.
-const LATER: Record<Exclude<Tab, "today" | "calendar">, { what: string; links: [string, string][] }> = {
-  plans: { what: "Goals, Lists and the weekly review", links: [["Goals", "/todos/goals"], ["Lists", "/todos/lists"], ["Weekly review", "/todos/review"]] },
+const LATER: Record<"more", { what: string; links: [string, string][] }> = {
   more: { what: "Stats, tags, templates, reminders and backup", links: [["Stats", "/todos/stats"], ["Tags, templates and log items", "/todos"]] },
 };
 
-function Later({ tab }: { tab: Exclude<Tab, "today" | "calendar"> }) {
+function Later({ tab }: { tab: "more" }) {
   const { what, links } = LATER[tab];
   return (
     <div className="mx-auto max-w-xl px-4 py-10 text-center">
@@ -53,6 +53,22 @@ export default function PlannerNextPage() {
   const day = useDay();
   const [tab, setTab] = useState<Tab>("today");
   const [calView, setCalView] = useState<CalendarView>("week");
+  const [plansView, setPlansView] = useState<PlansView>("goals");
+  const [linked, setLinked] = useState<{ list?: string; item?: string }>({});
+
+  // Search and Goals link straight to a day (?date=) or a list item (?list=&item=). The parameters are
+  // cleared, so a later reload opens on today.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const list = q.get("list") ?? undefined;
+    const item = q.get("item") ?? undefined;
+    if (list || item) {
+      setLinked({ list, item });
+      setPlansView("lists");
+      setTab("plans");
+    }
+    if ([...q.keys()].length) window.history.replaceState(null, "", window.location.pathname);
+  }, []);
   const tabRef = useRef({ tab, calView });
   tabRef.current = { tab, calView };
   const { date, setDate, today, reviewDue, message, setMessage, sync, syncStatus } = day;
@@ -151,8 +167,28 @@ export default function PlannerNextPage() {
           }}
           flash={day.flash}
         />
+      ) : tab === "plans" ? (
+        <Plans
+          view={plansView}
+          onView={(v) => {
+            setPlansView(v);
+            day.refresh(); // a finished review clears the dot on the tab
+          }}
+          onOpenDay={(d) => {
+            setDate(d);
+            setTab("today");
+          }}
+          onOpenWeek={() => {
+            setDate(getTodayDate());
+            setCalView("week");
+            setTab("calendar");
+          }}
+          onMessage={day.flash}
+          initialList={linked.list}
+          initialItem={linked.item}
+        />
       ) : (
-        <Later tab={tab as Exclude<Tab, "today" | "calendar">} />
+        <Later tab="more" />
       )}
 
       <nav aria-label="Planner tabs" className="fixed inset-x-2 bottom-[calc(0.5rem+env(safe-area-inset-bottom))] z-40 grid grid-cols-4 gap-1 rounded-[18px] bg-bf-s1 p-1.5 shadow-lg ring-1 ring-bf-s2 lg:hidden">

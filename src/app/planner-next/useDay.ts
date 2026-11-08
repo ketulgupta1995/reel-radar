@@ -62,7 +62,9 @@ export function useDay() {
   useEffect(() => {
     const t = getTodayDate();
     setToday(t);
-    setDate(t);
+    // A link to a day (?date=YYYY-MM-DD) opens it; anything else opens today.
+    const linked = new URLSearchParams(window.location.search).get("date");
+    setDate(linked && /^\d{4}-\d{2}-\d{2}$/.test(linked) && !Number.isNaN(new Date(linked + "T00:00:00").getTime()) ? linked : t);
     setFocus(getFocusSession());
     const tick = () => {
       const d = new Date();

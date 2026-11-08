@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { routeFetch } from "@/test/pages";
-import { addList, loadItems } from "@/lib/lists";
+import { addItem, addList, loadItems } from "@/lib/lists";
 import { addGoal, loadGoals } from "@/lib/plannerSettings";
 import { getFocusSession, loadDayLog, loadTodos, saveTodos, updateDayLog, type Todo } from "@/lib/todos";
 
@@ -77,7 +77,7 @@ describe("header and days", () => {
     const bar = within(screen.getByRole("navigation", { name: "Planner tabs" }));
     expect(await bar.findByLabelText("Weekly review is ready")).toBeTruthy();
     fireEvent.click(bar.getByText("Plans"));
-    expect(screen.getByRole("link", { name: "Goals →" }).getAttribute("href")).toBe("/todos/goals");
+    expect(screen.getByRole("group", { name: "Plans view" })).toBeTruthy();
     expect(screen.queryByLabelText("Previous day")).toBeNull();
     fireEvent.click(bar.getByText("Calendar"));
     expect(screen.getByRole("group", { name: "Calendar view" })).toBeTruthy();
@@ -1307,5 +1307,74 @@ describe("calendar", () => {
     fireEvent.keyDown(window, { key: "w" });
     fireEvent.keyDown(window, { key: "w" });
     expect(await screen.findByText("Sun · Today")).toBeTruthy();
+  });
+});
+
+describe("plans", () => {
+  const openPlans = async () => {
+    open();
+    fireEvent.click(within(await screen.findByRole("navigation", { name: "Planner tabs" })).getByText("Plans"));
+  };
+
+  it("on a Sunday, puts the weekly review on top; finishing it clears the tab's dot", async () => {
+    await openPlans();
+    const card = within(await screen.findByRole("region", { name: "Weekly review" }));
+    expect(card.getByText("Look back on Nov 2 – Nov 8")).toBeTruthy();
+    fireEvent.click(card.getByText("Start review"));
+    expect(screen.getByText("Weekly review")).toBeTruthy();
+    fireEvent.click(screen.getByText("Next"));
+    fireEvent.click(screen.getByText("Next"));
+    fireEvent.click(screen.getByText("Arrange it in the week view →"));
+    expect(await screen.findByText("Nov 2 – Nov 8")).toBeTruthy();
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Planner tabs" })).getByText("Plans"));
+    fireEvent.click(screen.getByText("Next")); // back on the review, from its first step
+    fireEvent.click(screen.getByText("Next"));
+    fireEvent.click(screen.getByText("Finish review"));
+    expect(loadDayLog(T).reviewedAt).toBeGreaterThan(0);
+    fireEvent.click(screen.getByText("Back to Plans"));
+    await waitFor(() => expect(screen.queryByLabelText("Weekly review is ready")).toBeNull());
+    expect(screen.queryByRole("region", { name: "Weekly review" })).toBeNull();
+    fireEvent.click(screen.getByText("Weekly review →")); // any day, from the link
+    fireEvent.click(screen.getByText("‹ Plans"));
+    expect(screen.getByRole("group", { name: "Plans view" })).toBeTruthy();
+  });
+
+  it("switches between goals and lists, and a goal's next step opens its day", async () => {
+    addGoal("Run");
+    saveTodos([todo("Shoes", { goalId: loadGoals()[0].id })], "2026-11-10");
+    addList("Wishlist", "🎧");
+    await openPlans();
+    fireEvent.click(await screen.findByRole("button", { name: /^Next: Shoes/ }));
+    expect(await screen.findByText("10 Nov")).toBeTruthy();
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Planner tabs" })).getByText("Plans"));
+    fireEvent.click(screen.getByRole("button", { name: "lists" }));
+    expect(await screen.findByRole("list", { name: "All lists" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "goals" }));
+    expect(screen.getByLabelText("New goal")).toBeTruthy();
+  });
+});
+
+describe("links into the planner", () => {
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  it("opens a linked day, ignores a bad one, and clears the address", async () => {
+    window.history.replaceState(null, "", "/planner-next?date=2026-11-20");
+    const first = open();
+    expect(await screen.findByText("20 Nov")).toBeTruthy();
+    expect(window.location.search).toBe("");
+    first.unmount();
+    window.history.replaceState(null, "", "/planner-next?date=2026-13-45");
+    open();
+    expect(await screen.findByText("Sun · Today")).toBeTruthy();
+  });
+
+  it("opens a linked list item in Plans", async () => {
+    const list = addList("Gifts", "🎁");
+    const item = addItem(list.id, "Scarf");
+    window.history.replaceState(null, "", `/planner-next?list=${list.id}&item=${item.id}`);
+    open();
+    expect(await screen.findByRole("heading", { name: /Gifts/ })).toBeTruthy();
+    expect(screen.getByLabelText("Item text")).toBeTruthy(); // the item is open
+    expect(window.location.search).toBe("");
   });
 });
