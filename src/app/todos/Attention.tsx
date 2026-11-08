@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { carryOverFromYesterday, carryOverdueTo, deleteTodo, moveTodoToDate, postponeCount, SLIPPING_AFTER, toggleTodo, type OverdueTodo } from "@/lib/todos";
+import { carryOverFromYesterday, carryOverdueTo, binTodo, moveTodoToDate, postponeCount, SLIPPING_AFTER, toggleTodo, type OverdueTodo } from "@/lib/todos";
 import type { Goal } from "@/lib/plannerSettings";
 import { dueLabel } from "./Deadlines";
 import { formatShortDate } from "./planner";
@@ -61,7 +61,7 @@ export function Attention({ day, onAddStep }: { day: Day; onAddStep: (goal: Goal
     flash(`Moved ${items.length} ${items.length === 1 ? "task" : "tasks"} to today`);
   };
   const drop = ({ todo, date: from }: OverdueTodo) => {
-    deleteTodo(todo.id, from);
+    binTodo(todo.id, from);
     refresh();
     removed(todo, from, `Dropped “${todo.text}”`);
   };

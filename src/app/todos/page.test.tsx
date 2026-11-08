@@ -275,6 +275,18 @@ describe("needs attention", () => {
 });
 
 describe("day log", () => {
+  it("shows a streak of two days or more on a tile, counting today once it's ticked", async () => {
+    updateDayLog("2026-11-06", { ticks: { bath: {}, yoga: {} } });
+    updateDayLog(Y, { ticks: { bath: {} }, counts: { walk: 5000 } });
+    open();
+    await screen.findByLabelText("0 of 7 logged");
+    expect(tiles().getByLabelText("Bath: 2 days in a row").textContent).toBe("🔥2");
+    expect(tiles().queryByLabelText(/Yoga: /)).toBeNull();
+    expect(tiles().queryByLabelText(/Walk: /)).toBeNull();
+    fireEvent.click(tiles().getByRole("button", { name: /Bath/ }));
+    expect(tiles().getByLabelText("Bath: 3 days in a row")).toBeTruthy();
+  });
+
   it("ticks items in one tap, takes steps, and adds water", async () => {
     open();
     expect(await screen.findByLabelText("0 of 7 logged")).toBeTruthy();
@@ -1395,7 +1407,7 @@ describe("more", () => {
   it("lists each screen, opens it, and goes back by the link or the tab", async () => {
     await openMore();
     expect(menuItem("Reminders").textContent).toContain("Off");
-    for (const name of ["Stats", "Day log items", "Tags", "Day templates", "Reminders", "Backup", "Sync"]) {
+    for (const name of ["Stats", "Day log items", "Tags", "Day templates", "Reminders", "Backup", "Bin", "Sync"]) {
       fireEvent.click(menuItem(name));
       expect(screen.getByRole("heading", { name })).toBeTruthy();
       back();
@@ -1546,6 +1558,41 @@ describe("more", () => {
     routeFetch({ "/api/sync": () => new Response("{}", { status: 500 }) });
     fireEvent.click(screen.getByText("Export"));
     expect(await flashed("Couldn't reach the server, so the backup only has this device's copy")).toBeTruthy();
+  });
+
+  it("keeps deleted tasks in the bin and restores them to their day", async () => {
+    saveTodos([todo("Report"), todo("Old", { completed: true })], T);
+    const ago = (ms: number) => ({ deletedAt: Date.now() - ms, updatedAt: 1 });
+    const H = 60 * 60 * 1000;
+    localStorage.setItem(
+      "reel-radar-planner-bin",
+      JSON.stringify({ items: [{ todo: todo("Lunch", { completed: true }), date: Y, ...ago(3 * H) }, { todo: todo("Gym"), date: "2026-11-05", ...ago(50 * H) }] })
+    );
+    open();
+    fireEvent.click(await tasks().findByLabelText("Open “Report”"));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Task details" })).getByText("Delete"));
+    await flashed("Deleted “Report”");
+    fireEvent.click(bar().getByText("More"));
+    fireEvent.click(menuItem("Bin"));
+    const bin = () => within(screen.getByRole("list", { name: "Deleted tasks" }));
+    expect((await screen.findByRole("list", { name: "Deleted tasks" })).textContent).toContain("deleted just now · gone in 7d");
+    expect(bin().getByText("Lunch").className).toContain("line-through");
+    expect(bin().getAllByRole("listitem").map((li) => li.textContent?.replace("Restore", ""))).toEqual([
+      "ReportSun, Nov 8, 2026 · deleted just now · gone in 7d",
+      "LunchSat, Nov 7, 2026 · deleted 3h ago · gone in 7d",
+      "GymThu, Nov 5, 2026 · deleted 2d ago · gone in 5d",
+    ]);
+    fireEvent.click(bin().getByLabelText("Restore Report"));
+    expect(await flashed("Restored “Report” to Sun, Nov 8, 2026")).toBeTruthy();
+    expect(loadTodos(T).map((t) => t.id).sort()).toEqual(["Old", "Report"]);
+    expect(bin().queryByText("Report")).toBeNull();
+    fireEvent.click(bin().getByLabelText("Restore Lunch"));
+    // One restore at a time: the others wait until it's done.
+    expect((bin().getByLabelText("Restore Gym") as HTMLButtonElement).disabled).toBe(true);
+    await flashed(/Restored “Lunch”/);
+    fireEvent.click(bin().getByLabelText("Restore Gym"));
+    expect(await screen.findByText("The bin is empty.")).toBeTruthy();
+    expect(loadTodos("2026-11-05").map((t) => t.id)).toEqual(["Gym"]);
   });
 
   it("syncs now and shows how it went", async () => {

@@ -6,7 +6,7 @@ import {
   copyTodoToDate,
   DEFAULT_DURATION,
   deleteSubtask,
-  deleteTodo,
+  binTodo,
   getTodayDate,
   loadAllTodos,
   loadDailyTasks,
@@ -112,14 +112,14 @@ export function TaskDetails({
 
   const saveText = () => {
     if (!text.trim()) {
-      deleteTodo(todo.id, date);
+      binTodo(todo.id, date);
       onChanged();
       onRemoved(todo, date, `Deleted “${todo.text}”`);
       onClose();
     } else if (text.trim() !== todo.text) change(() => updateTodo(todo.id, { text: text.trim() }, date));
   };
   const remove = () => {
-    deleteTodo(todo.id, date);
+    binTodo(todo.id, date);
     onChanged();
     onRemoved(todo, date, `Deleted “${todo.text}”`);
     onClose();

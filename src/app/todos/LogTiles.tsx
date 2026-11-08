@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
-import { addWater, getTodayDate, setLogCount, setLogTick, WATER_GOAL, WATER_STEP, type DayLog } from "@/lib/todos";
-import { useLogItems } from "@/lib/plannerSettings";
+import { useMemo, useState } from "react";
+import { addWater, getTodayDate, loadAllDayLogs, setLogCount, setLogTick, WATER_GOAL, WATER_STEP, type DayLog } from "@/lib/todos";
+import { streakEnding } from "@/lib/plannerLogHistory";
+import { useLogItems, type LogItemDef } from "@/lib/plannerSettings";
 import { fmtTime } from "./planner";
 
 const litres = (ml: number) => `${(ml / 1000).toFixed(2).replace(/\.?0+$/, "")} L`;
@@ -10,6 +11,8 @@ const minuteNow = () => {
   const d = new Date();
   return d.getHours() * 60 + d.getMinutes();
 };
+// A run this long or longer shows as "🔥n" on the tile.
+const STREAK_FROM = 2;
 const TILE = "flex h-[50px] w-[68px] shrink-0 flex-col items-start justify-between rounded-[10px] px-[7px] py-1.5 text-left text-[11.5px] font-extrabold leading-tight transition lg:w-auto";
 
 // The day log as one row of small tiles: + Glass, then each log item, ticked in one tap or, for a
@@ -21,6 +24,11 @@ export function LogTiles({ date, log, onChange, onMore, moreOpen }: { date: stri
   const onDay = date === getTodayDate();
   const done = items.filter((i) => (i.kind === "tick" ? log.ticks?.[i.id] : log.counts?.[i.id])).length;
   const water = log.water ?? 0;
+  // Re-read the stored logs when this day's log changes, so a tick extends the streak at once.
+  const streaks = useMemo(() => {
+    const logs = { ...loadAllDayLogs(), [date]: log };
+    return Object.fromEntries(items.map((i) => [i.id, streakEnding(logs, i, date)]));
+  }, [items, date, log]);
   const save = (id: string) => {
     const n = parseInt(text.replace(/[^\d]/g, ""), 10);
     onChange(setLogCount(date, id, Number.isFinite(n) ? n : undefined));
@@ -63,9 +71,7 @@ export function LogTiles({ date, log, onChange, onMore, moreOpen }: { date: stri
                 onClick={() => onChange(setLogTick(date, i.id, !tick, onDay ? minuteNow() : undefined))}
                 className={`${TILE} active:scale-95 ${tick ? "bg-gold text-bf-ontag" : "bg-bf-s1"}`}
               >
-                <span aria-hidden className="text-[11px]">
-                  {tick ? "✓" : "○"}
-                </span>
+                <TileTop icon={tick ? "✓" : "○"} item={i} streak={streaks[i.id]} />
                 <span>
                   {i.label}
                   <small className={`block font-bfm text-[9px] font-medium ${tick ? "opacity-70" : "text-bf-muted"}`}>
@@ -104,9 +110,7 @@ export function LogTiles({ date, log, onChange, onMore, moreOpen }: { date: stri
               }}
               className={`${TILE} ${n ? "bg-gold text-bf-ontag" : "bg-bf-s1"}`}
             >
-              <span aria-hidden className="text-[11px]">
-                {n ? "✓" : "#"}
-              </span>
+              <TileTop icon={n ? "✓" : "#"} item={i} streak={streaks[i.id]} />
               <span>
                 {n ? n.toLocaleString("en-IN") : i.label}
                 <small className={`block font-bfm text-[9px] font-medium ${n ? "opacity-70" : "text-bf-muted"}`}>{n ? i.label : i.unit ?? "tap to add"}</small>
@@ -116,5 +120,19 @@ export function LogTiles({ date, log, onChange, onMore, moreOpen }: { date: stri
         })}
       </div>
     </section>
+  );
+}
+
+// The tile's top line: its tick mark, and the streak once it reaches STREAK_FROM days.
+function TileTop({ icon, item, streak }: { icon: string; item: LogItemDef; streak: number }) {
+  return (
+    <span className="flex w-full items-center justify-between text-[11px]">
+      <span aria-hidden>{icon}</span>
+      {streak >= STREAK_FROM && (
+        <span aria-label={`${item.label}: ${streak} days in a row`} className="font-bfm text-[10px] font-bold">
+          🔥{streak}
+        </span>
+      )}
+    </span>
   );
 }

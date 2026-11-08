@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { exportPlanner, importPlanner } from "@/lib/plannerBackup";
 import { REMINDER_LEADS } from "@/lib/reminders";
+import { BIN_DAYS, loadBin, restoreFromBin, syncBin, type BinItem } from "@/lib/todos";
 import {
   MAX_LOG_ITEMS,
   MAX_TAGS,
@@ -23,7 +24,7 @@ import { Stats } from "./Stats";
 import { Templates, type Reminders } from "./Tools";
 import type { Day } from "./useDay";
 
-export type MoreView = "menu" | "stats" | "log" | "tags" | "templates" | "reminders" | "backup" | "sync";
+export type MoreView = "menu" | "stats" | "log" | "tags" | "templates" | "reminders" | "backup" | "bin" | "sync";
 
 const SCREENS: { id: Exclude<MoreView, "menu">; title: string; sub: string }[] = [
   { id: "stats", title: "Stats", sub: "Day log history, trends, completion, time" },
@@ -32,6 +33,7 @@ const SCREENS: { id: Exclude<MoreView, "menu">; title: string; sub: string }[] =
   { id: "templates", title: "Day templates", sub: "Save a day's layout, add it to another" },
   { id: "reminders", title: "Reminders", sub: "A notification before each block" },
   { id: "backup", title: "Backup", sub: "Export or import a file" },
+  { id: "bin", title: "Bin", sub: `Deleted tasks, kept ${BIN_DAYS} days` },
   { id: "sync", title: "Sync", sub: "Your other devices" },
 ];
 
@@ -85,6 +87,7 @@ export function More({ day, reminders, view, onView, onOpenDay, onOpenReview }: 
           )}
           {view === "reminders" && <ReminderScreen reminders={reminders} />}
           {view === "backup" && <Backup day={day} />}
+          {view === "bin" && <Bin day={day} />}
           {view === "sync" && <SyncScreen day={day} />}
         </>
       )}
@@ -157,6 +160,67 @@ function Backup({ day }: { day: Day }) {
         <p className={NOTE}>Adds what&apos;s in a planner backup, older ones included. Nothing here is deleted.</p>
       </section>
     </div>
+  );
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const ago = (ms: number) => {
+  const days = Math.floor(ms / DAY_MS);
+  if (days >= 1) return `${days}d ago`;
+  const hours = Math.floor(ms / 3600000);
+  return hours >= 1 ? `${hours}h ago` : "just now";
+};
+
+// Tasks deleted in the last BIN_DAYS days, newest first, each with a Restore button. The bin is
+// pulled from the server on opening, so tasks deleted on another device show up too.
+function Bin({ day }: { day: Day }) {
+  const [items, setItems] = useState<BinItem[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setItems(loadBin());
+    syncBin().then((changed) => {
+      if (changed && !cancelled) setItems(loadBin());
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const restore = async (item: BinItem) => {
+    setBusy(item.todo.id);
+    const back = await restoreFromBin(item.todo.id);
+    setBusy(null);
+    setItems(loadBin());
+    day.refresh();
+    if (back) day.flash(`Restored “${back.todo.text}” to ${formatDate(back.date)}`);
+  };
+  const now = Date.now();
+  return (
+    <section className={PANEL}>
+      {items.length ? (
+        <ul aria-label="Deleted tasks" className="flex flex-col gap-1.5">
+          {items.map((item) => {
+            const left = Math.max(1, Math.ceil((item.deletedAt + BIN_DAYS * DAY_MS - now) / DAY_MS));
+            return (
+              <li key={item.todo.id} className="flex items-center gap-2">
+                <span className="min-w-0 flex-1">
+                  <span className={`block truncate text-sm font-bold ${item.todo.completed ? "text-bf-muted line-through" : ""}`}>{item.todo.text}</span>
+                  <span className="block font-bfm text-[11px] text-bf-muted">
+                    {formatDate(item.date)} · deleted {ago(now - item.deletedAt)} · gone in {left}d
+                  </span>
+                </span>
+                <button onClick={() => restore(item)} disabled={busy !== null} aria-label={`Restore ${item.todo.text}`} className={PRIMARY}>
+                  Restore
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="text-sm font-bold text-bf-muted">The bin is empty.</p>
+      )}
+      <p className={NOTE}>Deleted, dropped and cleared tasks wait here for {BIN_DAYS} days, then go for good. Restore puts a task back on its day.</p>
+    </section>
   );
 }
 

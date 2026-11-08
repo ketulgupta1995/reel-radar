@@ -81,6 +81,9 @@ type MonthDoc = { items: MonthItem[] };
 type DailyItem = { task: DailyTask; updatedAt: number };
 type DailyDoc = { items: DailyItem[] };
 type LogItem = { date: string; log: DayLog; updatedAt: number };
+// `date`: the day the task was on. `deletedAt`: ms since epoch.
+export type BinItem = { todo: Todo; date: string; deletedAt: number; updatedAt: number };
+type BinDoc = { items: BinItem[] };
 type LogDoc = { items: LogItem[] };
 
 // A day's log: when you woke and slept (HH:MM), the water you drank (millilitres, and when each drink was
@@ -92,6 +95,7 @@ export type DayLog = { wake?: string; sleep?: string; water?: number; drinks?: {
 const DAILY_DOC = "planner-daily";
 const LOG_DOC = "planner-log";
 const MONTH_DOC = /^planner-(\d{4}-\d{2})$/;
+const BIN_DOC = "planner-bin"; // tasks the user deleted, kept BIN_DAYS so they can be put back
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const STORAGE_PREFIX = "reel-radar-";
 // The first month of the synced planner; the stats page pulls every month from here on.
@@ -122,9 +126,9 @@ const readDaily = () => readDoc<DailyDoc>(DAILY_DOC);
 const newer = <T extends { updatedAt: number }>(local: T, server: T) => (server.updatedAt > local.updatedAt ? server : local);
 
 registerDocs((key) => {
-  if (key !== DAILY_DOC && key !== LOG_DOC && !MONTH_DOC.test(key)) return undefined;
+  if (key !== DAILY_DOC && key !== LOG_DOC && key !== BIN_DOC && !MONTH_DOC.test(key)) return undefined;
   const id =
-    key === DAILY_DOC ? (i: DailyItem) => i.task.id : key === LOG_DOC ? (i: LogItem) => i.date : (i: MonthItem) => i.todo.id;
+    key === DAILY_DOC ? (i: DailyItem) => i.task.id : key === LOG_DOC ? (i: LogItem) => i.date : (i: MonthItem | BinItem) => i.todo.id;
   return {
     read: () => readDoc(key),
     write: (doc: { items: never[] }) => writeDoc(key, doc),
@@ -344,6 +348,7 @@ export function restoreTodo(todo: Todo, date?: string): Todo[] {
   if (todos.some((t) => t.id === todo.id)) return todos;
   const updated = [...todos, todo].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   saveTodos(updated, date);
+  takeFromBin(todo.id);
   if (todo.dailyId) {
     const day = date || getTodayDate();
     updateDailyTask(todo.dailyId, (d) => ({ ...d, skipDates: d.skipDates?.filter((x) => x !== day) }));
@@ -861,6 +866,7 @@ export function clearCompletedTodos(date?: string): Todo[] {
   const updated = todos.filter((t) => !t.completed);
   saveTodos(updated, date);
   const day = date || getTodayDate();
+  putInBin(todos.filter((t) => t.completed), day);
   for (const t of todos) {
     if (t.completed && t.dailyId)
       updateDailyTask(t.dailyId, (d) => ({
@@ -870,6 +876,66 @@ export function clearCompletedTodos(date?: string): Todo[] {
       }));
   }
   return updated;
+}
+
+// ---------------- Bin ----------------
+// Tasks the user deletes wait in a synced doc for BIN_DAYS, so they can be put back on any device.
+// deleteTodo itself doesn't use the bin: moves call it too. restoreTodo takes a task back out.
+
+export const BIN_DAYS = 7;
+const BIN_MS = BIN_DAYS * 24 * 60 * 60 * 1000;
+
+const readBin = () => readDoc<BinDoc>(BIN_DOC);
+
+function writeBin(items: BinItem[]): void {
+  writeDoc(BIN_DOC, { items });
+  markDirty(BIN_DOC);
+}
+
+// What's in the bin, newest first. Anything older than BIN_DAYS is left out.
+export function loadBin(now = Date.now()): BinItem[] {
+  return readBin()
+    .items.filter((i) => now - i.deletedAt < BIN_MS)
+    .sort((a, b) => b.deletedAt - a.deletedAt);
+}
+
+// Expired entries are dropped whenever the bin is written.
+function putInBin(todos: Todo[], date: string, now = Date.now()): void {
+  if (typeof window === "undefined" || !todos.length) return;
+  const ids = new Set(todos.map((t) => t.id));
+  const kept = readBin().items.filter((i) => now - i.deletedAt < BIN_MS && !ids.has(i.todo.id));
+  writeBin([...kept, ...todos.map((todo) => ({ todo, date, deletedAt: now, updatedAt: now }))]);
+}
+
+function takeFromBin(id: string): void {
+  if (typeof window === "undefined") return;
+  const items = readBin().items;
+  if (items.some((i) => i.todo.id === id)) writeBin(items.filter((i) => i.todo.id !== id));
+}
+
+// Delete a task the user chose to delete, keeping it in the bin.
+export function binTodo(id: string, date?: string): Todo[] {
+  const day = date || getTodayDate();
+  const todo = loadTodos(day).find((t) => t.id === id);
+  const updated = deleteTodo(id, day);
+  if (todo) putInBin([todo], day);
+  return updated;
+}
+
+// Put a binned task back on its day. The day's month is pulled first, so it lands in the latest copy.
+export async function restoreFromBin(id: string): Promise<BinItem | null> {
+  const item = readBin().items.find((i) => i.todo.id === id);
+  if (!item) return null;
+  await syncPlanner([item.date]);
+  restoreTodo(item.todo, item.date);
+  return item;
+}
+
+// The bin isn't part of every planner sync: it's pulled when the Bin screen opens. A push from a
+// device that never pulled it merges on the server's 409, so nothing is lost.
+export async function syncBin(): Promise<boolean | null> {
+  const changed = await syncKeys([BIN_DOC]);
+  return changed && changed.length > 0;
 }
 
 // Days that have todos, most recent first.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { datesBetween, logHistory, streakOf, type LogCell } from "./plannerLogHistory";
+import { datesBetween, logHistory, streakEnding, streakOf, type LogCell } from "./plannerLogHistory";
 import { BUILTIN_LOG_ITEMS } from "./plannerSettings";
 
 const bath = BUILTIN_LOG_ITEMS.find((i) => i.id === "bath")!;
@@ -62,5 +62,25 @@ describe("logHistory", () => {
     expect(b.rate).toBeNull();
     expect(w.average).toBeNull();
     expect(logHistory({}, [bath], "2026-11-09", "2026-11-08")[0].rate).toBeNull();
+  });
+});
+
+describe("streakEnding", () => {
+  const logs = {
+    "2026-10-29": { ticks: { bath: {} } },
+    "2026-10-30": { ticks: { bath: {} }, counts: { walk: 4000 } },
+    "2026-10-31": { ticks: { bath: { at: 480 } }, counts: { walk: 6000 } },
+    "2026-11-01": { counts: { walk: 0 } },
+  };
+  it("counts back from the day, across a month end", () => {
+    expect(streakEnding(logs, bath, "2026-10-31")).toBe(3);
+    expect(streakEnding(logs, walk, "2026-10-31")).toBe(2);
+  });
+  it("keeps the run going while the day itself is still open", () => {
+    expect(streakEnding(logs, bath, "2026-11-01")).toBe(3);
+  });
+  it("is 0 after two open days, and stops at the limit", () => {
+    expect(streakEnding(logs, bath, "2026-11-02")).toBe(0);
+    expect(streakEnding(logs, bath, "2026-10-31", 2)).toBe(2);
   });
 });

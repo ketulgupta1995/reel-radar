@@ -39,6 +39,11 @@ import {
   stopFocus,
   getAllStoredDates,
   getTodayDate,
+  BIN_DAYS,
+  binTodo,
+  loadBin,
+  restoreFromBin,
+  syncBin,
   getUnfinishedFromYesterday,
   loadAllTodos,
   loadDailyTasks,
@@ -1102,5 +1107,68 @@ describe("goal links", () => {
     expect(copyTodoToDate(t.id, A, "2026-03-03")[0].goalId).toBe("g");
     makeTodoDaily(t.id, A);
     expect(loadDailyTasks()[0].goalId).toBe("g");
+  });
+});
+
+describe("bin", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const binIds = () => loadBin().map((i) => i.todo.id);
+
+  it("keeps a deleted task with its day, newest first, and restoreTodo takes it back out", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 2, 1, 9));
+    saveTodos([todo("a"), todo("bb")], D1);
+    expect(binTodo("a", D1).map((t) => t.id)).toEqual(["bb"]);
+    vi.setSystemTime(new Date(2026, 2, 1, 10));
+    binTodo("bb", D1);
+    expect(binIds()).toEqual(["bb", "a"]);
+    expect(loadBin()[1]).toEqual({ todo: todo("a"), date: D1, deletedAt: new Date(2026, 2, 1, 9).getTime(), updatedAt: new Date(2026, 2, 1, 9).getTime() });
+    restoreTodo(todo("a"), D1);
+    expect(binIds()).toEqual(["bb"]);
+    expect(ids()).toEqual(["a"]);
+    // A task that isn't there isn't binned; a plain delete (a move) doesn't use the bin.
+    binTodo("nope", D1);
+    deleteTodo("a", D1);
+    expect(binIds()).toEqual(["bb"]);
+  });
+
+  it("bins cleared done tasks", () => {
+    saveTodos([todo("a", { completed: true }), todo("bb")], D1);
+    clearCompletedTodos(D1);
+    expect(binIds()).toEqual(["a"]);
+    clearCompletedTodos(D1);
+    expect(binIds()).toEqual(["a"]);
+  });
+
+  it(`forgets tasks after ${BIN_DAYS} days, and drops them on the next write`, () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 2, 1, 9));
+    saveTodos([todo("a"), todo("bb")], D1);
+    binTodo("a", D1);
+    vi.setSystemTime(new Date(2026, 2, 1, 9).getTime() + BIN_DAYS * DAY - 1);
+    expect(binIds()).toEqual(["a"]);
+    vi.setSystemTime(new Date(2026, 2, 1, 9).getTime() + BIN_DAYS * DAY);
+    expect(binIds()).toEqual([]);
+    binTodo("bb", D1);
+    expect(JSON.parse(localStorage.getItem("reel-radar-planner-bin")!).items.map((i: { todo: Todo }) => i.todo.id)).toEqual(["bb"]);
+  });
+
+  it("restores a task to its day after pulling that month, and pulls the bin on its own", async () => {
+    saveTodos([todo("a")], D1);
+    binTodo("a", D1);
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValueOnce(docsResponse({ "planner-2026-03": { etag: '"e1"', data: monthDoc(item(todo("server"))) } }));
+    expect(await restoreFromBin("a")).toMatchObject({ date: D1, todo: { id: "a" } });
+    expect(decodeURIComponent(fetchMock.mock.calls[0][0])).toContain("planner-2026-03");
+    expect(ids()).toEqual(["a", "server"]);
+    expect(binIds()).toEqual([]);
+    expect(await restoreFromBin("a")).toBeNull();
+
+    fetchMock.mockClear();
+    const other = { todo: todo("x"), date: D2, deletedAt: Date.now(), updatedAt: Date.now() };
+    fetchMock.mockResolvedValueOnce(docsResponse({ "planner-bin": { etag: '"b1"', data: { items: [other] } } }));
+    expect(await syncBin()).toBe(true);
+    expect(decodeURIComponent(fetchMock.mock.calls[0][0])).toBe("/api/sync?keys=planner-bin");
+    expect(binIds()).toEqual(["x"]);
   });
 });

@@ -50,3 +50,16 @@ export function logHistory(logs: Record<string, DayLog>, items: LogItemDef[], fr
     return { item, cells, rate, average, streak: streakOf(cells) };
   });
 }
+
+// The run of days in a row an item was done, ending on `date` (or the day before, while `date` is
+// still open), for the streak on its Today tile. Looks back at most `limit` days.
+export function streakEnding(logs: Record<string, DayLog>, item: LogItemDef, date: string, limit = 366): number {
+  let d = date;
+  if (!cellOf(logs[d], item, d).done) d = shiftDate(d, -1);
+  let n = 0;
+  while (n < limit && cellOf(logs[d], item, d).done) {
+    n++;
+    d = shiftDate(d, -1);
+  }
+  return n;
+}

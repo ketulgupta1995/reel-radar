@@ -11,7 +11,7 @@ import {
   DEFAULT_DURATION,
   addSubtask,
   addTodo,
-  deleteTodo,
+  binTodo,
   getOverdueTodos,
   getTodayDate,
   loadAllDayLogs,
@@ -85,7 +85,7 @@ export function Review({ onDone, onOpenWeek }: { onDone: () => void; onOpenWeek:
     reload();
   };
   const drop = (item: OverdueTodo) => {
-    deleteTodo(item.todo.id, item.date);
+    binTodo(item.todo.id, item.date);
     count("dropped");
     setDropped(item);
     clearTimeout(undoTimer.current);
