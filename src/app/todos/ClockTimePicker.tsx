@@ -26,13 +26,16 @@ export function ClockTimePicker({
   onChange,
   fallback,
   popoverRight,
+  tone = "dark",
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   fallback: string; // where the clock starts when no time is set yet
   popoverRight?: boolean; // open the clock against the right edge, for a tile in the right-hand column
+  tone?: "dark" | "bf"; // the field's colours: the dark planner's, or the new planner's light-or-dark palette
 }) {
+  const bf = tone === "bf";
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(parse(fallback)!);
   const [mode, setMode] = useState<"hour" | "minute">("hour");
@@ -89,11 +92,11 @@ export function ClockTimePicker({
         aria-expanded={open}
         aria-label={value ? `${label}: ${formatClock(value)}` : `${label}: not set`}
         className={`flex h-full w-full flex-col items-start gap-0.5 rounded-xl border px-3 py-2 text-left transition ${
-          open ? "border-gold/60 bg-white/10" : "border-white/10 bg-white/5 hover:border-white/25"
+          bf ? (open ? "border-bf-ink bg-bf-s1" : "border-transparent bg-bf-s1") : open ? "border-gold/60 bg-white/10" : "border-white/10 bg-white/5 hover:border-white/25"
         }`}
       >
-        <span className="text-xs uppercase tracking-wide text-white/50">{label}</span>
-        <span className={`text-sm font-semibold tabular-nums ${value ? "text-white" : "text-white/40"}`}>
+        <span className={`text-xs uppercase tracking-wide ${bf ? "font-bfm text-bf-muted" : "text-white/50"}`}>{label}</span>
+        <span className={`text-sm font-semibold tabular-nums ${bf ? (value ? "text-bf-ink" : "text-bf-muted") : value ? "text-white" : "text-white/40"}`}>
           {value ? formatClock(value) : "Set time"}
         </span>
       </button>

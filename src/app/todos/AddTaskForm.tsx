@@ -274,8 +274,8 @@ export function AddTaskForm({
   );
 }
 
-// What the shorthand in the add box will set, or a tip when there's none.
-function QuickAddHint({ quick, typed }: { quick: QuickAdd; typed: boolean }) {
+// What the shorthand in an add box will set, one chip each. The new planner's add box shows them too.
+export function quickAddChips(quick: QuickAdd): string[] {
   const chips: string[] = [];
   if (quick.start !== undefined) chips.push(`⏰ ${fmtTime(quick.start)}${quick.duration ? ` · ${fmtDuration(quick.duration)}` : ""}`);
   else if (quick.duration) chips.push(`⏱ ${fmtDuration(quick.duration)} (add a time to schedule it)`);
@@ -285,6 +285,12 @@ function QuickAddHint({ quick, typed }: { quick: QuickAdd; typed: boolean }) {
   if (quick.due && !quick.repeat && !quick.daily) chips.push(`🏁 Due ${longDay(quick.due)}`);
   if (quick.repeat) chips.push(`↻ ${repeatLabel(quick.repeat)}`);
   else if (quick.daily) chips.push("↻ Every day");
+  return chips;
+}
+
+// What the shorthand in the add box will set, or a tip when there's none.
+function QuickAddHint({ quick, typed }: { quick: QuickAdd; typed: boolean }) {
+  const chips = quickAddChips(quick);
   if (!chips.length)
     return typed ? null : (
       <p className="basis-full px-1 text-[11px] text-white/35">

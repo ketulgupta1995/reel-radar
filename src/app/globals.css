@@ -43,3 +43,37 @@ button {
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
+/* The new planner's Bold focus palette (see tailwind.config.ts): light by default, dark with the device. */
+.bf {
+  --bf-bg: 243 243 239;
+  --bf-s1: 255 255 255;
+  --bf-s2: 231 231 226;
+  --bf-ink: 13 13 15;
+  --bf-muted: 95 95 105;
+  --bf-line: 201 201 195;
+  --bf-late: 226 59 38;
+  --bf-water: 213 232 251;
+  --bf-water-ink: 15 58 102;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  .bf {
+    --bf-bg: 13 13 15;
+    --bf-s1: 24 24 28;
+    --bf-s2: 35 35 41;
+    --bf-ink: 255 255 255;
+    --bf-muted: 154 154 166;
+    --bf-line: 75 75 85;
+    --bf-late: 255 90 70;
+    --bf-water: 22 48 77;
+    --bf-water-ink: 191 224 255;
+    color-scheme: dark;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bf *, .bf *::before, .bf *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
