@@ -191,7 +191,7 @@ export function Today({ day, reminders, onSearch }: { day: Day; reminders: Remin
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-2.5 px-3 pb-36 pt-3 lg:px-6 lg:pb-12">
       <Progress todos={todos} />
-      <div className="grid items-start gap-2.5 lg:grid-cols-[1.4fr_1fr] lg:gap-4">
+      <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-2.5 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:gap-4">
         {card && <div className="order-1 lg:col-start-1 lg:row-start-1">{card}</div>}
         <div className="order-2 lg:col-start-2 lg:row-start-3">
           <Attention day={day} onAddStep={addStep} />

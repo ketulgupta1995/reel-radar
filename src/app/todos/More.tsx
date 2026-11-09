@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { logout } from "@/components/LogoutButton";
 import { exportPlanner, importPlanner } from "@/lib/plannerBackup";
 import { REMINDER_LEADS } from "@/lib/reminders";
 import { BIN_DAYS, loadBin, restoreFromBin, syncBin, type BinItem } from "@/lib/todos";
@@ -68,6 +69,12 @@ export function More({ day, reminders, view, onView, onOpenDay, onOpenReview }: 
                 </button>
               </li>
             ))}
+            {/* The site-wide Log out button is hidden here on a phone, behind the tab bar. */}
+            <li className="lg:hidden">
+              <button onClick={logout} className="flex w-full items-center rounded-[14px] bg-bf-s1 px-3.5 py-3 text-left text-[15px] font-extrabold text-bf-late">
+                Log out
+              </button>
+            </li>
           </ul>
         </>
       ) : (

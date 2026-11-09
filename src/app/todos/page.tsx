@@ -109,7 +109,7 @@ export default function PlannerPage() {
   return (
     <main>
       <header className="sticky top-0 z-40 bg-ink text-white">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2.5 lg:px-6">
+        <div className="mx-auto flex max-w-6xl items-center gap-x-2 lg:gap-x-4 gap-y-2 px-3 py-2.5 lg:px-6">
           <AppSwitcher current="planner" />
           <nav aria-label="Planner" className="ml-auto hidden gap-1 lg:flex">
             {TABS.map((t) => tabButton(t, "header"))}

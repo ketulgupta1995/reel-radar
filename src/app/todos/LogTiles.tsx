@@ -13,7 +13,7 @@ const minuteNow = () => {
 };
 // A run this long or longer shows as "🔥n" on the tile.
 const STREAK_FROM = 2;
-const TILE = "flex h-[50px] w-[68px] shrink-0 flex-col items-start justify-between rounded-[10px] px-[7px] py-1.5 text-left text-[11.5px] font-extrabold leading-tight transition lg:w-auto";
+const TILE = "flex h-[50px] w-[78px] shrink-0 [&_small]:max-w-full [&_small]:truncate flex-col items-start justify-between rounded-[10px] px-[7px] py-1.5 text-left text-[11.5px] font-extrabold leading-tight transition lg:w-auto";
 
 // The day log as one row of small tiles: + Glass, then each log item, ticked in one tap or, for a
 // number (steps), typed in place. Ticks made on the day itself keep their time.
