@@ -9,8 +9,10 @@ export default defineConfig({
     restoreMocks: true,
     unstubGlobals: true,
     unstubEnvs: true,
-    // The page tests are heavy: with more workers on this machine they time out at the 5 s default.
-    maxWorkers: 2,
+    // Page tests are heavy and slow down when every core is busy, hence the 30 s timeout. 75% of cores
+    // (6 of 8 here) was the fastest stable setting; the planner page tests are split into three files
+    // (todos/page*.test.tsx) so no single file holds up the run.
+    maxWorkers: "75%",
     testTimeout: 30000,
     // `npm run coverage`: text summary in the terminal, HTML report in coverage/.
     coverage: {

@@ -66,7 +66,8 @@ describe("Books page", () => {
     render(<BooksPage />);
     upload(await epubFile());
     await screen.findByText("Added “The Station Clock”.");
-    const link = screen.getByRole("link", { name: /The Station Clock/ });
+    // The row becomes a link once IndexedDB confirms the file is here, which can land after the message.
+    const link = await screen.findByRole("link", { name: /The Station Clock/ });
     expect(link.getAttribute("href")).toBe(`/books/${loadLibrary()[0].id}`);
     expect(screen.queryByText("Your library is empty")).toBeNull();
 
@@ -448,7 +449,7 @@ describe("A library shared between devices", () => {
     render(<BooksPage />);
     fireEvent.click(await screen.findByRole("button", { name: `Remove ${made.title}` }));
     fireEvent.click(screen.getByText("Cancel"));
-    expect(screen.getByRole("link", { name: new RegExp(made.title) })).toBeTruthy();
+    expect(await screen.findByRole("link", { name: new RegExp(made.title) })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: `Remove ${made.title}` }));
     expect(screen.getByText("Remove it from every device?")).toBeTruthy();
