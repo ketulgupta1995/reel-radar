@@ -122,6 +122,13 @@ describe("Practice log page", () => {
     expect(within(table).getByText("Passed")).toBeTruthy();
   });
 
+  it("names an ear-training round in the list and its trend", async () => {
+    seed({ e: { id: "e", kind: "drill", drill: "ear", startedAt: at(27, 9), durationMs: 120_000, updatedAt: 1, items: { "note-C": { attempts: 4, misses: 1, slow: 0, avgMs: 900 } } } });
+    await open();
+    expect(within(screen.getByTestId("entry")).getByText("Ear training")).toBeTruthy();
+    expect(screen.getByRole("table", { name: "Ear training trend" })).toBeTruthy();
+  });
+
   it("reads entries from the previous month's doc for the streak", async () => {
     seed({ a: manual("a", new Date(2026, 9, 31, 12).getTime(), 10, "Oct") }, "piano-2026-10");
     seed({ b: manual("b", at(1), 10, "Nov 1"), c: manual("c", at(27), 10, "today") });

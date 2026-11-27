@@ -6,7 +6,7 @@ import { deleteSession, loadSettings, newSessionId, openKeys, recentRecords, sav
 import { ManualRecord, SessionRecord } from "@/lib/pianoDrill";
 import { drillsIn, lastDays, minutesOf, streak, todayMs, weeklyTrend } from "@/lib/pianoLog";
 
-const DRILL_TITLES: Record<string, string> = { notes: "Note drill", chords: "Chord drill", fingers: "Five-finger positions", rhythm: "Rhythm drill", songs: "Song", scales: "Scale" };
+const DRILL_TITLES: Record<string, string> = { notes: "Note drill", chords: "Chord drill", fingers: "Five-finger positions", rhythm: "Rhythm drill", ear: "Ear training", songs: "Song", scales: "Scale" };
 const NO_TREND = new Set(["songs", "scales"]); // timed-practice drills: they count as minutes, their items aren't answers
 const HISTORY = 400; // days of records read: enough for the streak (counts up to about a year back) and the trends
 const dayName = (d: Date) => d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });

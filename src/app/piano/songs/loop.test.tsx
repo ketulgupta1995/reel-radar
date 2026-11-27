@@ -135,6 +135,18 @@ describe("bar loops", () => {
     expect(screen.getByTestId("start-summary").textContent).toBe("Right hand · Play-along, 65 BPM · loop bar 2");
   });
 
+  it("stays ready when the looped bars have nothing to play", async () => {
+    const gap = buildSong({ id: "gap", title: "Gap", level: 1, bpm: 100, beatsPerBar: 4, key: "C", rh: "C4:4/1 | R:4 | E4:4/3", lh: "C3:4/5 | R:4 | C3:4/5" });
+    await open(<SongPlayer song={gap} />);
+    openSettings();
+    fireEvent.click(screen.getByLabelText("Loop"));
+    fireEvent.change(screen.getByLabelText("From bar"), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("To bar"), { target: { value: "2" } });
+    click("Start");
+    expect(screen.getByRole("button", { name: "Start" })).toBeTruthy(); // no run that can never end
+    expect(screen.queryByText("Next run in a moment…")).toBeNull();
+  });
+
   it("offers no loop in a session step, and shows the chord sounding from the start", async () => {
     await open(<SongPlayer song={songById("old-macdonald")!} autoStart hands="R" mode="wait" onFinish={() => {}} />);
     expect(screen.getByTestId("chord-now").textContent).toBe("Chord C → F");

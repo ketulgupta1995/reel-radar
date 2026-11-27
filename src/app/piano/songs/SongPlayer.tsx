@@ -310,8 +310,14 @@ export function SongPlayer({ song, scale = false, back, hands: hands0, mode: mod
       startPlay(hands, tempo, clicks);
       return;
     }
-    started.current = { wall: Date.now(), perf: performance.now() };
     const s = startWait(playSong, hands);
+    if (s.done) {
+      // nothing to play (a loop over empty bars): stay ready rather than start a run that can't end
+      recorder.current = null;
+      setLooping(false);
+      return;
+    }
+    started.current = { wall: Date.now(), perf: performance.now() };
     runRef.current = s;
     setSummary(null);
     setRun(s);
