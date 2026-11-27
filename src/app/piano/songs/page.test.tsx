@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { openSettings } from "@/test/stage";
 import { installFakeAudio } from "@/test/audio";
 import { fakeMidi, uninstallMidi } from "@/test/midi";
 import { EXERCISES, exerciseById } from "@/lib/pianoExercises";
@@ -18,6 +19,7 @@ let midi: ReturnType<typeof fakeMidi>;
 const open = async (ui = <SongPage />) => {
   render(<PianoLayout>{ui}</PianoLayout>);
   await act(async () => {});
+  openSettings(); // hands, mode and the ladder live in the stage's settings sheet
 };
 const wait = (ms: number) => act(() => void vi.advanceTimersByTime(ms));
 const click = (name: string | RegExp) => fireEvent.click(screen.getByRole("button", { name }));
@@ -282,7 +284,8 @@ describe("Song player, play-along", () => {
     expect(text("pa-ontime")).toBe("100%");
     expect(text("pa-earlylate")).toBe("0 / 0");
     expect(text("pa-bars")).toMatch(/No bar was more than/);
-    expect(text("ladder-tempo")).toMatch(/Next run: 65 BPM/);
+    expect(text("song-line")).toBe("Ladder up: next time 65 BPM"); // the results card says what the ladder does
+    expect(screen.queryByTestId("ladder-tempo")).toBeNull(); // and only it
     expect(text("next-tempo")).toBe("Next run: 65 BPM");
     expect(maryProgress()).toMatchObject({ step: 0, tempo: 65, best: 100 });
     const [rec] = saved();
@@ -310,7 +313,7 @@ describe("Song player, play-along", () => {
     expect(text("pa-bars")).toContain(`and drag in bar ${lateIdx + 1} (+130 ms)`);
     expect(text("pa-bars")).toContain("1 extra key pressed");
     expect(text("pa-ontime")).toBe(`${Math.round(((rh.length - firstBar.length - lateBar.length - 1) / rh.length) * 100)}%`);
-    expect(text("ladder-tempo")).toBe("Next run: 60 BPM");
+    expect(text("song-line")).toBe("Next time 60 BPM");
     expect(text("next-tempo")).toBe("Next run: 60 BPM");
     expect(maryProgress()).toMatchObject({ step: 0, tempo: 60, best: Number((text("pa-ontime") ?? "").replace("%", "")) }); // the best score is the only thing that moved
     const rec = saved()[0].items["mary-had-a-little-lamb"];
@@ -342,7 +345,7 @@ describe("Song player, hands ladder and progress", () => {
     expect(screen.getByText(/Step done\. Next: left hand, wait\./)).toBeTruthy();
     expect(maryProgress()).toMatchObject({ step: 1 });
     expect(cur()).toEqual(["2. Left hand, wait"]);
-    expect(screen.getAllByRole("listitem")[0].textContent).toBe("✓ Right hand, wait");
+    expect(within(screen.getByRole("list", { name: "Hands ladder" })).getAllByRole("listitem")[0].textContent).toBe("✓ Right hand, wait");
     fireEvent.click(screen.getByRole("button", { name: "Try next step" }));
     expect(screen.getByRole("button", { name: "Left hand" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Wait" }).getAttribute("aria-pressed")).toBe("true");
@@ -378,7 +381,7 @@ describe("Song player, hands ladder and progress", () => {
     expect(screen.getByRole("button", { name: "Play-along" }).getAttribute("aria-pressed")).toBe("true");
     expect(maryProgress().step).toBe(3);
     runAlong(60, "both");
-    expect(screen.queryByText(/Song mastered/)).toBeNull(); // not at full tempo yet
+    expect(text("song-line")).toBe("Ladder up: next time 65 BPM"); // not mastered: not at full tempo yet
     expect(text("next-tempo")).toBe("Next run: 65 BPM");
     expect(lhOut()).toEqual([]); // both hands: the app plays nothing
   });
@@ -391,7 +394,8 @@ describe("Song player, hands ladder and progress", () => {
     expect(text("next-tempo")).toBe("Next run: 100 BPM");
     expect(screen.getByText(/song tempo 100, best 96% on time/)).toBeTruthy();
     runAlong(100, "both", () => 20);
-    expect(screen.getByText(/Song mastered/)).toBeTruthy();
+    expect(text("song-line")).toBe("Mastered: both hands at full tempo");
+    expect(screen.queryByRole("button", { name: "Try next step" })).toBeNull();
     expect(maryProgress()).toMatchObject({ step: 3, tempo: 100, best: 100, mastered: true });
   });
 });

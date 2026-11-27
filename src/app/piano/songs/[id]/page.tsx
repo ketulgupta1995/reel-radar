@@ -35,7 +35,7 @@ export default function SongPage() {
     return (
       <div className="mx-auto max-w-3xl space-y-3 px-4 py-10 sm:px-6">
         <p>{looked ? "That song isn't in the list." : "Loading…"}</p>
-        <Link href="/piano/songs" className="text-gold">
+        <Link href="/piano/songs" className="text-pn-brass">
           ← Songs
         </Link>
       </div>

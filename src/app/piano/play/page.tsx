@@ -1,17 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { PianoKeyboard } from "@/components/PianoKeyboard";
 import { noteName, noteOctave } from "@/lib/pianoMidi";
-import { useWakeLock } from "@/lib/useWakeLock";
 import { usePiano } from "../PianoProvider";
 import { KeyboardStatus } from "../KeyboardStatus";
+import { Stage } from "../Stage";
 
 export default function PianoPage() {
   const { midi, snapshot } = usePiano();
   const [held, setHeld] = useState<ReadonlySet<number>>(new Set());
   const [last, setLast] = useState<number | null>(null);
-  useWakeLock(true);
+  const [labels, setLabels] = useState(true);
 
   useEffect(
     () =>
@@ -29,28 +28,38 @@ export default function PianoPage() {
 
   const { state } = snapshot;
   return (
-    <div className="mx-auto max-w-3xl space-y-5 px-4 py-10 sm:px-6">
-      <h1 className="text-2xl font-bold">Free play</h1>
-
-      <KeyboardStatus />
-
-      <div aria-live="polite" className="flex h-24 items-baseline justify-center gap-2 rounded-2xl border border-white/10 bg-panel/60 py-4">
+    <Stage
+      notes={[48, 84]}
+      pressed={held}
+      labels={labels}
+      onPress={(n) => midi.noteOn(n)}
+      onRelease={(n) => midi.noteOff(n)}
+      top={<h1 className="font-pnd text-xl font-semibold">Free play</h1>}
+      sheet={
+        <label className="flex items-center gap-3 text-sm">
+          <input type="checkbox" checked={labels} onChange={(e) => setLabels(e.target.checked)} className="h-4 w-4 accent-pn-brass" />
+          Show key names
+        </label>
+      }
+    >
+      <div className="w-full max-w-xl space-y-2 text-center">
+        <KeyboardStatus />
+      </div>
+      <div aria-live="polite" className="flex min-h-0 items-baseline justify-center gap-2 py-2">
         {last === null ? (
-          <span className="self-center text-sm text-white/40">Play a key</span>
+          <span className="font-pnd text-2xl italic text-pn-ivory/40">Play a key</span>
         ) : (
           <>
-            <span data-testid="note-name" className="text-6xl font-extrabold text-gold">
+            <span data-testid="note-name" className="font-pnd text-[clamp(5rem,28vh,10rem)] font-semibold leading-none text-pn-ivory">
               {noteName(last)}
             </span>
-            <span className="text-lg text-white/50">{noteOctave(last)}</span>
+            <span className="font-pnd text-4xl text-pn-brass">{noteOctave(last)}</span>
           </>
         )}
       </div>
-
-      <PianoKeyboard pressed={held} onPress={(n) => midi.noteOn(n)} onRelease={(n) => midi.noteOff(n)} />
-      <p className="text-xs text-white/40">
+      <p className="text-xs text-pn-ivory/40">
         {state === "connected" ? "Tapped keys play on your keyboard." : "Tapped keys play through a simple built-in sound."}
       </p>
-    </div>
+    </Stage>
   );
 }

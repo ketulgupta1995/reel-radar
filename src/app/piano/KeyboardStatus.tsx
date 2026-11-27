@@ -16,19 +16,19 @@ export function KeyboardStatus() {
   return (
     <>
       {(state === "unsupported" || state === "denied") && (
-        <p role="alert" className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-100">
+        <p role="alert" className="rounded-r-md border-l-4 border-pn-brass bg-pn-ebony/50 px-3 py-2.5 text-sm text-pn-ivory/90">
           {PROBLEM[state]}
         </p>
       )}
-      {state === "disconnected" && <p className="text-sm text-white/60">Plug in your keyboard with a USB cable. It connects by itself.</p>}
+      {state === "disconnected" && <p className="text-sm text-pn-ivory/60">Plug in your keyboard with a USB cable. It connects by itself.</p>}
 
       {devices.length > 1 && (
-        <label className="flex items-center gap-2 text-sm text-white/70">
+        <label className="flex items-center gap-2 text-sm text-pn-ivory/70">
           Keyboard
           <select
             value={deviceId ?? ""}
             onChange={(e) => midi.selectDevice(e.target.value)}
-            className="rounded-lg border border-white/10 bg-panel px-2 py-1 text-white"
+            className="rounded-lg border border-pn-line bg-pn-felt px-2 py-1 text-pn-ivory"
           >
             {devices.map((d) => (
               <option key={d.id} value={d.id}>

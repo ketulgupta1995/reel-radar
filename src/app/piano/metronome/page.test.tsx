@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { installFakeAudio } from "@/test/audio";
 import { fakeMidi, uninstallMidi } from "@/test/midi";
+import { openSettings } from "@/test/stage";
 import PianoLayout from "../layout";
+import { Metronome } from "../Metronome";
 import MetronomePage from "./page";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/piano/metronome" }));
@@ -19,13 +21,14 @@ afterEach(() => {
   localStorage.clear();
 });
 
-const open = async () => {
+const open = async (sheet = true) => {
   render(
     <PianoLayout>
       <MetronomePage />
     </PianoLayout>,
   );
   await act(async () => {});
+  if (sheet) openSettings(); // beats per bar, the count-in and the tap-along live in the settings sheet
 };
 const advance = (ms: number) => act(() => void vi.advanceTimersByTime(ms));
 const press = (m: ReturnType<typeof fakeMidi>, ...args: [number, number, number]) => act(() => void m.noteOn(...args));
@@ -164,5 +167,38 @@ describe("Metronome page", () => {
     expect((screen.getByLabelText("Latency offset") as HTMLInputElement).value).toBe("-12");
     fireEvent.change(screen.getByLabelText("Latency offset"), { target: { value: "" } });
     expect((screen.getByLabelText("Latency offset") as HTMLInputElement).value).toBe("0");
+  });
+
+  it("runs on the stage without a keyboard, with the meter, count-in and tap-along in the settings sheet", async () => {
+    fakeMidi().install();
+    await open(false);
+    expect(screen.getByTestId("stage")).toBeTruthy();
+    expect(screen.queryByLabelText("On-screen keyboard")).toBeNull();
+    expect(screen.getByRole("button", { name: "Start" })).toBeTruthy();
+    expect(screen.queryByLabelText(/Beats per bar/)).toBeNull();
+    expect(screen.queryByTestId("tap-result")).toBeNull();
+    openSettings();
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.contains(screen.getByLabelText(/Beats per bar/))).toBe(true);
+    expect(dialog.contains(screen.getByLabelText("One-bar count-in"))).toBe(true);
+    expect(dialog.contains(screen.getByTestId("tap-result"))).toBe(true);
+    expect(dialog.contains(screen.getByRole("button", { name: "Set from average" }))).toBe(true);
+    expect(screen.getByTestId("bpm").textContent).toBe("80");
+  });
+
+  it("still works as an embeddable card", async () => {
+    fakeMidi().install();
+    render(
+      <PianoLayout>
+        <Metronome />
+      </PianoLayout>,
+    );
+    await act(async () => {});
+    expect(screen.getByRole("region", { name: "Metronome" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Faster" }));
+    expect(screen.getByTestId("bpm").textContent).toBe("81");
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+    expect(screen.getByTestId("tap-result")).toBeTruthy();
   });
 });

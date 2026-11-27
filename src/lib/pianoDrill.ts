@@ -25,7 +25,11 @@ export type DrillDef<T extends DrillItem = DrillItem> = {
   settle?(item: T, held: ReadonlySet<number>): boolean;
 };
 
-export type ItemTotals = { attempts: number; misses: number; slow: number; avgMs: number }; // avgMs: of correct answers
+// One item's totals in a saved round. avgMs: mean reaction of the correct first answers. ms (new records only; older
+// ones lack it): the SUM of the reaction times (ms, rounded) of the item's CORRECT FIRST answers, i.e. an answer given
+// before any miss on that item. Misses and answers that came after a miss add nothing, so the number of answers behind
+// ms is attempts - misses. Optional and additive: older clients ignore it and the month merge (union by id) never looks at it.
+export type ItemTotals = { attempts: number; misses: number; slow: number; avgMs: number; ms?: number };
 export type DrillRecord = {
   id: string;
   kind: "drill";
@@ -38,7 +42,9 @@ export type DrillRecord = {
 // Practice done away from the app: minutes (as durationMs) and a note. The only records that are edited or deleted.
 export type ManualRecord = { id: string; kind: "manual"; startedAt: number; durationMs: number; note: string; updatedAt: number };
 export type SessionRecord = DrillRecord | ManualRecord;
-export type Stats = { attempts: number; misses: number; slow: number };
+// Summed over records. ms/msN: reaction-time sum and the number of correct first answers it covers, counted only from
+// records that carry ms, so old records never dilute an average (avg = ms / msN; absent = no data).
+export type Stats = { attempts: number; misses: number; slow: number; ms?: number; msN?: number };
 export type DrillSettings = { unlocked: number; slowStep: number }; // groups open (>= 1); index into SLOW_LIMITS
 
 export const ROUND_MS = 120_000;
@@ -70,9 +76,38 @@ export function statsFrom(records: readonly SessionRecord[], drill: string): Rec
       s.attempts += t.attempts;
       s.misses += t.misses;
       s.slow += t.slow;
+      if (typeof t.ms === "number") {
+        s.ms = (s.ms ?? 0) + t.ms;
+        s.msN = (s.msN ?? 0) + Math.max(0, t.attempts - t.misses);
+      }
     }
   }
   return out;
+}
+
+// A round's mean reaction time (ms) over its correct first answers, or null when it has none. Uses ms when the
+// record has it, else avgMs weighted by the number of correct answers (attempts - misses).
+export function recordAvgMs(r: DrillRecord): number | null {
+  let sum = 0;
+  let n = 0;
+  for (const t of Object.values(r.items)) {
+    const right = Math.max(0, t.attempts - t.misses);
+    if (!right) continue;
+    sum += typeof t.ms === "number" ? t.ms : t.avgMs * right;
+    n += right;
+  }
+  return n ? Math.round(sum / n) : null;
+}
+
+// The mean reaction of the latest round of `drill` that has one, or null. `before` skips records started at or after it.
+export function lastRoundAvgMs(records: readonly SessionRecord[], drill: string, before = Infinity): number | null {
+  let best: DrillRecord | null = null;
+  for (const r of records) {
+    if (r.kind !== "drill" || r.drill !== drill || r.startedAt >= before) continue;
+    if (recordAvgMs(r) === null) continue;
+    if (!best || r.startedAt > best.startedAt) best = r;
+  }
+  return best ? recordAvgMs(best) : null;
 }
 
 export type Weakest = { id: string; label: string; attempts: number; misses: number; slow: number };
@@ -95,7 +130,13 @@ export type RoundOpts<T extends DrillItem> = {
   now: () => number; // a monotonic clock in ms: the one note events' time is on (performance.now())
   wall?: () => number; // wall-clock ms for the saved record (Date.now()); defaults to now
   rng: () => number; // [0, 1)
-  durationMs?: number;
+  lengthMs?: number; // round length; default ROUND_MS
+  durationMs?: number; // older name for lengthMs
+  // Restrict the round to these item ids (a session's weak items). Only open items count. Fewer than 3 left:
+  // padded with the weakest other open items up to 3 (or all open items if fewer). Empty or matching nothing:
+  // ignored. A filtered round never unlocks groups or moves the slow limit: a few chosen items say nothing
+  // about the whole drill, so it only records attempts (history, weights) and leaves the levels alone.
+  items?: readonly string[];
 };
 
 export class DrillRound<T extends DrillItem = DrillItem> {
@@ -111,13 +152,17 @@ export class DrillRound<T extends DrillItem = DrillItem> {
   private held = new Set<number>();
   private acc = new Map<string, Acc>();
   private window: Attempt[] = [];
+  private queued: T | null = null; // the next item, once peeked (it becomes the current item)
+  private fixedPool: T[] | null = null; // set by a usable item filter
+  previous: { item: T; ms: number } | null = null; // the last item answered right, and its time
 
   constructor(private o: RoundOpts<T>) {
     this.settings = { ...o.settings, unlocked: Math.max(1, Math.min(o.settings.unlocked, o.def.groupNames.length)) };
     this.startSettings = { ...this.settings };
     this.startedAt = o.now();
     this.wallStart = (o.wall ?? o.now)();
-    this.endsAt = this.startedAt + (o.durationMs ?? ROUND_MS);
+    this.endsAt = this.startedAt + (o.lengthMs ?? o.durationMs ?? ROUND_MS);
+    this.fixedPool = this.filterPool();
     this.next();
   }
 
@@ -125,7 +170,26 @@ export class DrillRound<T extends DrillItem = DrillItem> {
     return SLOW_LIMITS[this.settings.slowStep];
   }
   get pool() {
+    return this.fixedPool ?? this.openItems();
+  }
+  get filtered() {
+    return this.fixedPool !== null;
+  }
+  private openItems() {
     return this.o.def.items.filter((i) => i.group < this.settings.unlocked);
+  }
+  private filterPool(): T[] | null {
+    const ids = new Set(this.o.items ?? []);
+    if (!ids.size) return null;
+    const open = this.openItems();
+    const chosen = open.filter((i) => ids.has(i.id));
+    if (!chosen.length) return null;
+    const need = Math.min(3, open.length);
+    if (chosen.length < need) {
+      const rest = open.filter((i) => !ids.has(i.id)).sort((a, b) => this.weight(b) - this.weight(a));
+      chosen.push(...rest.slice(0, need - chosen.length));
+    }
+    return chosen;
   }
   timeLeft(at = this.o.now()) {
     return Math.max(0, this.endsAt - at);
@@ -156,7 +220,13 @@ export class DrillRound<T extends DrillItem = DrillItem> {
     });
   }
 
-  private next() {
+  // The item that will follow the current one. Picked once and kept, so peeking changes nothing:
+  // the peeked item is the one next() makes current.
+  peek(): T {
+    return (this.queued ??= this.pick());
+  }
+
+  private pick(): T {
     let pool = this.pool;
     if (pool.length > 1 && this.current) pool = pool.filter((i) => i.id !== this.current.id);
     const weights = pool.map((i) => this.weight(i));
@@ -169,7 +239,12 @@ export class DrillRound<T extends DrillItem = DrillItem> {
         break;
       }
     }
-    this.current = pick;
+    return pick;
+  }
+
+  private next() {
+    this.current = this.queued ?? this.pick();
+    this.queued = null;
     this.shownAt = this.o.now();
     this.missed = false;
   }
@@ -215,12 +290,14 @@ export class DrillRound<T extends DrillItem = DrillItem> {
       if (ms > this.slowLimit) a.slow++;
       changed = this.record({ ok: true, ms });
     }
+    this.previous = { item: this.current, ms: Math.max(0, time - this.shownAt) };
     this.next();
     return { outcome: "correct", advanced: true, changed };
   }
 
   // Unlock and tighten checks over the last MIN_ATTEMPTS first answers; the window restarts after a change.
   private record(a: Attempt) {
+    if (this.fixedPool) return false; // filtered round: levels stay put
     this.window.push(a);
     if (this.window.length > MIN_ATTEMPTS) this.window.shift();
     if (this.window.length < MIN_ATTEMPTS) return false;
@@ -253,7 +330,7 @@ export class DrillRound<T extends DrillItem = DrillItem> {
     let right = 0;
     const weakest: Weakest[] = [];
     for (const [key, a] of this.acc) {
-      items[key] = { attempts: a.attempts, misses: a.misses, slow: a.slow, avgMs: a.right ? Math.round(a.sumMs / a.right) : 0 };
+      items[key] = { attempts: a.attempts, misses: a.misses, slow: a.slow, avgMs: a.right ? Math.round(a.sumMs / a.right) : 0, ms: Math.round(a.sumMs) };
       attempts += a.attempts;
       misses += a.misses;
       sumMs += a.sumMs;

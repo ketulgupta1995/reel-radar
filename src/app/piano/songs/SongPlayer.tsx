@@ -1,18 +1,17 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { PianoKeyboard, keyLayout } from "@/components/PianoKeyboard";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { loadSongProgress, newSessionId, saveSession, saveSongProgress, usePianoSync } from "@/lib/pianoData";
 import { HANDS_LADDER, LAST_STEP, RunOutcome, RunResult, SongMode, SongProgress, applyRun, ladderTempo, stepIndex } from "@/lib/pianoSongLadder";
 import { RUSH_DRAG_MS } from "@/lib/pianoSongPlay";
 import { BOTH_UNLOCK_PCT, bothUnlocked } from "@/lib/pianoScales";
-import { HandChoice, Song, beatMs, songRange } from "@/lib/pianoSongs";
+import { HandChoice, Song, beatMs, songBeats } from "@/lib/pianoSongs";
 import { offsetStats } from "@/lib/pianoTiming";
 import { WaitState, advance, autoNotes, expectedNotes, press, startWait, stepsPlayed } from "@/lib/pianoSongWait";
-import { useWakeLock } from "@/lib/useWakeLock";
 import { KeyboardStatus } from "../KeyboardStatus";
+import { Results, songTag } from "../Results";
 import { usePiano } from "../PianoProvider";
+import { Stage } from "../Stage";
 import { FallingNotes, GRADE_BAR, HAND_KEY } from "./FallingNotes";
 import { PlayDone, usePlayAlong } from "./usePlayAlong";
 
@@ -23,13 +22,13 @@ const mmss = (ms: number) => {
   const s = Math.round(ms / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
-type Summary = { misses: number; durationMs: number; played: number; total: number; early: boolean };
-type Next = { stepDone: boolean; mastered: boolean; step: number; tempo: number | null }; // what the ladders say after a run
+export type Summary = { misses: number; durationMs: number; played: number; total: number; early: boolean };
+export type Next = { stepDone: boolean; mastered: boolean; step: number; tempo: number | null }; // what the ladders say after a run
 const MODES: { id: SongMode; label: string }[] = [
   { id: "wait", label: "Wait" },
   { id: "play", label: "Play-along" },
 ];
-const HAND_NAME = { R: "right", L: "left", both: "both" } as const;
+const HAND_LABEL: Record<HandChoice, string> = { R: "Right hand", L: "Left hand", both: "Both hands" };
 const HANDS: { id: HandChoice; label: string }[] = [
   { id: "R", label: "Right hand" },
   { id: "L", label: "Left hand" },
@@ -43,12 +42,41 @@ const HANDS: { id: HandChoice; label: string }[] = [
 // Scale mode (`scale`): the same player for a scale song. It always opens on the right hand in wait mode, hides the
 // hands ladder (a scale has its own order: one hand first), locks "Both hands" until a play-along run reached
 // BOTH_UNLOCK_PCT on time, shows the evenness of the timing after a play-along run, and logs runs as "scales".
-export function SongPlayer({ song, scale = false, back }: { song: Song; scale?: boolean; back?: { href: string; label: string } }) {
+// What a run hands to `onFinish` (a session step), called once whenever a started run ends: `wait` or `play` holds the
+// run's own summary (by mode), `early` says it was stopped with Stop, `bpm` is the pace it was played at (a wait run's
+// song tempo times the speed slider), and `ladder` is what the ladders said afterwards. A stopped run gives `ladder:
+// null` (it doesn't feed the ladders); a stopped play-along run is discarded, so it also has `play: null` and saves
+// nothing; a stopped wait run with at least one step played is still saved as practice. Changing hands or mode in the
+// sheet mid-run abandons the run without calling onFinish.
+export type SongResult = { mode: SongMode; hands: HandChoice; bpm: number; early: boolean; wait: Summary | null; play: PlayDone | null; ladder: Next | null };
+
+// Props for a session step (planner SongTarget = {song, hands, mode, tempo, minutes}): `hands`, `mode` and `tempo`
+// (BPM of a play-along run) are the starting values and replace the saved ladder step; `autoStart` begins the run
+// as soon as the saved progress is read; `onFinish` gets the result; `top` is an extra node in the stage's top bar;
+// `showResults` (default true) false skips the results view after a run (a session shows one at the end). `stopRef`
+// receives a function that stops the run in progress the way Stop does (calling onFinish) and says whether one was.
+export type SongPlayerProps = {
+  song: Song;
+  scale?: boolean;
+  back?: { href: string; label: string };
+  hands?: HandChoice;
+  mode?: SongMode;
+  tempo?: number;
+  autoStart?: boolean;
+  onFinish?: (r: SongResult) => void;
+  top?: ReactNode;
+  showResults?: boolean;
+  stopRef?: { current: (() => boolean) | null };
+};
+
+export function SongPlayer({ song, scale = false, back, hands: hands0, mode: mode0, tempo: tempo0, autoStart, onFinish, top, showResults = true, stopRef }: SongPlayerProps) {
   const drill = scale ? SCALES_DRILL : SONGS_DRILL;
   const { midi } = usePiano();
-  const [hands, setHands] = useState<HandChoice>("R");
-  const [mode, setMode] = useState<SongMode>("wait");
+  const [hands, setHands] = useState<HandChoice>(hands0 ?? "R");
+  const [mode, setMode] = useState<SongMode>(mode0 ?? "wait");
   const [speed, setSpeed] = useState(100);
+  const [bpmOverride, setBpmOverride] = useState(tempo0); // a session's BPM for the first play-along run; the ladder takes over after it
+  const [ready, setReady] = useState(false); // saved progress has been read
   const [clicks, setClicks] = useState(false);
   const [progress, setProgress] = useState<SongProgress | undefined>();
   const [next, setNext] = useState<Next | null>(null);
@@ -61,8 +89,9 @@ export function SongPlayer({ song, scale = false, back }: { song: Song; scale?: 
   const speedRef = useRef(speed);
   speedRef.current = speed;
   const started = useRef({ wall: 0, perf: 0 });
-  const scroller = useRef<HTMLDivElement>(null);
-  const tempo = ladderTempo(song, progress);
+  const tempo = bpmOverride ?? ladderTempo(song, progress);
+  const onFinishRef = useRef(onFinish);
+  onFinishRef.current = onFinish;
   const bothLocked = scale && !bothUnlocked(progress);
 
   // Saved progress: read on open (the hands and mode jump to the ladder's step) and again when another device syncs.
@@ -72,7 +101,8 @@ export function SongPlayer({ song, scale = false, back }: { song: Song; scale?: 
     setProgress(p);
     if (!loaded.current) {
       loaded.current = true;
-      if (p && !scale) {
+      setReady(true);
+      if (p && !scale && !hands0 && !mode0) {
         setHands(HANDS_LADDER[p.step].hands);
         setMode(HANDS_LADDER[p.step].mode);
       }
@@ -82,11 +112,13 @@ export function SongPlayer({ song, scale = false, back }: { song: Song; scale?: 
   usePianoSync(reload);
 
   // Feeds a finished run to the ladders; progress is only written when it changed.
-  const record = (r: RunResult) => {
+  const record = (r: RunResult): Next => {
     const out: RunOutcome = applyRun(song, loadSongProgress(song.id), r, Date.now());
     if (out.changed) saveSongProgress(song.id, out.progress, Date.now());
     setProgress(out.progress);
-    setNext({ stepDone: out.stepDone && !scale, mastered: out.mastered && out.stepDone, step: out.progress.step, tempo: out.nextTempo });
+    const n: Next = { stepDone: out.stepDone && !scale, mastered: out.mastered && out.stepDone, step: out.progress.step, tempo: out.nextTempo };
+    setNext(n);
+    return n;
   };
 
   const { live, start: startPlay, stop: stopPlay } = usePlayAlong(song, midi, (r) => {
@@ -101,21 +133,33 @@ export function SongPlayer({ song, scale = false, back }: { song: Song; scale?: 
       items: { [song.id]: { attempts: 1, misses: sm.total - sm.onTime, slow: 0, avgMs: Math.round(sm.meanAbsMs) } },
       updatedAt: Date.now(),
     });
-    record({ mode: "play", hands: r.hands, onTime: sm.onTimePct, tempo: r.bpm });
+    const ladder = record({ mode: "play", hands: r.hands, onTime: sm.onTimePct, tempo: r.bpm });
+    setBpmOverride(undefined);
+    onFinishRef.current?.({ mode: "play", hands: r.hands, bpm: r.bpm, early: false, wait: null, play: r, ladder });
   });
-  useWakeLock(run !== null || live !== null);
+  const stopRun = () => {
+    const bpm = tempo;
+    stopPlay();
+    setBpmOverride(undefined);
+    onFinishRef.current?.({ mode: "play", hands, bpm, early: true, wait: null, play: null, ladder: null });
+  };
 
   const view = useMemo(() => run ?? startWait(song, hands), [run, song, hands]);
-  const { low, high } = useMemo(() => songRange(song), [song]);
+  const songNotes = useMemo(() => song.notes.map((n) => n.pitch), [song]); // the keyboard shows just the song's range
 
   const finish = (s: WaitState, early: boolean) => {
     const durationMs = Math.max(0, Math.round(performance.now() - started.current.perf));
+    const bpm = Math.round((song.bpm * speedRef.current) / 100);
     runRef.current = null;
     setRun(null);
     const played = stepsPlayed(s);
-    setSummary({ misses: s.misses, durationMs, played, total: s.steps.length, early });
-    if (!played) return;
-    if (!early) record({ mode: "wait", hands: s.hands, finished: true, misses: s.misses, steps: s.steps.length });
+    const sum: Summary = { misses: s.misses, durationMs, played, total: s.steps.length, early };
+    setSummary(sum);
+    if (!played) {
+      onFinishRef.current?.({ mode: "wait", hands: s.hands, bpm, early, wait: sum, play: null, ladder: null });
+      return;
+    }
+    const ladder = early ? null : record({ mode: "wait", hands: s.hands, finished: true, misses: s.misses, steps: s.steps.length });
     const now = Date.now();
     saveSession({
       id: newSessionId(),
@@ -126,6 +170,7 @@ export function SongPlayer({ song, scale = false, back }: { song: Song; scale?: 
       items: { [song.id]: { attempts: 1, misses: s.misses, slow: 0, avgMs: 0 } },
       updatedAt: now,
     });
+    onFinishRef.current?.({ mode: "wait", hands: s.hands, bpm, early, wait: sum, play: null, ladder });
   };
   const apply = (next: WaitState) => {
     if (next === runRef.current) return;
@@ -162,19 +207,6 @@ export function SongPlayer({ song, scale = false, back }: { song: Song; scale?: 
     const t = setTimeout(() => applyRef.current(next), gap * ms);
     return () => clearTimeout(t);
   }, [index, run?.hands, midi, song.bpm]);
-
-  // Keep the notes of the current step in view on a phone.
-  const lay = keyLayout(low, high);
-  const viewIndex = view.index;
-  useEffect(() => {
-    const el = scroller.current;
-    const step = view.steps[viewIndex];
-    if (!el || !step || !el.scrollWidth) return;
-    const lay = keyLayout(low, high);
-    const xs = step.notes.map((n) => lay.x(n.pitch) + lay.w(n.pitch) / 2);
-    const mid = ((Math.min(...xs) + Math.max(...xs)) / 2 / lay.width) * el.scrollWidth;
-    el.scrollLeft = Math.max(0, mid - el.clientWidth / 2);
-  }, [view.steps, viewIndex, low, high]);
 
   const start = () => {
     setNext(null);
@@ -213,7 +245,20 @@ export function SongPlayer({ song, scale = false, back }: { song: Song; scale?: 
     reset();
   };
 
+  // A session step starts straight away, once the saved progress is read (its tempo is the ladder's).
+  const autoStarted = useRef(false);
+  const startRef = useRef(start);
+  startRef.current = start;
+  useEffect(() => {
+    if (!autoStart || !ready || autoStarted.current) return;
+    autoStarted.current = true;
+    startRef.current();
+  }, [autoStart, ready]);
+
   const step = view.steps[view.index];
+  // The step to keep on screen when the keyboard scrolls: the current one, or in play-along the next one to play.
+  const followStep = live ? view.steps.find((s) => s.start + 0.5 > live.at) : step;
+  const follow = followStep?.notes.map((n) => n.pitch);
   const lit = new Set<number>();
   const tint: Record<number, string> = {};
   const fingers: Record<number, number> = {};
@@ -226,24 +271,87 @@ export function SongPlayer({ song, scale = false, back }: { song: Song; scale?: 
   const counting = live !== null && live.at < 0;
   const onStep = stepIndex(hands, mode);
   const nextStep = HANDS_LADDER[Math.min(progress?.step ?? 0, LAST_STEP)];
+  const active = live !== null || playing;
+  if (stopRef)
+    stopRef.current = () => {
+      if (live) stopRun();
+      else if (runRef.current) finish(runRef.current, true);
+      else return false;
+      return true;
+    };
+  const result = showResults && !active && (summary !== null || play !== null); // after a run its summary takes the falling notes' place
 
-  return (
-    <div className="mx-auto max-w-3xl space-y-4 px-4 py-8 sm:px-6">
-      <div>
-        <Link href={back?.href ?? "/piano/songs"} className="text-sm text-white/60 hover:text-white">
-          ← {back?.label ?? "Songs"}
-        </Link>
-        <h1 className="text-2xl font-bold">{song.title}</h1>
-        <p className="text-sm text-white/60">
-          {song.imported ? "Imported" : `Level ${song.level} · ${song.key}`} · {song.bpm} BPM · {song.beatsPerBar} beats a bar
-          {song.notes.some((n) => n.suggested) && <i data-testid="suggested"> · fingering suggested</i>}
-        </p>
+  // The post-run results card: built from what the run left behind (the same data `onFinish` was given).
+  const cardResult: SongResult | null =
+    result ? { mode: play ? "play" : "wait", hands, bpm: play?.bpm ?? Math.round((song.bpm * speed) / 100), early: summary?.early ?? false, wait: summary, play, ladder: next } : null;
+
+  const counts = { on: 0, early: 0, late: 0, missed: 0 };
+  live?.marks.forEach((g) => counts[g]++);
+  const total = Math.max(1, songBeats(song));
+  const fraction = live ? Math.min(1, Math.max(0, live.at / total)) : playing ? Math.min(1, view.index / Math.max(1, view.steps.length)) : 0;
+  const bpmNow = mode === "play" ? tempo : Math.round((song.bpm * speed) / 100);
+  const tools = "rounded-full border border-pn-ivory/20 px-3 py-1 text-sm text-pn-ivory/80 hover:bg-pn-ivory/10";
+  const seg = (on: boolean) => `rounded-full px-3 py-1.5 disabled:opacity-40 ${on ? "bg-pn-ivory font-semibold text-pn-ebony" : "text-pn-ivory/70 hover:bg-pn-ivory/10"}`;
+  const group = "flex flex-wrap overflow-hidden rounded-full border border-pn-line bg-pn-ebony/40 p-0.5 text-sm";
+  const label = "mb-1.5 block text-xs uppercase tracking-wide text-pn-ivory/50";
+
+  const topBar = (
+    <>
+      <div className="flex min-w-0 flex-1 flex-col justify-center gap-1">
+        <div className="flex min-w-0 items-baseline gap-x-3 whitespace-nowrap">
+          <h1 className={`min-w-0 truncate font-pnd text-lg font-semibold leading-tight ${top ? "hidden sm:block" : ""}`}>{song.title}</h1>
+          <span data-testid="song-meta" className="truncate text-xs text-pn-ivory/70">
+            {HAND_LABEL[hands]} · {mode === "wait" ? "Wait" : "Play-along"} · {bpmNow} BPM
+          </span>
+          {!scale && onStep >= 0 && (
+            <span data-testid="ladder-step" className="hidden shrink-0 text-xs text-pn-brass sm:inline">
+              Step {onStep + 1} of {HANDS_LADDER.length}
+            </span>
+          )}
+          {live && (
+            <span data-testid="counts" className="shrink-0 text-xs text-pn-ivory/70">
+              <span className="text-emerald-300">{counts.on} on time</span> · <span className="text-violet-300">{counts.early} early</span> · <span className="text-orange-300">{counts.late} late</span>
+            </span>
+          )}
+          {live ? (
+            <span data-testid="progress" role="status" className="shrink-0 text-xs text-pn-ivory/70">
+              {counting ? "Count-in… listen" : `Bar ${Math.floor(live.at / song.beatsPerBar) + 1}`}
+            </span>
+          ) : (
+            playing && (
+              <>
+                <span data-testid="progress" className="shrink-0 text-xs text-pn-ivory/70">
+                  Step {Math.min(view.index + 1, view.steps.length)} of {view.steps.length}
+                </span>
+                <span data-testid="misses" className="shrink-0 text-xs text-pn-ivory/70">
+                  Misses {view.misses}
+                </span>
+              </>
+            )
+          )}
+        </div>
+        <div role="progressbar" aria-label="Song progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(fraction * 100)} className="h-1 rounded-sm bg-pn-ebony">
+          <div className="h-full rounded-sm bg-pn-brass" style={{ width: `${Math.round(fraction * 100)}%` }} />
+        </div>
       </div>
+      {top}
+      {active && (
+        <button onClick={live ? stopRun : () => finish(view, true)} className={tools}>
+          Stop
+        </button>
+      )}
+    </>
+  );
 
-      <KeyboardStatus />
-
-      <div className="flex flex-wrap items-center gap-3">
-        <div role="group" aria-label="Hands" className="flex overflow-hidden rounded-lg border border-white/15 text-sm">
+  const sheet = (
+    <>
+      <p className="text-sm text-pn-ivory/60">
+        {song.imported ? "Imported" : `Level ${song.level} · ${song.key}`} · {song.bpm} BPM · {song.beatsPerBar} beats a bar
+        {song.notes.some((n) => n.suggested) && <i data-testid="suggested"> · fingering suggested</i>}
+      </p>
+      <div>
+        <span className={label}>Hands</span>
+        <div role="group" aria-label="Hands" className={group}>
           {HANDS.map((h) => (
             <button
               key={h.id}
@@ -251,187 +359,167 @@ export function SongPlayer({ song, scale = false, back }: { song: Song; scale?: 
               disabled={bothLocked && h.id === "both"}
               title={bothLocked && h.id === "both" ? `Opens after a one-hand play-along run with ${BOTH_UNLOCK_PCT}% on time` : undefined}
               onClick={() => pickHands(h.id)}
-              className={`px-3 py-1.5 disabled:opacity-40 ${hands === h.id ? "bg-white/20 font-semibold" : "text-white/70 hover:bg-white/10"}`}
+              className={seg(hands === h.id)}
             >
               {h.label}
             </button>
           ))}
         </div>
-        <div role="group" aria-label="Mode" className="flex overflow-hidden rounded-lg border border-white/15 text-sm">
+      </div>
+      <div>
+        <span className={label}>Mode</span>
+        <div role="group" aria-label="Mode" className={group}>
           {MODES.map((m) => (
-            <button
-              key={m.id}
-              aria-pressed={mode === m.id}
-              onClick={() => pickMode(m.id)}
-              className={`px-3 py-1.5 ${mode === m.id ? "bg-white/20 font-semibold" : "text-white/70 hover:bg-white/10"}`}
-            >
+            <button key={m.id} aria-pressed={mode === m.id} onClick={() => pickMode(m.id)} className={seg(mode === m.id)}>
               {m.label}
             </button>
           ))}
         </div>
-        {mode === "wait" ? (
-          <label className="flex items-center gap-2 text-sm text-white/70">
-            Speed
-            <input type="range" min={25} max={100} step={5} value={speed} onChange={(e) => setSpeed(Number(e.target.value))} aria-label="Speed" />
-            <span data-testid="speed" className="w-10 tabular-nums">
-              {speed}%
-            </span>
-          </label>
-        ) : (
-          <label className="flex items-center gap-2 text-sm text-white/70">
-            <input type="checkbox" checked={clicks} onChange={(e) => setClicks(e.target.checked)} />
-            Click during the song
-          </label>
-        )}
       </div>
+      {mode === "wait" ? (
+        <label className="flex items-center gap-2 text-sm text-pn-ivory/70">
+          Speed
+          <input type="range" className="accent-[#d4a64a]" min={25} max={100} step={5} value={speed} onChange={(e) => setSpeed(Number(e.target.value))} aria-label="Speed" />
+          <span data-testid="speed" className="w-10 tabular-nums">
+            {speed}%
+          </span>
+        </label>
+      ) : (
+        <label className="flex items-center gap-2 text-sm text-pn-ivory/70">
+          <input type="checkbox" checked={clicks} onChange={(e) => setClicks(e.target.checked)} />
+          Click during the song
+        </label>
+      )}
       {scale && (
-        <p data-testid="scale-note" className="text-sm text-white/70">
-          {bothLocked ? `Both hands open after a one-hand play-along run with at least ${BOTH_UNLOCK_PCT}% of the notes on time.` : "Both hands are open."}
-          {" "}Notes marked &ldquo;thumb under&rdquo; or &ldquo;finger over&rdquo; are where the hand crosses.
+        <p data-testid="scale-note" className="text-sm text-pn-ivory/70">
+          {bothLocked ? `Both hands open after a one-hand play-along run with at least ${BOTH_UNLOCK_PCT}% of the notes on time.` : "Both hands are open."} Notes marked &ldquo;thumb under&rdquo; or &ldquo;finger over&rdquo; are where the hand crosses.
         </p>
       )}
       {!scale && (
-        <ol aria-label="Hands ladder" className="flex flex-wrap gap-2 text-xs">
-        {HANDS_LADDER.map((s, i) => {
-          const cur = !progress?.mastered && (progress?.step ?? 0) === i;
-          const done = progress?.mastered || (progress?.step ?? 0) > i;
-          return (
-            <li
-              key={s.label}
-              data-current={cur}
-              data-done={!!done}
-              className={`rounded-full border px-2.5 py-1 ${cur ? "border-gold bg-gold/20 font-semibold text-white" : done ? "border-emerald-400/40 text-emerald-300" : "border-white/15 text-white/60"}`}
-            >
-              {done ? "✓ " : `${i + 1}. `}
-              {s.label}
-            </li>
-          );
-        })}
-      </ol>
+        <div>
+          <span className={label}>Hands ladder</span>
+          <ol aria-label="Hands ladder" className="m-0 flex list-none flex-wrap gap-2 p-0 text-xs">
+            {HANDS_LADDER.map((s, i) => {
+              const cur = !progress?.mastered && (progress?.step ?? 0) === i;
+              const done = progress?.mastered || (progress?.step ?? 0) > i;
+              return (
+                <li
+                  key={s.label}
+                  data-current={cur}
+                  data-done={!!done}
+                  className={`rounded-full border px-2.5 py-1 ${cur ? "border-pn-brass bg-pn-brass font-semibold text-pn-ebony" : done ? "border-emerald-400/40 text-emerald-300" : "border-pn-line text-pn-ivory/60"}`}
+                >
+                  {done ? "✓ " : `${i + 1}. `}
+                  {s.label}
+                </li>
+              );
+            })}
+          </ol>
+        </div>
       )}
       {mode === "play" && (
-        <p className="text-sm text-white/70">
+        <p className="text-sm text-pn-ivory/70">
           Tempo ladder: <span data-testid="next-tempo">Next run: {tempo} BPM</span> (song tempo {song.bpm}
           {progress?.best ? `, best ${progress.best}% on time` : ""})
         </p>
       )}
-      <p className="flex gap-3 text-xs text-white/60">
-        <span>
-          <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-amber-400" />
-          Right hand
-        </span>
-        <span>
-          <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-sky-500" />
-          Left hand
-        </span>
-        <span className="text-white/40">Each note shows its letter and finger.</span>
-      </p>
-
-      <div ref={scroller} className="overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-2">
-        <div style={{ minWidth: lay.whites * 28 }}>
-          <FallingNotes steps={view.steps} index={view.index} hands={hands} low={low} high={high} at={live?.at} marks={live?.marks} />
-          <PianoKeyboard
-            bare
-            low={low}
-            high={high}
-            pressed={held}
-            lit={lit}
-            tint={tint}
-            fingers={fingers}
-            onPress={(n) => midi.noteOn(n)}
-            onRelease={(n) => midi.noteOff(n)}
-          />
-        </div>
+      <div className="space-y-1 text-xs text-pn-ivory/60">
+        <p className="flex flex-wrap gap-3">
+          <span>
+            <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-amber-400" />
+            Right hand
+          </span>
+          <span>
+            <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-sky-500" />
+            Left hand
+          </span>
+        </p>
+        <p className="flex flex-wrap gap-3">
+          {(["on", "early", "late", "missed"] as const).map((g) => (
+            <span key={g}>
+              <span className={`mr-1 inline-block h-2 w-2 rounded-sm ${GRADE_BAR[g].replace("fill-", "bg-")}`} />
+              {g === "on" ? "on time" : g}
+            </span>
+          ))}
+        </p>
+        <p className="text-pn-ivory/40">Each note shows its letter and finger.</p>
       </div>
+    </>
+  );
 
-      {live ? (
-        <div className="flex items-center justify-between gap-3 text-sm">
-          <span data-testid="progress" role="status">
-            {counting ? "Count-in… listen" : `Bar ${Math.floor(live.at / song.beatsPerBar) + 1}`}
-          </span>
-          <span className="flex gap-2 text-xs text-white/60">
-            {(["on", "early", "late", "missed"] as const).map((g) => (
-              <span key={g}>
-                <span className={`mr-1 inline-block h-2 w-2 rounded-sm ${GRADE_BAR[g].replace("fill-", "bg-")}`} />
-                {g === "on" ? "on time" : g}
-              </span>
-            ))}
-          </span>
-          <button onClick={stopPlay} className="rounded-lg border border-white/15 px-3 py-1 text-white/80 hover:bg-white/10">
-            Stop
-          </button>
-        </div>
-      ) : playing ? (
-        <div className="flex items-center justify-between gap-3 text-sm">
-          <span data-testid="progress">
-            Step {Math.min(view.index + 1, view.steps.length)} of {view.steps.length}
-          </span>
-          <span data-testid="misses">Misses {view.misses}</span>
-          <button onClick={() => finish(view, true)} className="rounded-lg border border-white/15 px-3 py-1 text-white/80 hover:bg-white/10">
-            Stop
-          </button>
-        </div>
-      ) : (
-        <button onClick={start} className="rounded-xl bg-gold px-5 py-2 font-semibold text-black">
-          {summary || play ? "Play again" : "Start"}
-        </button>
-      )}
-      <p className="text-xs text-white/40">
-        {hands === "both" ? "Hold the lit keys of both hands together." : `Play the ${hands === "R" ? "right" : "left"} hand; the app plays the other.`} {mode === "wait" ? "The song waits for you." : "The song keeps going: a bar of clicks, then play along; the app plays the other hand."}
-      </p>
-      {onStep < 0 && <p className="text-xs text-white/40">This hands and mode combination isn&apos;t a ladder step; it still counts as practice.</p>}
-
-      {summary && (
-        <section aria-label="Song summary" className="rounded-2xl border border-white/10 bg-panel/60 p-4">
-          <h2 className="font-semibold">{summary.early ? "Stopped" : "Song finished"}</h2>
-          <dl className="mt-2 grid grid-cols-3 gap-2 text-sm">
-            <div>
-              <dt className="text-white/60">Misses</dt>
-              <dd data-testid="summary-misses" className="text-lg font-bold">
-                {summary.misses}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-white/60">Time</dt>
-              <dd data-testid="summary-time" className="text-lg font-bold">
-                {mmss(summary.durationMs)}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-white/60">Steps</dt>
-              <dd data-testid="summary-steps" className="text-lg font-bold">
-                {summary.played}/{summary.total}
-              </dd>
-            </div>
-          </dl>
-        </section>
-      )}
-      {play && <PlayAlongSummary done={play} song={song} scale={scale} />}
-      {next && (next.stepDone || next.tempo !== null) && (
-        <section aria-label="Ladders" className="space-y-2 rounded-2xl border border-white/10 bg-panel/60 p-4 text-sm">
-          {next.tempo !== null && (
-            <p data-testid="ladder-tempo">
-              Next run: {next.tempo} BPM
-              {next.tempo > (play?.bpm ?? 0) ? " (up 5 BPM)" : ""}
+  return (
+    <Stage
+      top={topBar}
+      sheet={sheet}
+      notes={songNotes}
+      follow={follow}
+      above={result ? undefined : (r) => <FallingNotes steps={view.steps} index={view.index} hands={hands} low={r.low} high={r.high} at={live?.at} marks={live?.marks} />}
+      backHref={back?.href ?? "/piano/songs"}
+      backLabel={back?.label ?? "Songs"}
+      pressed={held}
+      lit={lit}
+      tint={tint}
+      fingers={fingers}
+      onPress={(n) => midi.noteOn(n)}
+      onRelease={(n) => midi.noteOff(n)}
+    >
+      {!active && (
+        <div className={`w-full max-w-xl space-y-3 text-center ${result ? "py-2" : "max-h-[32vh] overflow-y-auto"}`}>
+          <KeyboardStatus />
+          <div className="flex flex-col items-center gap-1.5">
+            <button onClick={start} className="rounded-full bg-pn-brass px-8 py-2.5 font-semibold text-pn-ebony hover:brightness-110">
+              {summary || play ? "Play again" : "Start"}
+            </button>
+            <p data-testid="start-summary" className="text-xs text-pn-ivory/60">
+              {HAND_LABEL[hands]} · {mode === "wait" ? `Wait, ${speed}% speed` : `Play-along, ${tempo} BPM${clicks ? ", click on" : ""}`}
             </p>
+            <p className="text-xs text-pn-ivory/40 [@media(max-height:480px)]:hidden">
+              {hands === "both" ? "Hold the lit keys of both hands together." : `Play the ${hands === "R" ? "right" : "left"} hand; the app plays the other.`} {mode === "wait" ? "The song waits for you." : "The song keeps going: a bar of clicks, then play along; the app plays the other hand."}
+            </p>
+            {onStep < 0 && <p className="text-xs text-pn-ivory/40 [@media(max-height:480px)]:hidden">This hands and mode combination isn&apos;t a ladder step; it still counts as practice.</p>}
+          </div>
+
+          {cardResult && <Results title="Results" cards={[{ kind: "song", tag: songTag(song.title, hands), result: cardResult }]} />}
+          {result && summary && (
+            <section aria-label="Song summary" className="rounded-lg border border-pn-line bg-pn-felt p-4 text-left">
+              <h2 className="font-pnd text-xl font-semibold">{summary.early ? "Stopped" : "Song finished"}</h2>
+              <dl className="mt-2 grid grid-cols-3 gap-2 text-sm">
+                <div>
+                  <dt className="text-pn-ivory/60">Misses</dt>
+                  <dd data-testid="summary-misses" className="font-pnd text-2xl font-semibold tabular-nums">
+                    {summary.misses}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-pn-ivory/60">Time</dt>
+                  <dd data-testid="summary-time" className="font-pnd text-2xl font-semibold tabular-nums">
+                    {mmss(summary.durationMs)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-pn-ivory/60">Steps</dt>
+                  <dd data-testid="summary-steps" className="font-pnd text-2xl font-semibold tabular-nums">
+                    {summary.played}/{summary.total}
+                  </dd>
+                </div>
+              </dl>
+            </section>
           )}
-          {next.mastered ? (
-            <p className="font-semibold text-emerald-300">Song mastered: both hands at full tempo.</p>
-          ) : (
-            next.stepDone && (
+          {result && play && <PlayAlongSummary done={play} song={song} scale={scale} />}
+          {/* The results card says the next tempo, "Step done" and "Mastered"; this row only offers the next step. */}
+          {result && next?.stepDone && !next.mastered && (
+            <section aria-label="Ladders" className="rounded-lg border border-pn-line bg-pn-felt p-4 text-left text-sm">
               <p className="flex flex-wrap items-center gap-3">
-                <span>
-                  Step done. Next: {nextStep.label.toLowerCase()}.
-                </span>
-                <button onClick={tryNext} className="rounded-lg bg-gold px-3 py-1 font-semibold text-black">
+                <span>Step done. Next: {nextStep.label.toLowerCase()}.</span>
+                <button onClick={tryNext} className="rounded-lg bg-pn-brass px-3 py-1 font-semibold text-pn-ebony">
                   Try next step
                 </button>
               </p>
-            )
+            </section>
           )}
-        </section>
+        </div>
       )}
-    </div>
+    </Stage>
   );
 }
 
@@ -440,43 +528,43 @@ function PlayAlongSummary({ done, song, scale }: { done: PlayDone; song: Song; s
   const spread = offsetStats(done.scores.map((s) => s.offsetMs)); // evenness: the spread (standard deviation) of the offsets
   const ms = (x: number) => `${x < 0 ? "-" : "+"}${Math.round(Math.abs(x))} ms`;
   return (
-    <section aria-label="Play-along summary" className="rounded-2xl border border-white/10 bg-panel/60 p-4">
-      <h2 className="font-semibold">
+    <section aria-label="Play-along summary" className="rounded-lg border border-pn-line bg-pn-felt p-4">
+      <h2 className="font-pnd text-xl font-semibold">
         Run done at {done.bpm} BPM
         {song.bpm !== done.bpm ? ` (song tempo ${song.bpm})` : ""}
       </h2>
       <dl className="mt-2 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
         <div>
-          <dt className="text-white/60">On time</dt>
-          <dd data-testid="pa-ontime" className="text-lg font-bold">
+          <dt className="text-pn-ivory/60">On time</dt>
+          <dd data-testid="pa-ontime" className="font-pnd text-2xl font-semibold tabular-nums">
             {Math.round(sm.onTimePct * 100)}%
           </dd>
         </div>
         <div>
-          <dt className="text-white/60">Early / late</dt>
-          <dd data-testid="pa-earlylate" className="text-lg font-bold">
+          <dt className="text-pn-ivory/60">Early / late</dt>
+          <dd data-testid="pa-earlylate" className="font-pnd text-2xl font-semibold tabular-nums">
             {sm.early} / {sm.late}
           </dd>
         </div>
         <div>
-          <dt className="text-white/60">Missed</dt>
-          <dd data-testid="pa-missed" className="text-lg font-bold">
+          <dt className="text-pn-ivory/60">Missed</dt>
+          <dd data-testid="pa-missed" className="font-pnd text-2xl font-semibold tabular-nums">
             {sm.missed}
           </dd>
         </div>
         <div>
-          <dt className="text-white/60">Average offset</dt>
-          <dd data-testid="pa-offset" className="text-lg font-bold">
+          <dt className="text-pn-ivory/60">Average offset</dt>
+          <dd data-testid="pa-offset" className="font-pnd text-2xl font-semibold tabular-nums">
             {sm.total - sm.missed ? ms(sm.meanOffsetMs) : "-"}
           </dd>
         </div>
       </dl>
       {scale && (
         <p data-testid="pa-evenness" className="mt-2 text-sm">
-          Evenness: {spread.n ? `±${Math.round(spread.spread)} ms` : "-"} <span className="text-white/60">(the smaller, the more even the notes)</span>
+          Evenness: {spread.n ? `±${Math.round(spread.spread)} ms` : "-"} <span className="text-pn-ivory/60">(the smaller, the more even the notes)</span>
         </p>
       )}
-      <p data-testid="pa-bars" className="mt-2 text-sm text-white/70">
+      <p data-testid="pa-bars" className="mt-2 text-sm text-pn-ivory/70">
         {sm.rush || sm.drag
           ? `You ${[sm.rush && `rush in bar ${sm.rush.bar} (${ms(sm.rush.mean)})`, sm.drag && `drag in bar ${sm.drag.bar} (${ms(sm.drag.mean)})`].filter(Boolean).join(" and ")}.`
           : `No bar was more than ${RUSH_DRAG_MS} ms early or late on average.`}

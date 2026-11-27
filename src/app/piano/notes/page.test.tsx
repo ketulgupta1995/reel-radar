@@ -6,6 +6,8 @@ import { requests, routeFetch } from "@/test/pages";
 import { fakeMidi, uninstallMidi } from "@/test/midi";
 import PianoLayout from "../layout";
 import NotesPage from "./page";
+import { DrillRunner } from "../DrillRunner";
+import { NOTE_DRILL } from "@/lib/pianoNoteDrill";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/piano/notes" }));
 
@@ -130,7 +132,13 @@ describe("Note drill page", () => {
     expect(saved()).toHaveLength(1);
     expect(rec).toMatchObject({ drill: "notes", durationMs: 3400 });
     expect(rec.id).toBeTruthy();
-    expect(rec.items[a]).toMatchObject({ attempts: 1, misses: 0, slow: 0, avgMs: 400 });
+    expect(rec.items[a]).toMatchObject({ attempts: 1, misses: 0, slow: 0, avgMs: 400, ms: 400 });
+    expect(rec.items[b]).toMatchObject({ misses: 1, ms: 0 }); // a miss adds no reaction time
+    // The note-speed keyboard colours today's keys: a is fast, b (missed) and c (2.6 s) slow, the rest have no data.
+    expect(screen.getByTestId(`key-${a}`).getAttribute("data-band")).toBe("fast");
+    expect(screen.getByTestId(`key-${c}`).getAttribute("data-band")).toBe("slow");
+    expect(screen.getByTestId(`key-${b}`).getAttribute("data-band")).toBe("slow");
+    expect(screen.getByTestId("slow-line").textContent).toMatch(/ still slow: tomorrow/);
     expect(rec.items[b]).toMatchObject({ attempts: 1, misses: 1 });
     expect(rec.items[c]).toMatchObject({ attempts: 1, slow: 1, avgMs: 2600 });
     expect(localStorage.getItem("reel-radar-piano-2026-11")).toBeTruthy();
@@ -190,19 +198,117 @@ describe("Note drill page", () => {
     expect(screen.getByText("Slow limit: 1 s")).toBeTruthy();
   });
 
-  it("keeps the screen on during a round only", async () => {
+  it("keeps the screen on while the stage is open", async () => {
     const release = vi.fn();
     const request = vi.fn(async () => ({ release }));
     Object.defineProperty(navigator, "wakeLock", { value: { request }, configurable: true });
-    await open();
-    expect(request).not.toHaveBeenCalled();
-    start();
+    const view = render(
+      <PianoLayout>
+        <NotesPage />
+      </PianoLayout>,
+    );
     await act(async () => {});
     expect(request).toHaveBeenCalledWith("screen");
-    fireEvent.click(screen.getByRole("button", { name: "End round" }));
+    view.unmount();
     await act(async () => {});
     expect(release).toHaveBeenCalled();
     delete (navigator as unknown as Record<string, unknown>).wakeLock;
+  });
+
+  it("shows the previous item with its time and the peeked next item, which then becomes the target", async () => {
+    await open();
+    start();
+    expect(screen.getByTestId("previous").textContent).not.toMatch(/\d s/);
+    const first = target();
+    const next = screen.getByTestId("next").textContent!.replace("Next", "").trim();
+    expect(["C", "D", "E"]).toContain(next);
+    expect(next).not.toBe(first);
+    await wait(700);
+    press(first);
+    expect(target()).toBe(next);
+    expect(screen.getByTestId("previous").textContent).toContain(first);
+    expect(screen.getByTestId("previous").textContent).toContain("0.7 s");
+    const after = screen.getByTestId("next").textContent!.replace("Next", "").trim();
+    expect(after).not.toBe(next);
+  });
+
+  it("runs a filtered, shorter round from props and reports it", async () => {
+    const onFinish = vi.fn();
+    render(
+      <PianoLayout>
+        <DrillRunner def={NOTE_DRILL} blurb="b" lengthMs={30_000} items={["C", "D", "E"]} onFinish={onFinish} top={<span>session bar</span>} />
+      </PianoLayout>,
+    );
+    await act(async () => {});
+    expect(screen.getByRole("button", { name: "Start 0:30 round" })).toBeTruthy();
+    start();
+    expect(screen.getByText("session bar")).toBeTruthy();
+    expect(screen.getByLabelText("Time left").textContent).toBe("0:30");
+    for (let i = 0; i < 25; i++) {
+      await wait(1000);
+      expect(["C", "D", "E"]).toContain(target());
+      press(target());
+    }
+    expect(onFinish).not.toHaveBeenCalled();
+    await wait(6000);
+    expect(onFinish).toHaveBeenCalledTimes(1);
+    const [sum, rec] = onFinish.mock.calls[0];
+    expect(sum.attempts).toBeGreaterThan(20);
+    expect(rec.drill).toBe("notes");
+    expect(saved()).toHaveLength(1);
+    expect(saved()[0].durationMs).toBe(30_000);
+    expect(settings().unlocks?.notes ?? 1).toBe(1); // 20+ quick answers on a filtered round unlock nothing
+    expect(screen.getByText("Round done")).toBeTruthy();
+  });
+
+  it("hands the previous round's reaction to onFinish and, with showResults false, shows no results view", async () => {
+    const onFinish = vi.fn();
+    const view = render(
+      <PianoLayout>
+        <DrillRunner def={NOTE_DRILL} blurb="b" lengthMs={30_000} autoStart showResults={false} onFinish={onFinish} />
+      </PianoLayout>,
+    );
+    await act(async () => {});
+    await wait(800);
+    press(target());
+    fireEvent.click(screen.getByRole("button", { name: "End round" }));
+    expect(onFinish.mock.calls[0][2]).toBeNull(); // no earlier round
+    expect(screen.queryByRole("region", { name: "Results" })).toBeNull();
+    expect(screen.getByRole("button", { name: /Start/ })).toBeTruthy(); // back to the start screen
+    view.unmount();
+    render(
+      <PianoLayout>
+        <DrillRunner def={NOTE_DRILL} blurb="b" lengthMs={30_000} autoStart onFinish={onFinish} />
+      </PianoLayout>,
+    );
+    await act(async () => {});
+    await wait(1500);
+    press(target());
+    fireEvent.click(screen.getByRole("button", { name: "End round" }));
+    expect(onFinish.mock.calls[1][2]).toBe(800);
+    expect(screen.getByTestId("reaction-vs").textContent).toBe("Slower than last round (was 0.8 s)");
+  });
+
+  it("starts straight away with autoStart, once", async () => {
+    render(
+      <PianoLayout>
+        <DrillRunner def={NOTE_DRILL} blurb="b" lengthMs={60_000} autoStart />
+      </PianoLayout>,
+    );
+    await act(async () => {});
+    expect(screen.queryByRole("button", { name: /Start/ })).toBeNull();
+    expect(screen.getByLabelText("Time left").textContent).toBe("1:00");
+    expect(["C", "D", "E"]).toContain(target());
+    fireEvent.click(screen.getByRole("button", { name: "End round" }));
+    expect(screen.getByText("Round done")).toBeTruthy();
+  });
+
+  it("offers the keyboard messages in the settings sheet during a round", async () => {
+    await open();
+    start();
+    act(() => midi.unplug());
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.getByRole("dialog").textContent).toContain("Plug in your keyboard");
   });
 
   it("weights this device's recent history: a note missed before is shown more", async () => {

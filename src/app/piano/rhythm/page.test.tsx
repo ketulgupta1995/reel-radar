@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { installFakeAudio } from "@/test/audio";
 import { fakeMidi, uninstallMidi } from "@/test/midi";
+import { openSettings } from "@/test/stage";
 import PianoLayout from "../layout";
+import { RhythmRunner, RhythmRunnerProps } from "../RhythmRunner";
 import RhythmPage from "./page";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/piano/rhythm" }));
@@ -68,6 +71,7 @@ afterEach(() => {
 describe("Rhythm drill page", () => {
   it("shows the groups and the window, and adjusts the tempo before starting", async () => {
     await open();
+    openSettings();
     expect(screen.getByText("Open: Quarters, halves, whole")).toBeTruthy();
     expect(screen.getByText("Locked: Syncopation")).toBeTruthy();
     expect(screen.getByText("On-time window: ±100 ms")).toBeTruthy();
@@ -160,5 +164,61 @@ describe("Rhythm drill page", () => {
     click("End round");
     expect(screen.getByTestId("weakest").textContent).toContain("Four quarters: 1 off, of 1");
     expect(saved()[0].items.quarters.misses).toBe(1);
+  });
+
+  it("runs on the stage with the keyboard docked, and keeps tempo, window and groups in the settings sheet", async () => {
+    await open();
+    expect(screen.getByTestId("stage")).toBeTruthy();
+    expect(screen.getByLabelText("On-screen keyboard")).toBeTruthy();
+    expect(screen.getByTestId("level").textContent).toBe("Level 1 of 5");
+    expect(screen.queryByLabelText("Tempo")).toBeNull();
+    openSettings();
+    expect(screen.getByRole("dialog").contains(screen.getByLabelText("Tempo"))).toBe(true);
+    click("Faster");
+    expect(screen.getByTestId("bpm").textContent).toBe("75");
+  });
+
+  it("takes session props: autoStart, a shorter length, top content and onFinish", async () => {
+    const done: { attempts: number; saved: boolean }[] = [];
+    const onFinish: RhythmRunnerProps["onFinish"] = (s, r) => done.push({ attempts: s.attempts, saved: r !== null });
+    render(
+      <PianoLayout>
+        <RhythmRunner autoStart lengthMs={30_000} top={<span>Step 2 of 3</span>} onFinish={onFinish} />
+      </PianoLayout>,
+    );
+    await act(async () => {});
+    expect(screen.getByText("Step 2 of 3")).toBeTruthy();
+    expect(screen.getByTestId("pattern-name").textContent).toBe("Four quarters"); // no start screen
+    expect(screen.getByLabelText("Time left").textContent).toBe("0:30");
+    wait(30_000);
+    expect(screen.getByText("Round done")).toBeTruthy();
+    expect(done).toEqual([{ attempts: 1, saved: true }]); // the one run that ended, with no hits (as on the page)
+  });
+
+  it("with showResults false ends the round without a results view", async () => {
+    const onFinish = vi.fn();
+    render(
+      <PianoLayout>
+        <RhythmRunner autoStart lengthMs={30_000} showResults={false} onFinish={onFinish} />
+      </PianoLayout>,
+    );
+    await act(async () => {});
+    wait(30_000);
+    expect(onFinish).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Round done")).toBeNull();
+    expect(screen.getByRole("button", { name: /Start/ })).toBeTruthy();
+  });
+
+  it("plays the count-in on autoStart under StrictMode (effects mount twice in dev)", async () => {
+    render(
+      <StrictMode>
+        <PianoLayout>
+          <RhythmRunner autoStart lengthMs={30_000} />
+        </PianoLayout>
+      </StrictMode>,
+    );
+    await act(async () => {});
+    wait(60 + 4 * BEAT);
+    expect(midi.sent().filter((d) => d[0] === 0x99).length).toBeGreaterThanOrEqual(4);
   });
 });

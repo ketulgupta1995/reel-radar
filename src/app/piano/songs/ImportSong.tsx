@@ -63,8 +63,8 @@ export function ImportSong({ onSaved }: { onSaved: (title: string) => void }) {
   };
 
   return (
-    <section className="space-y-3 rounded-2xl border border-white/10 bg-panel/60 p-4">
-      <label className="inline-block cursor-pointer rounded-lg bg-white/10 px-3 py-1.5 text-sm font-semibold hover:bg-white/20">
+    <section className="space-y-3 rounded-lg border border-pn-line bg-pn-felt p-4">
+      <label className="inline-block cursor-pointer rounded-full border border-pn-brass px-4 py-1.5 text-sm font-semibold text-pn-brass hover:bg-pn-brass hover:text-pn-ebony focus-within:ring-2 focus-within:ring-pn-brass">
         Import MIDI file
         <input key={inputKey} type="file" accept=".mid,.midi,audio/midi,audio/x-midi" aria-label="MIDI file" className="sr-only" onChange={pick} />
       </label>
@@ -76,30 +76,30 @@ export function ImportSong({ onSaved }: { onSaved: (title: string) => void }) {
       {parsed && plan && counts && (
         <div className="space-y-3 text-sm">
           <label className="block">
-            <span className="text-white/60">Title</span>
-            <input value={title} maxLength={MAX_TITLE} onChange={(e) => setTitle(e.target.value)} className="mt-1 block w-full rounded-lg border border-white/15 bg-ink px-3 py-1.5" />
+            <span className="text-pn-ivory/60">Title</span>
+            <input value={title} maxLength={MAX_TITLE} onChange={(e) => setTitle(e.target.value)} className="mt-1 block w-full rounded-md border border-pn-line bg-pn-velvet px-3 py-1.5" />
           </label>
-          <p data-testid="import-info" className="text-white/70">
+          <p data-testid="import-info" className="text-pn-ivory/70">
             {parsed.bpm} BPM · {parsed.beatsPerBar} beats a bar · {barsOf(parsed.notes, parsed.beatsPerBar)} bars
           </p>
-          <p data-testid="import-counts" className="text-white/70">
+          <p data-testid="import-counts" className="text-pn-ivory/70">
             Right hand {counts.R} notes · Left hand {counts.L} notes
             {plan.by !== "split" && ` (hands taken from the file's ${plan.by})`}
           </p>
           {plan.by === "split" && (
             <label className="block">
-              <span className="text-white/60">
+              <span className="text-pn-ivory/60">
                 Split the hands at {pitchLabel(split)} (notes from here up are the right hand)
               </span>
               <input type="range" min={36} max={84} value={split} aria-label="Split point" onChange={(e) => setSplit(Number(e.target.value))} className="mt-1 block w-full" />
             </label>
           )}
-          <p className="text-xs text-white/50">Fingering is suggested by the app and may need your own touch.</p>
+          <p className="text-xs text-pn-ivory/50">Fingering is suggested by the app and may need your own touch.</p>
           <div className="flex gap-2">
-            <button onClick={save} disabled={!counts.R && !counts.L} className="rounded-lg bg-gold px-3 py-1.5 font-semibold text-ink">
+            <button onClick={save} disabled={!counts.R && !counts.L} className="rounded-full bg-pn-brass px-4 py-1.5 font-semibold text-pn-ebony disabled:opacity-40">
               Save song
             </button>
-            <button onClick={() => setParsed(null)} className="rounded-lg px-3 py-1.5 text-white/70 hover:bg-white/10">
+            <button onClick={() => setParsed(null)} className="rounded-lg px-3 py-1.5 text-pn-ivory/70 hover:bg-pn-ivory/10">
               Cancel
             </button>
           </div>

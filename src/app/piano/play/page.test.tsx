@@ -35,7 +35,7 @@ describe("Piano page", () => {
     expect(app).toMatchObject({ name: "Piano", href: "/piano", icon: "🎹", description: "Notes, chords, songs and practice log" });
     fakeMidi().install();
     await open();
-    expect(screen.getByRole("link", { name: "Piano" }).getAttribute("href")).toBe("/piano");
+    expect(screen.getByRole("link", { name: "Piano", hidden: true }).getAttribute("href")).toBe("/piano");
     expect(screen.getByLabelText("Switch app")).toBeTruthy();
   });
 
@@ -128,5 +128,112 @@ describe("Piano page", () => {
     await open();
     expect(request).toHaveBeenCalledWith("screen");
     delete (navigator as unknown as Record<string, unknown>).wakeLock;
+  });
+
+  describe("on the stage", () => {
+    const stubScreen = (opts: { fullscreen?: "ok" | "reject" | "absent"; lock?: "ok" | "reject" | "absent" }) => {
+      let fs: Element | null = null;
+      const lock = vi.fn(() => (opts.lock === "reject" ? Promise.reject(new Error("no")) : Promise.resolve()));
+      const unlock = vi.fn();
+      Object.defineProperty(document, "fullscreenElement", { get: () => fs, configurable: true });
+      const exit = vi.fn(async () => {
+        fs = null;
+        document.dispatchEvent(new Event("fullscreenchange"));
+      });
+      const request = vi.fn(async () => {
+        if (opts.fullscreen === "reject") throw new Error("needs a tap");
+        fs = document.documentElement;
+        document.dispatchEvent(new Event("fullscreenchange"));
+      });
+      if (opts.fullscreen !== "absent") {
+        document.documentElement.requestFullscreen = request;
+        document.exitFullscreen = exit;
+      } else {
+        delete (document.documentElement as unknown as Record<string, unknown>).requestFullscreen;
+        delete (document as unknown as Record<string, unknown>).exitFullscreen;
+      }
+      Object.defineProperty(window.screen, "orientation", { value: opts.lock === "absent" ? undefined : { type: "landscape-primary", lock, unlock }, configurable: true });
+      return { request, exit, lock, unlock };
+    };
+    afterEach(() => {
+      delete (document.documentElement as unknown as Record<string, unknown>).requestFullscreen;
+      delete (document as unknown as Record<string, unknown>).exitFullscreen;
+      delete (document as unknown as Record<string, unknown>).fullscreenElement;
+      delete (window.screen as unknown as Record<string, unknown>).orientation;
+    });
+
+    it("goes fullscreen, locks the orientation, and offers the way out", async () => {
+      const s = stubScreen({});
+      fakeMidi().install();
+      await open();
+      expect(s.request).toHaveBeenCalled();
+      expect(s.lock).toHaveBeenCalledWith("landscape");
+      fireEvent.click(screen.getByLabelText("Exit full screen"));
+      await act(async () => {});
+      expect(s.exit).toHaveBeenCalled();
+      expect(s.unlock).toHaveBeenCalled();
+      expect(screen.queryByLabelText("Exit full screen")).toBeNull();
+      expect(screen.getByLabelText("On-screen keyboard")).toBeTruthy();
+    });
+
+    it("works when fullscreen is refused, when the lock is refused, and when neither exists", async () => {
+      for (const opts of [{ fullscreen: "reject" }, { lock: "reject" }, { fullscreen: "absent", lock: "absent" }] as const) {
+        const s = stubScreen(opts);
+        fakeMidi().install();
+        const { unmount } = render(
+          <PianoLayout>
+            <PianoPage />
+          </PianoLayout>,
+        );
+        await act(async () => {});
+        expect(screen.getByText("Play a key")).toBeTruthy();
+        fireEvent.pointerDown(key("C4"));
+        expect(screen.getByTestId("note-name").textContent).toBe("C");
+        if (opts.fullscreen === "reject") {
+          // A reload has no tap to go fullscreen from, so the bar offers one.
+          expect(screen.queryByLabelText("Exit full screen")).toBeNull();
+          fireEvent.click(screen.getByLabelText("Enter full screen"));
+          expect(s.request).toHaveBeenCalledTimes(2);
+        }
+        if (opts.fullscreen === "absent") expect(screen.queryByLabelText("Enter full screen")).toBeNull();
+        if (opts.lock === "reject") expect(s.lock).toHaveBeenCalled();
+        unmount();
+        uninstallMidi();
+      }
+    });
+
+    it("keeps the settings behind an icon, and covers the app header while open", async () => {
+      fakeMidi().install();
+      await open();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.getAllByRole("status")).toHaveLength(1);
+      expect(key("C4").querySelector("text")).toBeTruthy();
+      fireEvent.click(screen.getByLabelText("Settings"));
+      fireEvent.click(screen.getByLabelText("Show key names"));
+      expect(key("C4").querySelector("text")).toBeNull();
+      fireEvent.click(screen.getByText("Done"));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(document.activeElement).toBe(screen.getByLabelText("Settings"));
+      fireEvent.click(screen.getByLabelText("Settings"));
+      expect(document.activeElement).toBe(screen.getByText("Done"));
+      fireEvent.keyDown(document, { key: "Enter" });
+      expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      fireEvent.click(screen.getByLabelText("Settings"));
+      fireEvent.click(screen.getByRole("dialog").parentElement!); // the shade behind the sheet
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("lays out by the window's shape", async () => {
+      fakeMidi().install();
+      Object.defineProperty(window, "innerWidth", { value: 900, configurable: true });
+      Object.defineProperty(window, "innerHeight", { value: 400, configurable: true });
+      await open();
+      expect(screen.getByTestId("stage").getAttribute("data-layout")).toBe("landscape");
+      Object.defineProperty(window, "innerHeight", { value: 1200, configurable: true });
+      act(() => window.dispatchEvent(new Event("resize")));
+      expect(screen.getByTestId("stage").getAttribute("data-layout")).toBe("portrait");
+    });
   });
 });

@@ -70,55 +70,55 @@ export default function PianoLog() {
   return (
     <Shell>
       <div className="grid grid-cols-2 gap-3">
-        <div className="rounded-2xl border border-white/10 bg-panel/60 p-4">
-          <div className="text-sm text-white/60">Today</div>
-          <div className="text-3xl font-bold" data-testid="today-minutes">{minutesOf(todayMs(records, now))} min</div>
+        <div className="rounded-lg border border-pn-line bg-pn-felt p-4">
+          <div className="text-sm text-pn-ivory/60">Today</div>
+          <div className="font-pnd text-4xl font-semibold tabular-nums" data-testid="today-minutes">{minutesOf(todayMs(records, now))} min</div>
         </div>
-        <div className="rounded-2xl border border-white/10 bg-panel/60 p-4">
-          <div className="text-sm text-white/60">Streak</div>
-          <div className="text-3xl font-bold" data-testid="streak">{streak(records, now)} {streak(records, now) === 1 ? "day" : "days"}</div>
+        <div className="rounded-lg border border-pn-line bg-pn-felt p-4">
+          <div className="text-sm text-pn-ivory/60">Streak</div>
+          <div className="font-pnd text-4xl font-semibold tabular-nums" data-testid="streak">{streak(records, now)} {streak(records, now) === 1 ? "day" : "days"}</div>
         </div>
       </div>
 
-      <section className="space-y-2 rounded-2xl border border-white/10 bg-panel/60 p-4">
-        <h2 className="font-semibold">{editing ? "Edit entry" : "Add practice done away from the app"}</h2>
+      <section className="space-y-2 rounded-lg border border-pn-line bg-pn-felt p-4">
+        <h2 className="font-pnd text-xl font-semibold">{editing ? "Edit entry" : "Add practice done away from the app"}</h2>
         <div className="flex flex-wrap gap-2">
-          <input aria-label="Minutes" type="number" inputMode="numeric" min={1} max={600} placeholder="Minutes" value={minutes} onChange={(e) => setMinutes(e.target.value)} className="w-24 rounded-lg bg-white/10 px-3 py-2" />
-          <select aria-label="Day" value={dayIdx} onChange={(e) => setDayIdx(Number(e.target.value))} className="rounded-lg bg-white/10 px-3 py-2">
+          <input aria-label="Minutes" type="number" inputMode="numeric" min={1} max={600} placeholder="Minutes" value={minutes} onChange={(e) => setMinutes(e.target.value)} className="w-24 rounded-lg bg-pn-ivory/10 px-3 py-2" />
+          <select aria-label="Day" value={dayIdx} onChange={(e) => setDayIdx(Number(e.target.value))} className="rounded-lg bg-pn-ivory/10 px-3 py-2">
             {days.map((d, i) => (
-              <option key={d.key} value={i} className="text-black">{i === 0 ? "Today" : i === 1 ? "Yesterday" : dayName(d.date)}</option>
+              <option key={d.key} value={i} className="text-pn-ebony">{i === 0 ? "Today" : i === 1 ? "Yesterday" : dayName(d.date)}</option>
             ))}
           </select>
-          <input aria-label="Note" placeholder="Note, e.g. Minuet in G from my book" value={note} onChange={(e) => setNote(e.target.value)} className="min-w-0 flex-1 rounded-lg bg-white/10 px-3 py-2" />
+          <input aria-label="Note" placeholder="Note, e.g. Minuet in G from my book" value={note} onChange={(e) => setNote(e.target.value)} className="min-w-0 flex-1 rounded-lg bg-pn-ivory/10 px-3 py-2" />
         </div>
         <div className="flex gap-2">
-          <button onClick={save} disabled={!valid} className="rounded-lg bg-white/20 px-4 py-2 font-semibold disabled:opacity-40">{editing ? "Save changes" : "Add"}</button>
-          {editing && <button onClick={reset} className="rounded-lg bg-white/10 px-4 py-2">Cancel</button>}
+          <button onClick={save} disabled={!valid} className="rounded-full bg-pn-brass px-5 py-2 font-semibold text-pn-ebony disabled:opacity-40">{editing ? "Save changes" : "Add"}</button>
+          {editing && <button onClick={reset} className="rounded-full border border-pn-ivory/20 px-5 py-2">Cancel</button>}
         </div>
       </section>
 
       <section>
-        <h2 className="mb-2 font-semibold">Last 2 weeks</h2>
+        <h2 className="mb-2 font-pnd text-xl font-semibold">Last 2 weeks</h2>
         <ul className="space-y-1">
           {days.map((d) => (
             <li key={d.key} data-testid="day-row" className="flex items-center gap-3 text-sm">
-              <span className="w-28 shrink-0 text-white/70">{dayName(d.date)}</span>
-              <span className="h-2 flex-1 rounded bg-white/10"><span className={`block h-2 rounded ${d.counts ? "bg-green-400" : "bg-white/40"}`} style={{ width: `${Math.min(100, (d.ms / 60_000 / 30) * 100)}%` }} /></span>
+              <span className="w-28 shrink-0 text-pn-ivory/70">{dayName(d.date)}</span>
+              <span className="h-2 flex-1 rounded bg-pn-ivory/10"><span className={`block h-2 rounded ${d.counts ? "bg-pn-brass" : "bg-pn-ivory/40"}`} style={{ width: `${Math.min(100, (d.ms / 60_000 / 30) * 100)}%` }} /></span>
               <span className="w-20 shrink-0 text-right">{minutesOf(d.ms)} min{d.counts ? " ✓" : ""}</span>
             </li>
           ))}
         </ul>
-        <p className="mt-1 text-xs text-white/50">✓ = 10 minutes or more, so the day counts toward the streak.</p>
+        <p className="mt-1 text-xs text-pn-ivory/50">✓ = 10 minutes or more, so the day counts toward the streak.</p>
       </section>
 
       <section className="space-y-3">
-        <h2 className="font-semibold">Weekly trend by drill</h2>
-        {trends.length === 0 && <p className="text-sm text-white/60">Finish a drill round to see accuracy and speed here.</p>}
+        <h2 className="font-pnd text-xl font-semibold">Weekly trend by drill</h2>
+        {trends.length === 0 && <p className="text-sm text-pn-ivory/60">Finish a drill round to see accuracy and speed here.</p>}
         {trends.map(({ drill, weeks }) => (
           <div key={drill} className="overflow-x-auto">
             <table className="w-full text-sm" aria-label={`${DRILL_TITLES[drill] ?? drill} trend`}>
               <caption className="pb-1 text-left font-medium">{DRILL_TITLES[drill] ?? drill}</caption>
-              <thead className="text-white/60">
+              <thead className="text-pn-ivory/60">
                 <tr><th className="text-left font-normal">Week ending</th><th className="text-right font-normal">{drill === "rhythm" ? "Patterns" : "Answers"}</th><th className="text-right font-normal">{drill === "rhythm" ? "Passed" : "Accuracy"}</th><th className="text-right font-normal">{drill === "rhythm" ? "Avg error" : "Avg reaction"}</th></tr>
               </thead>
               <tbody>
@@ -137,18 +137,18 @@ export default function PianoLog() {
       </section>
 
       <section>
-        <h2 className="mb-2 font-semibold">Recent entries</h2>
-        {entries.length === 0 && <p className="text-sm text-white/60">Nothing logged yet.</p>}
+        <h2 className="mb-2 font-pnd text-xl font-semibold">Recent entries</h2>
+        {entries.length === 0 && <p className="text-sm text-pn-ivory/60">Nothing logged yet.</p>}
         <ul className="space-y-2">
           {entries.map((r) => (
-            <li key={r.id} data-testid="entry" className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-panel/60 px-3 py-2 text-sm">
-              <span className="w-28 shrink-0 text-white/70">{dayName(new Date(r.startedAt))}</span>
+            <li key={r.id} data-testid="entry" className="flex flex-wrap items-center gap-2 rounded-xl border border-pn-line bg-pn-felt px-3 py-2 text-sm">
+              <span className="w-28 shrink-0 text-pn-ivory/70">{dayName(new Date(r.startedAt))}</span>
               <span className="min-w-0 flex-1">{r.kind === "manual" ? r.note || "Practice" : DRILL_TITLES[r.drill] ?? r.drill}</span>
               <span>{minutesOf(r.durationMs)} min</span>
               {r.kind === "manual" && (
                 <>
-                  <button onClick={() => edit(r)} aria-label={`Edit ${r.note || "entry"}`} className="rounded bg-white/10 px-2 py-1">Edit</button>
-                  <button onClick={() => { deleteSession(r); if (editing?.id === r.id) reset(); reload(); }} aria-label={`Delete ${r.note || "entry"}`} className="rounded bg-white/10 px-2 py-1">Delete</button>
+                  <button onClick={() => edit(r)} aria-label={`Edit ${r.note || "entry"}`} className="rounded bg-pn-ivory/10 px-2 py-1">Edit</button>
+                  <button onClick={() => { deleteSession(r); if (editing?.id === r.id) reset(); reload(); }} aria-label={`Delete ${r.note || "entry"}`} className="rounded bg-pn-ivory/10 px-2 py-1">Delete</button>
                 </>
               )}
             </li>
@@ -169,8 +169,8 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="mx-auto max-w-3xl space-y-5 px-4 py-10 sm:px-6">
       <div className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-bold">Practice log</h1>
-        <Link href="/piano" className="text-sm text-white/60 hover:text-white">Piano</Link>
+        <h1 className="font-pnd text-4xl font-semibold leading-tight">Practice log</h1>
+        <Link href="/piano" className="text-sm text-pn-ivory/60 underline-offset-4 hover:text-pn-ivory hover:underline">Piano</Link>
       </div>
       {children}
     </div>

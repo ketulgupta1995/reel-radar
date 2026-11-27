@@ -4,7 +4,7 @@ import { DOC_KEY } from "./docStore";
 import { MonthDoc, PianoSettings, deleteImportedSong, loadImportedSong, loadImportedSongs, loadSettings, mergeMonth, mergeSettings, mergeSongDoc, openKeys, pullImportedSongs, pullSongDoc, saveDrillSettings, saveImportedSong, saveSession, saveSongProgress, syncPianoHistory, MAX_IMPORTED } from "./pianoData";
 import { Song } from "./pianoSongs";
 import { encodeSong } from "./pianoSongImport";
-import { SessionRecord } from "./pianoDrill";
+import { DrillRecord, SessionRecord } from "./pianoDrill";
 import { flush } from "./sync";
 import { jsonResponse } from "@/test/fixtures";
 
@@ -22,6 +22,14 @@ describe("piano month merge", () => {
     expect(ids(mergeMonth(phone, laptop, base))).toEqual(["a", "l", "p"]);
     expect(ids(mergeMonth(laptop, phone, base))).toEqual(["a", "l", "p"]);
     expect(ids(mergeMonth(phone, laptop))).toEqual(["a", "l", "p"]); // no base: still a union
+  });
+
+  it("keeps the per-item ms of new records untouched next to old records without it", () => {
+    const withMs: SessionRecord = { ...(drill("new") as DrillRecord), items: { C: { attempts: 3, misses: 1, slow: 0, avgMs: 500, ms: 1000 } } };
+    const without: SessionRecord = { ...(drill("old") as DrillRecord), items: { C: { attempts: 2, misses: 0, slow: 0, avgMs: 700 } } };
+    const merged = mergeMonth(month(withMs), month(without));
+    expect(merged.items.new).toEqual(withMs);
+    expect(merged.items.old).toEqual(without);
   });
 
   it("lets the newest edit of a manual entry win, either way round", () => {

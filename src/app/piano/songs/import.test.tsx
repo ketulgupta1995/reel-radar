@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { openSettings } from "@/test/stage";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { installFakeAudio } from "@/test/audio";
@@ -83,6 +84,7 @@ describe("importing a MIDI file", () => {
     document.body.innerHTML = "";
     await open(<SongPage />);
     expect(await screen.findByRole("heading", { name: "Scale Tune" })).toBeTruthy();
+    openSettings();
     expect(screen.getByText(/^Imported · 96 BPM · 3 beats a bar/)).toBeTruthy();
     expect(screen.getByTestId("suggested").textContent).toContain("fingering suggested");
     expect(screen.getAllByTestId("note").length).toBeGreaterThan(0);
@@ -254,6 +256,7 @@ describe("songs from another device", () => {
     songId = A;
     await open(<SongPage />);
     expect(await screen.findByRole("heading", { name: "Linked tune" })).toBeTruthy();
+    openSettings();
     expect(screen.getByText(/^Imported · 90 BPM/)).toBeTruthy();
   });
 

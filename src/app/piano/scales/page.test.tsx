@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import { openSettings } from "@/test/stage";
 import { installFakeAudio } from "@/test/audio";
 import { fakeMidi, uninstallMidi } from "@/test/midi";
 import { SCALES, scaleSongById } from "@/lib/pianoScales";
@@ -12,12 +13,13 @@ import ScalesPage from "./page";
 import ScalePage from "./[id]/page";
 
 let scaleId = "scale-c-major";
-vi.mock("next/navigation", () => ({ usePathname: () => "/piano/scales", useParams: () => ({ id: scaleId }) }));
+vi.mock("next/navigation", () => ({ usePathname: () => "/piano/scales", useParams: () => ({ id: scaleId }), useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
 
 let midi: ReturnType<typeof fakeMidi>;
 const open = async (ui = <ScalePage />) => {
   render(<PianoLayout>{ui}</PianoLayout>);
   await act(async () => {});
+  openSettings(); // hands, mode and the ladder live in the stage's settings sheet
 };
 const wait = (ms: number) => act(() => void vi.advanceTimersByTime(ms));
 const click = (name: string | RegExp) => fireEvent.click(screen.getByRole("button", { name }));

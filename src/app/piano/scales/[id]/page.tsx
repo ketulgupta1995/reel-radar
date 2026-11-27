@@ -12,7 +12,7 @@ export default function ScalePage() {
     return (
       <div className="mx-auto max-w-3xl space-y-3 px-4 py-10 sm:px-6">
         <p>That scale isn&apos;t in the list.</p>
-        <Link href="/piano/scales" className="text-gold">
+        <Link href="/piano/scales" className="text-pn-brass">
           ← Scales
         </Link>
       </div>

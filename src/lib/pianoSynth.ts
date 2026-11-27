@@ -13,16 +13,28 @@ type AudioCtor = typeof AudioContext;
 export const CLICK_HZ = { accent: 1600, beat: 1000 };
 export const hertz = (note: number) => 440 * 2 ** ((note - 69) / 12);
 
+// One AudioContext for the page, so a tap that calls unlockAudio() unlocks the synth's sound too.
+let shared: { ctx: AudioContext; made: AudioCtor } | null = null;
+function sharedContext(): AudioContext | null {
+  if (typeof window === "undefined") return null;
+  const w = window as unknown as { AudioContext?: AudioCtor; webkitAudioContext?: AudioCtor };
+  const Ctor = w.AudioContext ?? w.webkitAudioContext;
+  if (!Ctor) return null;
+  if (!shared || shared.made !== Ctor) shared = { ctx: new Ctor(), made: Ctor };
+  return shared.ctx;
+}
+
+// Create and resume the shared AudioContext. Call it inside a user tap (Start practice), before sound is needed.
+export function unlockAudio() {
+  void sharedContext()?.resume?.();
+}
+
 export function createSynth(): Synth {
   let ctx: AudioContext | null = null;
   const live = new Map<number, { osc: OscillatorNode; gain: GainNode }>();
 
   function context() {
-    if (ctx) return ctx;
-    const w = window as unknown as { AudioContext?: AudioCtor; webkitAudioContext?: AudioCtor };
-    const Ctor = w.AudioContext ?? w.webkitAudioContext;
-    if (!Ctor) return null;
-    ctx = new Ctor();
+    ctx = sharedContext();
     return ctx;
   }
 
@@ -73,7 +85,10 @@ export function createSynth(): Synth {
     },
     close() {
       for (const n of [...live.keys()]) release(n);
-      void ctx?.close?.();
+      if (ctx) {
+        void ctx.close?.();
+        if (shared?.ctx === ctx) shared = null;
+      }
       ctx = null;
     },
   };

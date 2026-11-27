@@ -17,9 +17,9 @@ const names = (s: string) =>
     .join(",");
 
 describe("built-in songs", () => {
-  it("has twelve songs with unique ids, levels from easiest up", () => {
-    expect(SONGS).toHaveLength(12);
-    expect(new Set(SONGS.map((s) => s.id)).size).toBe(12);
+  it("has fifteen songs with unique ids, levels from easiest up", () => {
+    expect(SONGS).toHaveLength(15);
+    expect(new Set(SONGS.map((s) => s.id)).size).toBe(15);
     expect(songById("ode-to-joy")?.title).toBe("Ode to Joy");
     expect(songById("nope")).toBeUndefined();
     const levels = SONGS.map((s) => s.level);
@@ -81,6 +81,10 @@ describe("built-in songs", () => {
     expect(MELODY("amazing-grace")).toBe(names("D4 G4 B4 G4 B4 A4 G4 E4 D4 D4 G4 B4 G4 B4 A4 D5 B4 D5 B4 G4 E4 G4 E4 D4 D4 G4 B4 G4 B4 A4 G4"));
     expect(MELODY("minuet-in-g").split(",").slice(0, 16).join(",")).toBe(names("D5 G4 A4 B4 C5 D5 G4 G4 E5 C5 D5 E5 F#5 G5 G4 G4"));
     expect(MELODY("fur-elise").split(",").slice(0, 9).join(",")).toBe(names("E5 D#5 E5 D#5 E5 B4 D5 C5 A4"));
+    expect(MELODY("jana-gana-mana").split(",").slice(0, 23).join(",")).toBe(names("C4 D4 E4 E4 E4 E4 E4 E4 E4 E4 E4 D4 E4 F4 E4 E4 E4 D4 D4 D4 B3 D4 C4"));
+    expect(MELODY("jana-gana-mana").split(",").slice(-9).join(",")).toBe(names("C4 C4 D4 D4 E4 E4 D4 E4 F4")); // jaya jaya jaya jaya he
+    expect(MELODY("raghupati-raghava").split(",").slice(0, 16).join(",")).toBe(names("G3 C4 C4 C4 C4 D4 C4 B3 A3 A3 B3 D4 D4 F4 E4 F4"));
+    expect(MELODY("om-jai-jagdish-hare").split(",").slice(0, 18).join(",")).toBe(names("G4 G4 G4 G4 G4 F#4 G4 A4 A4 B4 C5 D5 E5 D5 C5 B4 C5 A4"));
     expect(MELODY("greensleeves").split(",").slice(0, 9).join(",")).toBe(names("A4 C5 D5 E5 F5 E5 D5 B4 G4"));
   });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DrillDef, DrillRound, MIN_ATTEMPTS, MIN_WEIGHT, SessionRecord, median, statsFrom, weightOf } from "./pianoDrill";
+import { DrillDef, DrillRecord, DrillRound, MIN_ATTEMPTS, MIN_WEIGHT, SessionRecord, lastRoundAvgMs, median, recordAvgMs, statsFrom, weightOf } from "./pianoDrill";
 import { NOTE_DRILL } from "./pianoNoteDrill";
 
 // Time stands still until a test moves it; randomness is a fixed number or a list.
@@ -67,7 +67,7 @@ describe("a round", () => {
     answer(300);
     expect(round.current.id).not.toBe(first);
     const { record, summary } = round.finish("s1");
-    expect(record!.items[first]).toEqual({ attempts: 1, misses: 1, slow: 0, avgMs: 0 });
+    expect(record!.items[first]).toEqual({ attempts: 1, misses: 1, slow: 0, avgMs: 0, ms: 0 });
     expect(summary.accuracy).toBe(0);
   });
 
@@ -76,7 +76,7 @@ describe("a round", () => {
     const id = round.current.id;
     answer(2500);
     const { record, summary } = round.finish("s");
-    expect(record!.items[id]).toEqual({ attempts: 1, misses: 0, slow: 1, avgMs: 2500 });
+    expect(record!.items[id]).toEqual({ attempts: 1, misses: 0, slow: 1, avgMs: 2500, ms: 2500 });
     expect(summary).toMatchObject({ accuracy: 1, avgMs: 2500, weakest: [{ id, slow: 1, misses: 0 }] });
     // exactly at the limit is not slow
     const b = setup();
@@ -240,5 +240,145 @@ describe("a drill with chords' needs", () => {
 describe("median", () => {
   it("handles empty, odd and even lists", () => {
     expect([median([]), median([3, 1, 2]), median([4, 1, 3, 2])]).toEqual([0, 2, 2.5]);
+  });
+});
+
+describe("peeking the next item", () => {
+  const seq = (xs: number[]) => {
+    let i = 0;
+    return () => xs[i++ % xs.length];
+  };
+
+  it("is stable, never the current item, and becomes the current item", () => {
+    const { round, answer } = setup({ rng: seq([0, 0.5, 0.99, 0.2, 0.7]), settings: { unlocked: 4, slowStep: 0 } });
+    for (let i = 0; i < 8; i++) {
+      const next = round.peek();
+      expect(round.peek()).toBe(next);
+      expect(next.id).not.toBe(round.current.id);
+      answer(300);
+      expect(round.current).toBe(next);
+    }
+  });
+
+  it("keeps the peeked item through a miss, and previous is only set by a right answer", () => {
+    const { round, answer } = setup({ rng: seq([0.1, 0.6, 0.3]), settings: { unlocked: 4, slowStep: 0 } });
+    const shown = round.current;
+    const next = round.peek();
+    answer(200, false);
+    expect(round.current).toBe(shown);
+    expect(round.peek()).toBe(next);
+    expect(round.previous).toBeNull();
+    answer(300);
+    expect(round.current).toBe(next);
+    expect(round.previous).toEqual({ item: shown, ms: 500 });
+  });
+
+  it("keeps the previous item with its time", () => {
+    const { round, answer } = setup();
+    expect(round.previous).toBeNull();
+    const first = round.current;
+    answer(450);
+    expect(round.previous).toEqual({ item: first, ms: 450 });
+  });
+
+  it("still picks by weight", () => {
+    const history = { C: { attempts: 40, misses: 0, slow: 0 }, D: { attempts: 40, misses: 0, slow: 0 }, E: { attempts: 40, misses: 40, slow: 0 } };
+    let seed = 5;
+    const rng = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const { round, answer } = setup({ rng, history, settings: { unlocked: 1, slowStep: 0 } });
+    const counts: Record<string, number> = { C: 0, D: 0, E: 0 };
+    for (let i = 0; i < 300; i++) {
+      counts[round.peek().id]++;
+      answer(100);
+    }
+    expect(counts.E).toBeGreaterThan(counts.C * 2);
+  });
+});
+
+describe("round length and item filter", () => {
+  const make = (o: { items?: string[]; lengthMs?: number; unlocked?: number; history?: Record<string, { attempts: number; misses: number; slow: number }> }) => {
+    const clock = { t: 0 };
+    let seed = 3;
+    const round = new DrillRound({ def: NOTE_DRILL, settings: { unlocked: o.unlocked ?? 4, slowStep: 0 }, history: o.history, now: () => clock.t, rng: () => (seed = (seed * 16807) % 2147483647) / 2147483647, items: o.items, lengthMs: o.lengthMs });
+    return { round, clock };
+  };
+
+  it("lasts lengthMs, default two minutes", () => {
+    expect(make({}).round.timeLeft()).toBe(120_000);
+    const { round, clock } = make({ lengthMs: 30_000 });
+    expect(round.timeLeft()).toBe(30_000);
+    clock.t = 30_000;
+    expect(round.over()).toBe(true);
+  });
+
+  it("restricts the pool to the chosen items and pads to three with the weakest open others", () => {
+    const history = { D: { attempts: 10, misses: 0, slow: 0 }, E: { attempts: 10, misses: 1, slow: 0 }, F: { attempts: 10, misses: 5, slow: 0 }, G: { attempts: 10, misses: 3, slow: 0 } };
+    const { round } = make({ items: ["C", "D", "E", "F"] });
+    expect(round.pool.map((i) => i.id)).toEqual(["C", "D", "E", "F"]);
+    const two = make({ items: ["C"], history, unlocked: 2 }).round;
+    expect(two.pool.map((i) => i.id).sort()).toEqual(["C", "F", "G"]);
+    const seen = new Set<string>();
+    for (let i = 0; i < 40; i++) seen.add(two.peek().id);
+    expect([...seen].every((id) => ["C", "F", "G"].includes(id))).toBe(true);
+  });
+
+  it("ignores locked ids, an empty filter and one that matches nothing", () => {
+    expect(make({ items: ["C#"], unlocked: 1 }).round.pool).toHaveLength(3);
+    expect(make({ items: [] }).round.filtered).toBe(false);
+    expect(make({ items: ["nope"] }).round.filtered).toBe(false);
+    expect(make({ items: ["nope"] }).round.pool).toHaveLength(12);
+  });
+
+  it("never unlocks or tightens during a filtered round", () => {
+    const { round, clock } = make({ items: ["C", "D", "E"], unlocked: 1 });
+    for (let i = 0; i < 30; i++) {
+      clock.t += 300;
+      const pc = NOTE_DRILL.items.find((x) => x.id === round.current.id)!.pc;
+      expect(round.handle({ type: "on", note: 60 + pc, time: clock.t }).changed).toBe(false);
+    }
+    expect(round.settings).toEqual({ unlocked: 1, slowStep: 0 });
+    expect(round.finish("x").summary.unlockedNow).toEqual([]);
+  });
+
+  describe("reaction sums (ms)", () => {
+    const rec = (startedAt: number, t: { attempts: number; misses: number; slow?: number; avgMs?: number; ms?: number }, drill = "notes"): DrillRecord => ({
+      id: `r${startedAt}`,
+      kind: "drill",
+      drill,
+      startedAt,
+      durationMs: 1,
+      updatedAt: startedAt,
+      items: { C: { slow: 0, avgMs: 0, ...t } },
+    });
+
+    it("sums ms and the answers behind it, ignoring old records without ms", () => {
+      const old = rec(1, { attempts: 10, misses: 0, avgMs: 5000 });
+      const a = rec(2, { attempts: 3, misses: 1, ms: 1000 }); // 2 correct answers
+      const b = rec(3, { attempts: 2, misses: 0, ms: 3000 }); // 2 correct answers
+      expect(statsFrom([old, a, b], "notes").C).toEqual({ attempts: 15, misses: 1, slow: 0, ms: 4000, msN: 4 });
+      expect(statsFrom([old], "notes").C).toEqual({ attempts: 10, misses: 0, slow: 0 });
+    });
+
+    it("a round saves the sum of correct first answers only", () => {
+      const { round, answer } = setup();
+      answer(400);
+      answer(600);
+      answer(300, false); // a miss adds attempts and misses but no ms
+      const { record } = round.finish("x");
+      const total = Object.values(record!.items).reduce((n, t) => n + (t.ms ?? 0), 0);
+      expect(total).toBe(1000);
+    });
+
+    it("recordAvgMs and lastRoundAvgMs use ms, fall back to avgMs and skip rounds with no right answers", () => {
+      const withMs = rec(5, { attempts: 4, misses: 0, ms: 4000 });
+      const oldOne = rec(3, { attempts: 2, misses: 0, avgMs: 900 });
+      const allMissed = rec(7, { attempts: 2, misses: 2 });
+      expect(recordAvgMs(withMs)).toBe(1000);
+      expect(recordAvgMs(oldOne)).toBe(900);
+      expect(recordAvgMs(allMissed)).toBeNull();
+      expect(lastRoundAvgMs([oldOne, withMs, allMissed, rec(9, { attempts: 1, misses: 0, ms: 1 }, "chords")], "notes")).toBe(1000);
+      expect(lastRoundAvgMs([oldOne, withMs], "notes", 5)).toBe(900);
+      expect(lastRoundAvgMs([], "notes")).toBeNull();
+    });
   });
 });
