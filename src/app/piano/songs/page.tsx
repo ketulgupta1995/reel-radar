@@ -8,6 +8,7 @@ import { EXERCISES } from "@/lib/pianoExercises";
 import { SONGS } from "@/lib/pianoSongLibrary";
 import { Song } from "@/lib/pianoSongs";
 import { KeyboardStatus } from "../KeyboardStatus";
+import { ImportNoobNotes } from "./ImportNoobNotes";
 import { ImportSong } from "./ImportSong";
 
 // Easiest first; songs with the same level keep their order in the library.
@@ -53,6 +54,7 @@ export default function SongsPage() {
       </Link>
       <h1 className="font-pnd text-4xl font-semibold leading-tight">Songs</h1>
       <KeyboardStatus />
+      <ImportNoobNotes onSaved={(t) => { setSaved(t); reload(); }} />
       <ImportSong onSaved={(t) => { setSaved(t); reload(); }} />
       {saved && (
         <p role="status" className="text-sm text-emerald-300">

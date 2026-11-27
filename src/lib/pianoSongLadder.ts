@@ -44,16 +44,19 @@ export type RunResult =
 export type RunOutcome = { progress: SongProgress; changed: boolean; stepDone: boolean; mastered: boolean; nextTempo: number | null };
 
 // Applies one finished run to a song's progress. `changed` is false when nothing moved (no write needed).
-export function applyRun(song: Pick<Song, "bpm">, prev: SongProgress | undefined, run: RunResult, now: number): RunOutcome {
+// A song with no left-hand notes (a NoobNotes import) skips the left-hand and both-hands wait steps.
+export function applyRun(song: Pick<Song, "bpm"> & Partial<Pick<Song, "notes">>, prev: SongProgress | undefined, run: RunResult, now: number): RunOutcome {
   const base: SongProgress = prev ?? { step: 0, tempo: startTempo(song.bpm), best: 0, at: 0 };
   const p = { ...base };
-  const j = stepIndex(run.hands, run.mode);
+  const rightOnly = !!song.notes?.length && song.notes.every((n) => n.hand === "R");
+  // with only a right hand, a right-hand play-along is the "both hands at tempo" run
+  const j = stepIndex(rightOnly && run.mode === "play" && run.hands === "R" ? "both" : run.hands, run.mode);
   let stepDone = false;
   let next: number | null = null;
   if (run.mode === "wait") {
     if (run.finished && waitDoneWell(run.misses, run.steps) && j >= 0 && j < LAST_STEP) {
       stepDone = true;
-      p.step = Math.max(p.step, j + 1);
+      p.step = Math.max(p.step, rightOnly ? LAST_STEP : j + 1);
     }
   } else {
     const good = run.onTime >= GOOD_ON_TIME;

@@ -6,7 +6,7 @@ import { MAX_MIDI_BYTES, MidiFileError, ParsedMidi, parseMidiFile } from "@/lib/
 import { noteName } from "@/lib/pianoMidi";
 import { DEFAULT_SPLIT, MAX_TITLE, barsOf, buildImportedSong, handCounts, planHands } from "@/lib/pianoSongImport";
 
-const SAVE_ERRORS: Record<ImportError, string> = {
+export const SAVE_ERRORS: Record<ImportError, string> = {
   "too-many": "You have 50 imported songs. Delete one to add another.",
   "too-big": "That song is too big to store. Try a shorter one.",
   storage: "This browser has no room left to save it.",
