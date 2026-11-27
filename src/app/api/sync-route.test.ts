@@ -64,6 +64,29 @@ describe("the Books doc", () => {
   });
 });
 
+describe("the Piano docs", () => {
+  const month = { items: { a: { id: "a", kind: "drill", drill: "notes", startedAt: 1, durationMs: 1, updatedAt: 1, items: {} } } };
+  const settings = { unlocks: { notes: 2 }, slowSteps: {}, slowAt: {}, months: ["2026-11"], updatedAt: 1 };
+
+  it("are stored as plain files, not encrypted, and answer only to exact keys", async () => {
+    const route = await load();
+    expect((await (await route.GET(getReq("piano-2026-11,piano-settings"))).json()).docs).toEqual({ "piano-2026-11": null, "piano-settings": null });
+    await route.POST(post({ key: "piano-2026-11", data: month }));
+    await route.POST(post({ key: "piano-settings", data: settings }));
+    expect(await readTmp("piano-2026-11.json")).toEqual(month);
+    expect(await readTmp("piano-settings.json")).toEqual(settings);
+    for (const key of ["piano", "piano-2026-1", "piano-settings-x", "piano-2026-11-01"]) expect((await route.GET(getReq(key))).status).toBe(400);
+  });
+
+  it("refuse a write that no longer matches what's stored", async () => {
+    const route = await load();
+    await route.POST(post({ key: "piano-2026-11", data: month }));
+    const stale = await route.POST(post({ key: "piano-2026-11", data: { items: {} } }));
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).data).toEqual(month);
+  });
+});
+
 describe("/api/sync with local files", () => {
   it("returns null for docs that don't exist yet, and rejects unknown keys", async () => {
     const route = await load();
