@@ -7,6 +7,7 @@ import { EXERCISES } from "./pianoExercises";
 import { FINGER_DRILL } from "./pianoFingerDrill";
 import { dayKey } from "./pianoLog";
 import { NOTE_DRILL } from "./pianoNoteDrill";
+import { EAR_DRILL, EAR_ITEMS, earLabel } from "./pianoEarDrill";
 import { GROUP_NAMES as RHYTHM_GROUPS, PATTERNS, RHYTHM_ID } from "./pianoRhythm";
 import { SCALES, scaleUnlocked } from "./pianoScales";
 import { progressLine } from "./pianoSongLadder";
@@ -36,6 +37,10 @@ const fingerLabel = (id: string) => {
   return m ? `${m[1]} finger ${m[3]} in ${flat(m[2])}` : id;
 };
 const rhythmLabel = (id: string) => PATTERNS.find((p) => p.id === id)?.name ?? id;
+const earItemLabel = (id: string) => {
+  const it = EAR_ITEMS.find((i) => i.id === id);
+  return it ? earLabel(it) : id;
+};
 
 type Spec = { key: string; title: string; href: string; drill: string; groups: number; label: (id: string) => string; max: number };
 const SPECS: Spec[] = [
@@ -43,6 +48,7 @@ const SPECS: Spec[] = [
   { key: "chords", title: "Chords", href: "/piano/chords", drill: CHORD_DRILL.id, groups: CHORD_DRILL.groupNames.length, label: flat, max: 3 },
   { key: "fingers", title: "Five fingers", href: "/piano/fingers", drill: FINGER_DRILL.id, groups: FINGER_DRILL.groupNames.length, label: fingerLabel, max: 2 },
   { key: "rhythm", title: "Rhythm", href: "/piano/rhythm", drill: RHYTHM_ID, groups: RHYTHM_GROUPS.length, label: rhythmLabel, max: 2 },
+  { key: "ear", title: "Ear training", href: "/piano/ear", drill: EAR_DRILL.id, groups: EAR_DRILL.groupNames.length, label: earItemLabel, max: 2 },
 ];
 
 // The worst items of a drill over the last 7 days, worst first (up to `max`): "Slow: F#, B♭" when slow answers

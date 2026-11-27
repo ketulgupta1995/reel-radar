@@ -59,8 +59,28 @@ describe("Piano home", () => {
     expect(href(/Metronome/)).toBe("/piano/metronome");
     expect(href(/Hand coordination/)).toBe("/piano/songs#coordination");
     expect(href(/Practice log/)).toBe("/piano/log");
+    expect(href(/^Ear training/)).toBe("/piano/ear");
     expect(within(lib).getByRole("link", { name: /^Notes/ }).textContent).toBe("NotesL1Not started");
     expect(screen.queryByRole("link", { name: /Start today/ })).toBeNull();
+  });
+
+  it("shows the milestones, saves one when it is first reached and marks it new", async () => {
+    await open();
+    const box = screen.getByRole("region", { name: "Milestones" });
+    expect(box.textContent).toContain("0 of 8");
+    expect(screen.getByTestId("milestone-first-song").getAttribute("data-earned")).toBe("false");
+    expect(loadSettings().milestones).toEqual({});
+    cleanup();
+    localStorage.setItem("reel-radar-piano-settings", JSON.stringify({ songs: { "mary-had-a-little-lamb": { step: 3, tempo: 100, best: 95, mastered: true, at: 1 } } }));
+    await open();
+    const first = screen.getByTestId("milestone-first-song");
+    expect(first.getAttribute("data-earned")).toBe("true");
+    expect(first.textContent).toContain("New");
+    expect(screen.getByRole("region", { name: "Milestones" }).textContent).toContain("2 of 8"); // first step too
+    expect(loadSettings().milestones).toEqual({ "first-step": NOW.getTime(), "first-song": NOW.getTime() });
+    cleanup();
+    await open(); // already saved: earned, no longer new
+    expect(screen.getByTestId("milestone-first-song").textContent).not.toContain("New");
   });
 
   it("Library rows show levels and weak spots from the last 7 days", async () => {

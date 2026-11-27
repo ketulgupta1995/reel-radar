@@ -46,4 +46,5 @@ export const FINGER_DRILL: DrillDef<FingerItem> = {
   setup: (i) => positionFingers(i.position),
   judge: (item, _held, hit) => (hit.note === fingerKey(item.position, item.finger) ? "correct" : "miss"),
   hint: (item) => ({ lit: new Set([fingerKey(item.position, item.finger)]), fingers: positionFingers(item.position) }),
+  fingerOf: (item, note) => positionFingers(item.position)[note],
 };

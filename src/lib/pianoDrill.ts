@@ -17,12 +17,25 @@ export type DrillDef<T extends DrillItem = DrillItem> = {
   caption?(item: T): string; // small line above the label (five-finger: "Right hand · C position")
   // Finger numbers shown on the keyboard for the whole round, before any hint (five-finger: the position).
   setup?(item: T, range: KeyRange): Readonly<Record<number, number>>;
-  // Called on every note-on, after `held` includes it. "pending" = not enough yet (a chord half held).
-  judge(item: T, held: ReadonlySet<number>, hit: NoteHit): Judgement;
+  // Called on every note-on, after `held` includes it. "pending" = not enough yet (a chord half held, a phrase half
+  // played). `hits` = the note-ons since the item was shown or last missed, this one last (an ear phrase's order).
+  judge(item: T, held: ReadonlySet<number>, hit: NoteHit, hits?: readonly NoteHit[]): Judgement;
   hint(item: T, range: KeyRange): Hint;
   // Called on every note-off: true = the keys still held now answer the item (a chord whose stray
   // key was the last one lifted). Without it, only note-ons can answer.
   settle?(item: T, held: ReadonlySet<number>): boolean;
+  // Ear training: what the app plays when the item comes up (and on "Hear again"): groups of notes, each group
+  // struck together, `gapMs` apart. Without it the drill is silent.
+  sound?(item: T): { groups: number[][]; gapMs: number; velocity?: number[] };
+  // What is shown large while the item is current, when it differs from the label (ear training hides the answer
+  // behind "Listen"; the label names it in "Last" and the summary).
+  prompt?(item: T): string;
+  // Time (ms) the item needs before an answer can start (the ear prompt playing, the extra notes of a phrase). It is
+  // taken off the reaction time and delays the 2-second hint.
+  leadMs?(item: T): number;
+  hintAfterMs?: number; // default HINT_AFTER_MS; Infinity = only after a miss
+  // The finger that plays `note` for this item (five-finger drill), for the evenness-of-touch summary.
+  fingerOf?(item: T, note: number): number | undefined;
 };
 
 // One item's totals in a saved round. avgMs: mean reaction of the correct first answers. ms (new records only; older
@@ -150,6 +163,7 @@ export class DrillRound<T extends DrillItem = DrillItem> {
   private readonly startSettings: DrillSettings;
   private readonly wallStart: number;
   private held = new Set<number>();
+  private hits: NoteHit[] = []; // note-ons on the current item since it was shown or last missed
   private acc = new Map<string, Acc>();
   private window: Attempt[] = [];
   private queued: T | null = null; // the next item, once peeked (it becomes the current item)
@@ -197,9 +211,12 @@ export class DrillRound<T extends DrillItem = DrillItem> {
   over(at = this.o.now()) {
     return at >= this.endsAt;
   }
-  // Light the target after a miss, or after 2 s with no answer.
+  private get lead() {
+    return this.o.def.leadMs?.(this.current) ?? 0;
+  }
+  // Light the target after a miss, or after 2 s (the def's hintAfterMs, after its lead) with no answer.
   hintVisible(at = this.o.now()) {
-    return this.missed || at - this.shownAt >= HINT_AFTER_MS;
+    return this.missed || at - this.shownAt - this.lead >= (this.o.def.hintAfterMs ?? HINT_AFTER_MS);
   }
   hint(range: KeyRange) {
     return this.o.def.hint(this.current, range);
@@ -247,6 +264,7 @@ export class DrillRound<T extends DrillItem = DrillItem> {
     this.queued = null;
     this.shownAt = this.o.now();
     this.missed = false;
+    this.hits = [];
   }
 
   private total(id: string) {
@@ -264,9 +282,12 @@ export class DrillRound<T extends DrillItem = DrillItem> {
       return { outcome: "pending", advanced: false, changed: false };
     }
     this.held.add(e.note);
-    const outcome = this.o.def.judge(this.current, this.held, { note: e.note, time: e.time });
+    const hit = { note: e.note, time: e.time };
+    this.hits.push(hit);
+    const outcome = this.o.def.judge(this.current, this.held, hit, this.hits);
     let changed = false;
     if (outcome === "miss") {
+      this.hits = []; // a phrase starts again from its first note
       if (!this.missed) {
         this.missed = true;
         this.total(this.current.id).attempts++;
@@ -281,8 +302,8 @@ export class DrillRound<T extends DrillItem = DrillItem> {
 
   private right(time: number): { outcome: Judgement; advanced: boolean; changed: boolean } {
     let changed = false;
+    const ms = Math.max(0, time - this.shownAt - this.lead);
     if (!this.missed) {
-      const ms = Math.max(0, time - this.shownAt);
       const a = this.total(this.current.id);
       a.attempts++;
       a.right++;
@@ -290,7 +311,7 @@ export class DrillRound<T extends DrillItem = DrillItem> {
       if (ms > this.slowLimit) a.slow++;
       changed = this.record({ ok: true, ms });
     }
-    this.previous = { item: this.current, ms: Math.max(0, time - this.shownAt) };
+    this.previous = { item: this.current, ms };
     this.next();
     return { outcome: "correct", advanced: true, changed };
   }

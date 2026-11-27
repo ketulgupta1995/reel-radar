@@ -16,6 +16,8 @@
 // so a merge never loses progress; written (and queued) only when a run changes it. Additive like the others.
 //   `importedSongs` { [id]: {title, at, removed?} }: which imported MIDI songs exist, so another device knows which
 // song docs to pull. Union by id; a `removed` marker is final (it wins over any copy without it), like Books.
+//   `milestones` { [id]: when first reached }: union by id keeping the earliest time, so a milestone once earned stays
+// (pianoMilestones); written only when one is newly reached. Additive like the others.
 //   piano-song-<12 hex> a SongDoc (pianoSongImport.ts): one imported song, compact. Never edited after it is
 // saved. /api/sync has no delete, so deleting a song marks it removed in the settings and replaces its doc with the
 // tiny `{removed: true}` (a normal push, merged with the same removal-wins rule), then no device lists or loads it.
@@ -36,6 +38,7 @@ export type PianoSettings = {
   months: string[];
   songs: Record<string, SongProgress>; // per song: hands step, tempo ladder, best on-time % (see pianoSongLadder)
   importedSongs: Record<string, ImportedEntry>; // imported MIDI songs by id (see the header)
+  milestones: Record<string, number>; // milestone id -> when first reached (pianoMilestones)
   updatedAt: number;
 };
 
@@ -111,7 +114,15 @@ export function saveManual(rec: ManualRecord, prev?: ManualRecord) {
   saveSession(rec);
 }
 
-const emptySettings = (): PianoSettings => ({ unlocks: {}, slowSteps: {}, slowAt: {}, months: [], songs: {}, importedSongs: {}, updatedAt: 0 });
+const emptySettings = (): PianoSettings => ({ unlocks: {}, slowSteps: {}, slowAt: {}, months: [], songs: {}, importedSongs: {}, milestones: {}, updatedAt: 0 });
+
+// Milestone times, keeping only well-formed entries (another device's copy can be anything).
+function cleanMilestones(x: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!x || typeof x !== "object") return out;
+  for (const [id, at] of Object.entries(x as Record<string, unknown>)) if (typeof at === "number" && Number.isFinite(at) && /^[a-z0-9-]{1,40}$/.test(id)) out[id] = at;
+  return out;
+}
 
 export function loadSettings(): PianoSettings {
   const s = read<Partial<PianoSettings>>(SETTINGS_DOC, {});
@@ -122,6 +133,7 @@ export function loadSettings(): PianoSettings {
     months: Array.isArray(s.months) ? s.months : [],
     songs: s.songs && typeof s.songs === "object" ? s.songs : {},
     importedSongs: cleanImported(s.importedSongs),
+    milestones: cleanMilestones(s.milestones),
     updatedAt: s.updatedAt ?? 0,
   };
 }
@@ -164,6 +176,17 @@ export function saveSongProgress(id: string, p: SongProgress, now: number) {
   const cur = s.songs[id];
   if (cur && cur.step === p.step && cur.tempo === p.tempo && cur.best === p.best && !!cur.mastered === !!p.mastered) return;
   s.songs[id] = mergeProgress(cur, p)!;
+  s.updatedAt = now;
+  write(SETTINGS_DOC, s);
+  markDirty(SETTINGS_DOC);
+}
+
+// Records milestones reached now (ids not saved yet); one write and one queued push, only when there is a new one.
+export function saveMilestones(ids: readonly string[], now: number) {
+  const s = loadSettings();
+  const fresh = ids.filter((id) => !(id in s.milestones));
+  if (!fresh.length) return;
+  for (const id of fresh) s.milestones[id] = now;
   s.updatedAt = now;
   write(SETTINGS_DOC, s);
   markDirty(SETTINGS_DOC);
@@ -218,9 +241,12 @@ export const mergeSettings = (local: PianoSettings, server: PianoSettings): Pian
     const win = !a ? b : !b ? a : b.at > a.at ? b : a;
     importedSongs[id] = { title: win.title, at: Math.max(a?.at ?? 0, b?.at ?? 0), ...(a?.removed || b?.removed ? { removed: true as const } : {}) };
   }
+  const milestones = cleanMilestones(l.milestones);
+  for (const [id, at] of Object.entries(cleanMilestones(s.milestones))) milestones[id] = Math.min(milestones[id] ?? at, at);
   return {
     unlocks: maxBy(l.unlocks, s.unlocks),
     songs,
+    milestones,
     importedSongs,
     slowSteps,
     slowAt,

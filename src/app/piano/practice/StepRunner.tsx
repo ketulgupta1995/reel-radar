@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { DrillDef, DrillItem } from "@/lib/pianoDrill";
 import { CHORD_DRILL } from "@/lib/pianoChordDrill";
+import { EAR_DRILL } from "@/lib/pianoEarDrill";
 import { FINGER_DRILL } from "@/lib/pianoFingerDrill";
 import { NOTE_DRILL } from "@/lib/pianoNoteDrill";
 import { RHYTHM_ID } from "@/lib/pianoRhythm";
@@ -14,7 +15,7 @@ import { ResultCard, songTag } from "../Results";
 import { SongPlayer, SongResult } from "../songs/SongPlayer";
 import { Stage, StageProgress } from "../Stage";
 
-const DEFS = { notes: NOTE_DRILL, chords: CHORD_DRILL, fingers: FINGER_DRILL } as unknown as Record<string, DrillDef<DrillItem>>;
+const DEFS = { notes: NOTE_DRILL, chords: CHORD_DRILL, fingers: FINGER_DRILL, ear: EAR_DRILL } as unknown as Record<string, DrillDef<DrillItem>>;
 const MIN_MS = 60_000;
 const PAUSE = "Pause practice"; // the stage's back button: the session stays and resumes today
 
@@ -62,7 +63,7 @@ export function StepRunner({ step, steps, index, onDone }: { step: Step; steps: 
         lengthMs={lengthMs}
         items={t.items}
         top={top}
-        onFinish={(summary, _record, prevAvgMs) => done({ kind: "drill", tag: def.title, summary, prevAvgMs })}
+        onFinish={(summary, _record, prevAvgMs, touch) => done({ kind: "drill", tag: def.title, summary, prevAvgMs, touch })}
       />
     );
   }

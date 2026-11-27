@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DOC_KEY } from "./docStore";
-import { MonthDoc, PianoSettings, deleteImportedSong, loadImportedSong, loadImportedSongs, loadSettings, mergeMonth, mergeSettings, mergeSongDoc, openKeys, pullImportedSongs, pullSongDoc, saveDrillSettings, saveImportedSong, saveSession, saveSongProgress, syncPianoHistory, MAX_IMPORTED } from "./pianoData";
+import { MonthDoc, PianoSettings, deleteImportedSong, loadImportedSong, loadImportedSongs, loadSettings, mergeMonth, mergeSettings, mergeSongDoc, openKeys, pullImportedSongs, pullSongDoc, saveDrillSettings, saveImportedSong, saveMilestones, saveSession, saveSongProgress, syncPianoHistory, MAX_IMPORTED } from "./pianoData";
 import { Song } from "./pianoSongs";
 import { encodeSong } from "./pianoSongImport";
 import { DrillRecord, SessionRecord } from "./pianoDrill";
@@ -11,7 +11,7 @@ import { jsonResponse } from "@/test/fixtures";
 const drill = (id: string, startedAt = 1000): SessionRecord => ({ id, kind: "drill", drill: "notes", startedAt, durationMs: 1000, updatedAt: startedAt, items: {} });
 const manual = (id: string, updatedAt: number, note: string): SessionRecord => ({ id, kind: "manual", startedAt: 1000, durationMs: 60_000, note, updatedAt });
 const month = (...rs: SessionRecord[]): MonthDoc => ({ items: Object.fromEntries(rs.map((r) => [r.id, r])) });
-const settings = (p: Partial<PianoSettings>): PianoSettings => ({ unlocks: {}, slowSteps: {}, slowAt: {}, months: [], songs: {}, importedSongs: {}, updatedAt: 0, ...p });
+const settings = (p: Partial<PianoSettings>): PianoSettings => ({ unlocks: {}, slowSteps: {}, slowAt: {}, months: [], songs: {}, importedSongs: {}, milestones: {}, updatedAt: 0, ...p });
 const ids = (m: MonthDoc) => Object.keys(m.items).sort();
 
 describe("piano month merge", () => {
@@ -80,13 +80,33 @@ describe("piano settings merge", () => {
     expect(loadSettings().songs).toEqual({});
   });
 
+  it("keeps every milestone, at the earliest time it was reached, and drops malformed ones", () => {
+    const a = settings({ milestones: { "first-song": 50, "streak-7": 9 } });
+    const b = settings({ milestones: { "first-song": 20, "hours-10": 30, "Bad Id!": 1, "x": "y" as unknown as number } });
+    expect(mergeSettings(a, b).milestones).toEqual({ "first-song": 20, "streak-7": 9, "hours-10": 30 });
+    expect(mergeSettings({ unlocks: {}, slowSteps: {}, updatedAt: 1 } as unknown as PianoSettings, a).milestones).toEqual(a.milestones); // an old copy without the field
+  });
+
+  it("saves new milestones once, queuing the settings only when one is new", () => {
+    saveMilestones(["first-song"], 100);
+    expect(loadSettings().milestones).toEqual({ "first-song": 100 });
+    expect(loadSettings().updatedAt).toBe(100);
+    saveMilestones(["first-song"], 200); // already there: nothing written
+    saveMilestones([], 300);
+    expect(loadSettings().updatedAt).toBe(100);
+    saveMilestones(["first-song", "streak-7"], 400);
+    expect(loadSettings().milestones).toEqual({ "first-song": 100, "streak-7": 400 });
+    localStorage.setItem("reel-radar-piano-settings", JSON.stringify({ milestones: 4 }));
+    expect(loadSettings().milestones).toEqual({});
+  });
+
   it("unions months, sorted", () => {
     expect(mergeSettings(settings({ months: ["2026-10", "2026-11"] }), settings({ months: ["2026-09", "2026-11"] })).months).toEqual(["2026-09", "2026-10", "2026-11"]);
   });
 
   it("reads old settings without months or slowAt (and malformed ones) and keeps their values", () => {
     const old = { unlocks: { notes: 2 }, slowSteps: { notes: 1 }, updatedAt: 5 } as unknown as PianoSettings;
-    expect(mergeSettings(old, settings({ months: ["2026-11"] }))).toEqual({ unlocks: { notes: 2 }, slowSteps: { notes: 1 }, slowAt: { notes: 5 }, songs: {}, importedSongs: {}, months: ["2026-11"], updatedAt: 5 });
+    expect(mergeSettings(old, settings({ months: ["2026-11"] }))).toEqual({ unlocks: { notes: 2 }, slowSteps: { notes: 1 }, slowAt: { notes: 5 }, songs: {}, importedSongs: {}, milestones: {}, months: ["2026-11"], updatedAt: 5 });
     expect(mergeSettings(settings({ slowSteps: { notes: 0 }, slowAt: { notes: 1 } }), old).slowSteps).toEqual({ notes: 1 }); // old copy counts as changed at its updatedAt
     localStorage.clear();
     localStorage.setItem("reel-radar-piano-settings", JSON.stringify({ unlocks: { notes: 2 }, months: "x" }));

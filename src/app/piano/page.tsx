@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { loadSettings, recentRecords, usePianoSync } from "@/lib/pianoData";
+import { loadSettings, recentRecords, saveMilestones, usePianoSync } from "@/lib/pianoData";
+import { MILESTONES, newlyMet } from "@/lib/pianoMilestones";
 import { LibraryRow, libraryRows } from "@/lib/pianoLibrary";
 import { minutesOf, streak, todayMs } from "@/lib/pianoLog";
 import { swap } from "@/lib/pianoSession";
@@ -25,11 +26,20 @@ export default function PianoHome() {
   const router = useRouter();
   const { state, update } = useTodaySession();
   // Read after the first render so it matches the server's.
-  const [data, setData] = useState<{ min: number; streak: number; rows: LibraryRow[] } | null>(null);
+  const [data, setData] = useState<{ min: number; streak: number; rows: LibraryRow[]; earned: Record<string, number>; fresh: string[] } | null>(null);
   const reload = () => {
     const now = Date.now();
     const rs = recentRecords(now, 400);
-    setData({ min: minutesOf(todayMs(rs, now)), streak: streak(rs, now), rows: libraryRows(rs, loadSettings(), now) });
+    const fresh = newlyMet(rs, loadSettings(), now);
+    saveMilestones(fresh, now); // a write and a push only when one is new
+    const settings = loadSettings();
+    setData((d) => ({
+      min: minutesOf(todayMs(rs, now)),
+      streak: streak(rs, now),
+      rows: libraryRows(rs, settings, now),
+      earned: settings.milestones,
+      fresh: [...new Set([...(d?.fresh ?? []), ...fresh])], // reached during this visit: marked new
+    }));
   };
   useEffect(reload, []);
   usePianoSync(reload); // another device's sessions
@@ -50,6 +60,7 @@ export default function PianoHome() {
           ) : (
             <TodayCard state={state} onSwap={(i) => update((s) => withSwap(s, swap(s.plan, i)))} onStart={() => router.push("/piano/practice?start=1")} />
           ))}
+        {data && <Milestones earned={data.earned} fresh={data.fresh} />}
       </main>
       <aside aria-label="Library" className="min-w-0 space-y-2">
         <h2 className="font-pnd text-2xl font-semibold text-pn-brass">Library</h2>
@@ -90,6 +101,37 @@ function RowLink({ href, children }: { href: string; children: React.ReactNode }
     <Link href={href} className="block py-2.5 outline-none transition-colors hover:bg-pn-felt/60 focus-visible:bg-pn-felt focus-visible:ring-2 focus-visible:ring-pn-brass sm:px-2">
       {children}
     </Link>
+  );
+}
+
+// Milestones: earned ones in brass (a new one says so), the rest dimmed with what it takes.
+function Milestones({ earned, fresh }: { earned: Record<string, number>; fresh: string[] }) {
+  const count = MILESTONES.filter((m) => m.id in earned).length;
+  return (
+    <section aria-label="Milestones" className="space-y-2">
+      <h2 className="flex items-baseline gap-3 font-pnd text-2xl font-semibold">
+        Milestones <span className="font-pns text-sm font-normal text-pn-ivory/60">{count} of {MILESTONES.length}</span>
+      </h2>
+      <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
+        {MILESTONES.map((m) => {
+          const got = m.id in earned;
+          return (
+            <li
+              key={m.id}
+              data-testid={`milestone-${m.id}`}
+              data-earned={got}
+              title={m.text}
+              className={`rounded-full border px-3 py-1 text-sm ${got ? "border-pn-brass bg-pn-brass/15 text-pn-ivory" : "border-pn-line text-pn-ivory/45"}`}
+            >
+              {got ? "★ " : ""}
+              {m.title}
+              {fresh.includes(m.id) && <b className="ml-1.5 text-xs uppercase text-pn-brass">New</b>}
+              <span className="sr-only">{got ? " (earned)" : ` (not yet: ${m.text})`}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 

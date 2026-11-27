@@ -40,6 +40,12 @@ describe("five-finger positions", () => {
     expect(FINGER_DRILL.hint(item, { low: 48, high: 84 })).toEqual({ lit: new Set([64]), fingers: positionFingers(pos("RH-C")) });
     expect(FINGER_DRILL.setup!(item, { low: 48, high: 84 })).toEqual(positionFingers(pos("RH-C")));
   });
+  it("knows which finger plays each key of the position (for evenness of touch)", () => {
+    const item = FINGER_DRILL.items.find((i) => i.id === "LH-C-1")!;
+    expect(FINGER_DRILL.fingerOf!(item, 48)).toBe(5);
+    expect(FINGER_DRILL.fingerOf!(item, 55)).toBe(1);
+    expect(FINGER_DRILL.fingerOf!(item, 61)).toBeUndefined();
+  });
   it("judges the exact key only", () => {
     const item = FINGER_DRILL.items.find((i) => i.id === "RH-C-3")!;
     const j = (note: number) => FINGER_DRILL.judge(item, new Set([note]), { note, time: 0 });

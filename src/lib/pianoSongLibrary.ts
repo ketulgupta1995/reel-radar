@@ -23,6 +23,34 @@ export const SONG_DEFS: SongDef[] = [
     lh: "C3:4/5 | F2:2/5 C3:2/5 | F2:2/5 C3:2/5 | G2:2/5 C3:2/5 | C3:2/5 F2:2/5 | C3:2/5 G2:2/5 | C3:2/5 F2:2/5 | C3:2/5 G2:2/5"
       + " | C3:4/5 | F2:2/5 C3:2/5 | F2:2/5 C3:2/5 | G2:2/5 C3:2/5",
   },
+  // More first songs: five-finger C position, the left hand on chord roots.
+  {
+    id: "hot-cross-buns", title: "Hot Cross Buns", level: 1, bpm: 100, beatsPerBar: 4, key: "C",
+    rh: "E4/3 D4/2 C4:2/1 | E4/3 D4/2 C4:2/1 | C4:.5/1 C4:.5/1 C4:.5/1 C4:.5/1 D4:.5/2 D4:.5/2 D4:.5/2 D4:.5/2 | E4/3 D4/2 C4:2/1",
+    lh: "C3:4/5 | C3:4/5 | C3:2/5 G2:2/5 | C3:4/5",
+  },
+  {
+    id: "au-clair-de-la-lune", title: "Au Clair de la Lune", level: 1, bpm: 100, beatsPerBar: 4, key: "C",
+    rh: "C4/1 C4/1 C4/1 D4/2 | E4:2/3 D4:2/2 | C4/1 E4/3 D4/2 D4/2 | C4:4/1 | C4/1 C4/1 C4/1 D4/2 | E4:2/3 D4:2/2 | C4/1 E4/3 D4/2 D4/2 | C4:4/1",
+    lh: "C3:4/5 | C3:2/5 G2:2/5 | C3:2/5 G2:2/5 | C3:4/5 | C3:4/5 | C3:2/5 G2:2/5 | C3:2/5 G2:2/5 | C3:4/5",
+  },
+  {
+    id: "lightly-row", title: "Lightly Row", level: 1, bpm: 100, beatsPerBar: 4, key: "C",
+    rh: "G4/5 E4/3 E4:2/3 | F4/4 D4/2 D4:2/2 | C4/1 D4/2 E4/3 F4/4 | G4/5 G4/5 G4:2/5 | G4/5 E4/3 E4:2/3 | F4/4 D4/2 D4:2/2 | C4/1 E4/3 G4/5 G4/5 | C4:4/1",
+    lh: "C3:4/5 | G2:4/5 | C3:4/5 | C3:4/5 | C3:4/5 | G2:4/5 | C3:2/5 G2:2/5 | C3:4/5",
+  },
+  {
+    // Simplified rhythm: a half note on each line's first word.
+    id: "go-tell-aunt-rhody", title: "Go Tell Aunt Rhody", level: 1, bpm: 100, beatsPerBar: 4, key: "C",
+    rh: "E4:2/3 E4/3 D4/2 | C4:2/1 C4:2/1 | D4:2/2 D4/2 F4/4 | E4/3 D4/2 C4:2/1 | G4:2/5 G4/5 F4/4 | E4:2/3 E4:2/3 | D4/2 C4/1 D4/2 E4/3 | C4:4/1",
+    lh: "C3:4/5 | C3:4/5 | G2:4/5 | C3:4/5 | C3:4/5 | C3:4/5 | G2:4/5 | C3:4/5",
+  },
+  {
+    // Dvořák's Largo (New World Symphony), the tune known as "Goin' Home"; the dotted rhythms are evened out.
+    id: "goin-home", title: "Goin' Home (Largo)", level: 1, bpm: 72, beatsPerBar: 4, key: "C",
+    rh: "E4/3 G4/5 G4:2/5 | E4/3 D4/2 C4:2/1 | D4/2 E4/3 G4/5 E4/3 | D4:4/2 | E4/3 G4/5 G4:2/5 | E4/3 D4/2 C4:2/1 | D4/2 E4/3 D4/2 C4/1 | C4:4/1",
+    lh: "C3:4/5 | C3:4/5 | G2:4/5 | G2:4/5 | C3:4/5 | F2:2/5 C3:2/5 | G2:4/5 | C3:4/5",
+  },
   {
     id: "frere-jacques", title: "Frère Jacques", level: 2, bpm: 100, beatsPerBar: 4, key: "C",
     rh: "C4/1 D4/2 E4/3 C4/1 | C4/1 D4/2 E4/3 C4/1 | E4/3 F4/4 G4:2/5 | E4/3 F4/4 G4:2/5 | G4:.5/4 A4:.5/5 G4:.5/4 F4:.5/3 E4/2 C4/1 | G4:.5/4 A4:.5/5 G4:.5/4 F4:.5/3 E4/2 C4/1 | C4/3 G3/1 C4:2/3 | C4/3 G3/1 C4:2/3",
@@ -49,6 +77,45 @@ export const SONG_DEFS: SongDef[] = [
     // Simplified: every note a quarter (the long notes on "saints" and "in" are not held).
     rh: "C4/1 E4/3 F4/4 G4/5 | C4/1 E4/3 F4/4 G4/5 | C4/1 E4/3 F4/4 G4/5 | E4/3 C4/1 E4/3 D4/2 | E4/3 E4/3 D4/2 C4/1 | E4/3 G4/5 G4/5 F4/4 | E4/3 F4/4 G4/5 E4/3 | C4/1 D4/2 C4:2/1",
     lh: "C3:4/5 | C3:4/5 | C3:4/5 | G2:4/5 | C3:4/5 | F2:4/5 | C3:4/5 | G2:2/5 C3:2/5",
+  },
+  // Melody + chords: the tune over chord names, as in a chord chart. The left hand holds each chord (pianoSongs
+  // chordVoicing: C = C3 E3 G3, F = C3 F3 A3, G = B2 D3 G3) until the next change. Where a melody would land on a
+  // chord's key it is written an octave up.
+  {
+    id: "old-macdonald", title: "Old MacDonald Had a Farm", level: 2, bpm: 110, beatsPerBar: 4, key: "C",
+    rh: "C4/1 C4/1 C4/1 G4/4 | A4/5 A4/5 G4:2/4 | E4/3 E4/3 D4/2 D4/2 | C4:3/1 G4/4 | C4/1 C4/1 C4/1 G4/4 | A4/5 A4/5 G4:2/4 | E4/3 E4/3 D4/2 D4/2 | C4:4/1",
+    chords: "C | F C | C G | C | C | F C | C G | C",
+  },
+  {
+    id: "london-bridge", title: "London Bridge", level: 2, bpm: 100, beatsPerBar: 4, key: "C",
+    rh: "G4:1.5/4 A4:.5/5 G4/4 F4/3 | E4/2 F4/3 G4:2/4 | D4/1 E4/2 F4:2/3 | E4/2 F4/3 G4:2/4 | G4:1.5/4 A4:.5/5 G4/4 F4/3 | E4/2 F4/3 G4:2/4 | D4:2/1 G4:2/4 | E4/2 C4:3/1",
+    chords: "C | C | G | C | C | C | G | C",
+  },
+  {
+    // Camptown Races (Foster), the chorus line.
+    id: "camptown-races", title: "Camptown Races", level: 2, bpm: 100, beatsPerBar: 4, key: "C",
+    rh: "G4:.5/4 G4:.5/4 E4:.5/3 G4:.5/4 A4:.5/5 G4:.5/4 E4/3 | E4:.5/3 D4:1.5/2 E4:.5/3 D4:1.5/2 | G4:.5/4 G4:.5/4 E4:.5/3 G4:.5/4 A4:.5/5 G4:.5/4 E4/3 | D4/2 E4:.5/3 D4:.5/2 C4:2/1",
+    chords: "C | C G | C | G C",
+  },
+  {
+    // Oh! Susanna (Foster), the verse.
+    id: "oh-susanna", title: "Oh! Susanna", level: 2, bpm: 100, beatsPerBar: 4, key: "C",
+    rh: "C4:.5/1 D4:.5/2 | E4:.5/3 G4:.5/4 G4:.75/4 A4:.25/5 G4:.5/4 E4:.5/3 C4:.75/1 D4:.25/2 | E4:.5/3 E4:.5/3 D4:.5/2 C4:.5/1 D4/2 C4:.5/1 D4:.5/2"
+      + " | E4:.5/3 G4:.5/4 G4:.75/4 A4:.25/5 G4:.5/4 E4:.5/3 C4:.75/1 D4:.25/2 | E4:.5/3 E4:.5/3 D4:.5/2 D4:.5/2 C4:2/1",
+    chords: "- | C | C G | C | G C",
+  },
+  {
+    // Aura Lee, the verse twice.
+    id: "aura-lee", title: "Aura Lee", level: 2, bpm: 80, beatsPerBar: 4, key: "C",
+    rh: "G4/1 C5/4 B4/3 C5/4 | D5/5 A4/2 D5:2/5 | C5/4 B4/3 A4/2 B4/3 | C5:4/4 | G4/1 C5/4 B4/3 C5/4 | D5/5 A4/2 D5:2/5 | C5/4 B4/3 A4/2 B4/3 | C5:4/4",
+    chords: "C | D7 | G7 | C | C | D7 | G7 | C",
+  },
+  {
+    // Auld Lang Syne, the verse, with the hand moving at "auld lang syne".
+    id: "auld-lang-syne", title: "Auld Lang Syne", level: 2, bpm: 80, beatsPerBar: 4, key: "C",
+    rh: "G4/1 | C5:1.5/1 C5:.5/1 C5/1 E5/3 | D5:1.5/2 C5:.5/1 D5/2 E5/3 | C5:1.5/1 C5:.5/1 E5/3 G5/4 | A5:3/5 A5/5"
+      + " | G5:1.5/4 E5:.5/3 E5/3 C5/1 | D5:1.5/2 C5:.5/1 D5/2 E5/3 | C5:1.5/4 A4:.5/2 A4/2 G4/1 | C5:4/4",
+    chords: "- | C | G | C | F | C | G | F G | C",
   },
   {
     id: "happy-birthday", title: "Happy Birthday", level: 3, bpm: 90, beatsPerBar: 3, key: "C",

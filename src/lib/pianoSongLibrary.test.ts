@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SONGS, SONG_DEFS, songById } from "./pianoSongLibrary";
-import { handOf, parseHand, songRange, stepsOf } from "./pianoSongs";
+import { chordNotes, handOf, parseChords, parseHand, songRange, stepsOf } from "./pianoSongs";
 
 // Pitch sequences of the melodies (right hand), checked against published letter notes.
 const MELODY = (id: string) =>
@@ -17,9 +17,11 @@ const names = (s: string) =>
     .join(",");
 
 describe("built-in songs", () => {
-  it("has fifteen songs with unique ids, levels from easiest up", () => {
-    expect(SONGS).toHaveLength(15);
-    expect(new Set(SONGS.map((s) => s.id)).size).toBe(15);
+  it("has twenty-six songs with unique ids, levels from easiest up", () => {
+    expect(SONGS).toHaveLength(26);
+    expect(new Set(SONGS.map((s) => s.id)).size).toBe(26);
+    expect(SONGS.filter((s) => s.level <= 2)).toHaveLength(17); // the first two levels hold most of the list
+    expect(SONGS.filter((s) => s.chords)).toHaveLength(6);
     expect(songById("ode-to-joy")?.title).toBe("Ode to Joy");
     expect(songById("nope")).toBeUndefined();
     const levels = SONGS.map((s) => s.level);
@@ -47,6 +49,10 @@ describe("built-in songs", () => {
         expect(high - low).toBeLessThanOrEqual(48); // at most four octaves to scroll on a phone
         expect(Math.min(...handOf(song.notes, "L").map((n) => n.pitch))).toBeLessThan(Math.max(...handOf(song.notes, "R").map((n) => n.pitch)));
       });
+      it("never asks both hands for the same key at the same time", () => {
+        const r = handOf(song.notes, "R");
+        for (const l of handOf(song.notes, "L")) for (const n of r) if (n.pitch === l.pitch) expect(n.start >= l.start + l.dur || l.start >= n.start + n.dur, `${n.pitch} at ${n.start}`).toBe(true);
+      });
       it("never lets a hand's notes overlap itself except in chords", () => {
         for (const hand of ["R", "L"] as const) {
           const ns = handOf(song.notes, hand);
@@ -59,8 +65,12 @@ describe("built-in songs", () => {
   it("fills every bar in both hands: bars add up to beats per bar, after an optional pickup", () => {
     for (const d of SONG_DEFS) {
       const r = parseHand(d.rh, "R").bars;
-      const l = parseHand(d.lh, "L").bars;
-      expect(l, d.title).toEqual(r); // the hands line up bar for bar
+      if (d.chords !== undefined) {
+        expect(chordNotes(parseChords(d.chords, r)).length, d.title).toBeGreaterThan(0); // parseChords checks the bar count itself
+      } else {
+        const l = parseHand(d.lh, "L").bars;
+        expect(l, d.title).toEqual(r); // the hands line up bar for bar
+      }
       expect(r[0], d.title).toBeLessThanOrEqual(d.beatsPerBar);
       for (const bar of r.slice(1)) expect(bar, d.title).toBe(d.beatsPerBar);
     }
@@ -86,6 +96,29 @@ describe("built-in songs", () => {
     expect(MELODY("raghupati-raghava").split(",").slice(0, 16).join(",")).toBe(names("G3 C4 C4 C4 C4 D4 C4 B3 A3 A3 B3 D4 D4 F4 E4 F4"));
     expect(MELODY("om-jai-jagdish-hare").split(",").slice(0, 18).join(",")).toBe(names("G4 G4 G4 G4 G4 F#4 G4 A4 A4 B4 C5 D5 E5 D5 C5 B4 C5 A4"));
     expect(MELODY("greensleeves").split(",").slice(0, 9).join(",")).toBe(names("A4 C5 D5 E5 F5 E5 D5 B4 G4"));
+    expect(MELODY("hot-cross-buns")).toBe(names("E4 D4 C4 E4 D4 C4 C4 C4 C4 C4 D4 D4 D4 D4 E4 D4 C4"));
+    expect(MELODY("au-clair-de-la-lune").split(",").slice(0, 11).join(",")).toBe(names("C4 C4 C4 D4 E4 D4 C4 E4 D4 D4 C4"));
+    expect(MELODY("lightly-row").split(",").slice(0, 13).join(",")).toBe(names("G4 E4 E4 F4 D4 D4 C4 D4 E4 F4 G4 G4 G4"));
+    expect(MELODY("go-tell-aunt-rhody").split(",").slice(0, 10).join(",")).toBe(names("E4 E4 D4 C4 C4 D4 D4 F4 E4 D4"));
+    expect(MELODY("goin-home").split(",").slice(0, 11).join(",")).toBe(names("E4 G4 G4 E4 D4 C4 D4 E4 G4 E4 D4"));
+    expect(MELODY("old-macdonald").split(",").slice(0, 11).join(",")).toBe(names("C4 C4 C4 G4 A4 A4 G4 E4 E4 D4 D4"));
+    expect(MELODY("london-bridge").split(",").slice(0, 11).join(",")).toBe(names("G4 A4 G4 F4 E4 F4 G4 D4 E4 F4 E4"));
+    expect(MELODY("camptown-races").split(",").slice(0, 7).join(",")).toBe(names("G4 G4 E4 G4 A4 G4 E4"));
+    expect(MELODY("oh-susanna").split(",").slice(0, 15).join(",")).toBe(names("C4 D4 E4 G4 G4 A4 G4 E4 C4 D4 E4 E4 D4 C4 D4"));
+    expect(MELODY("aura-lee").split(",").slice(0, 12).join(",")).toBe(names("G4 C5 B4 C5 D5 A4 D5 C5 B4 A4 B4 C5"));
+    expect(MELODY("auld-lang-syne").split(",").slice(0, 9).join(",")).toBe(names("G4 C5 C5 C5 E5 D5 C5 D5 E5"));
+  });
+
+  it("writes the melody + chords songs as chord charts the left hand holds", () => {
+    const mac = songById("old-macdonald")!;
+    expect(mac.chords!.slice(0, 3)).toEqual([
+      { start: 0, dur: 4, name: "C" },
+      { start: 4, dur: 2, name: "F" },
+      { start: 6, dur: 4, name: "C" }, // C over the bar line is held, not struck again
+    ]);
+    const lh = handOf(mac.notes, "L").filter((n) => n.start === 4);
+    expect(lh.map((n) => [n.pitch, n.finger])).toEqual([[48, 5], [53, 3], [57, 1]]); // F = C3 F3 A3
+    expect(handOf(songById("oh-susanna")!.notes, "L")[0].start).toBe(1); // no chord under the pickup
   });
 
   it("keeps the keys to the beginner-friendly ones", () => {

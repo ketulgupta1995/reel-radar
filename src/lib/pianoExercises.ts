@@ -15,7 +15,7 @@ const CONTRARY_RH = "C4 D4 E4 F4 | G4 F4 E4 D4 | C4 E4 G4 E4 | C4:4";
 const CONTRARY_LH = "G3 F3 E3 D3 | C3 D3 E3 F3 | G3 E3 C3 E3 | C3:4";
 const PARALLEL = "C4 D4 E4 F4 | G4 F4 E4 D4 | C4 E4 G4 E4 | C4:4 | E4 F4 G4 F4 | E4 D4 C4 D4 | G4 G4 F4 F4 | C4:4";
 
-export const EXERCISE_DEFS: SongDef[] = [
+export const EXERCISE_DEFS: (SongDef & { lh: string })[] = [
   {
     id: "coord-held-c", title: "Held C, then C to G", level: 1, bpm: 80, beatsPerBar: 4, key: "C",
     rh: five("R", "C4 D4 E4 F4 | G4 F4 E4 D4 | C4 E4 G4 E4 | D4 F4 E4 D4 | D4 E4 F4 D4 | G4 F4 E4 D4 | E4 D4 E4 C4 | C4:4"),

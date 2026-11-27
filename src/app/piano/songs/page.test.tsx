@@ -64,6 +64,8 @@ describe("Songs list", () => {
     const levels = links.map((l) => Number(/Level (\d)/.exec(l.textContent!)![1]));
     expect(levels).toEqual([...levels].sort((a, b) => a - b));
     expect(screen.getByText("Für Elise (opening)")).toBeTruthy();
+    expect(screen.getByTestId("chords-old-macdonald").textContent).toBe(" · melody + chords");
+    expect(screen.queryByTestId("chords-mary-had-a-little-lamb")).toBeNull();
   });
 });
 

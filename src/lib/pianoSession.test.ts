@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DrillRecord, ItemTotals } from "./pianoDrill";
 import type { PianoSettings } from "./pianoData";
-import { MAX_ITEMS, Plan, SONG_MIN, SongTarget, DrillTarget, WARMUP_MIN, WEAK_MIN, canSwap, plan, swap } from "./pianoSession";
+import { MAX_ITEMS, Plan, REVIEW_DAYS, SONG_MIN, SongTarget, DrillTarget, WARMUP_MIN, WEAK_MIN, canSwap, plan, swap } from "./pianoSession";
 import { SONGS } from "./pianoSongLibrary";
 
 const NOW = new Date(2026, 10, 27, 10, 0).getTime();
@@ -9,7 +9,7 @@ const day = (back: number, h = 9) => new Date(2026, 10, 27 - back, h, 0).getTime
 const t = (attempts: number, misses = 0, slow = 0): ItemTotals => ({ attempts, misses, slow, avgMs: 900 });
 let n = 0;
 const rec = (drill: string, startedAt: number, items: Record<string, ItemTotals>): DrillRecord => ({ id: `r${n++}`, kind: "drill", drill, startedAt, durationMs: 120_000, items, updatedAt: startedAt });
-const settings = (over: Partial<PianoSettings> = {}): PianoSettings => ({ unlocks: {}, slowSteps: {}, slowAt: {}, months: [], songs: {}, importedSongs: {}, updatedAt: 0, ...over });
+const settings = (over: Partial<PianoSettings> = {}): PianoSettings => ({ unlocks: {}, slowSteps: {}, slowAt: {}, months: [], songs: {}, importedSongs: {}, milestones: {}, updatedAt: 0, ...over });
 const drillOf = (p: Plan, i: 0 | 1 | 2) => p.steps[i].target as DrillTarget;
 const songOf = (p: Plan) => p.steps[2].target as SongTarget;
 
@@ -136,12 +136,31 @@ describe("song", () => {
   });
   it("skips mastered songs and clamps tempo to the song's bpm", () => {
     const [a, b] = [SONGS[0], SONGS[1]];
-    const p = plan([], settings({ songs: { [a.id]: prog(3, 900, { mastered: true }), [b.id]: prog(3, 100, { tempo: 999 }) } }), NOW);
+    const p = plan([], settings({ songs: { [a.id]: prog(3, day(2), { mastered: true }), [b.id]: prog(3, 100, { tempo: 999 }) } }), NOW);
     expect(songOf(p)).toMatchObject({ song: b.id, hands: "both", mode: "play", tempo: b.bpm });
   });
   it("starts the next easiest song when everything started is mastered", () => {
-    const p = plan([], settings({ songs: { [SONGS[0].id]: prog(3, 1, { mastered: true }) } }), NOW);
+    const p = plan([], settings({ songs: { [SONGS[0].id]: prog(3, day(2), { mastered: true }) } }), NOW);
     expect(songOf(p)).toMatchObject({ song: SONGS[1].id, hands: "R", mode: "wait" });
+  });
+  it("brings back the mastered song unplayed longest, about once a week, ahead of the song in progress", () => {
+    const [a, b, c] = [SONGS[0], SONGS[1], SONGS[2]];
+    const songs = { [a.id]: prog(3, day(20), { mastered: true }), [b.id]: prog(3, day(40), { mastered: true }), [c.id]: prog(1, day(1)) };
+    // b's progress is older, but it was played 12 days ago (a "songs" record), so a (20 days) is the one due
+    const played = [rec("songs", day(12), { [b.id]: t(1) })];
+    const p = plan(played, settings({ songs }), NOW);
+    expect(songOf(p)).toMatchObject({ song: a.id, hands: "both", mode: "play", tempo: a.bpm });
+    expect(p.steps[2].label).toBe(`Review: ${a.title}`);
+    expect(p.steps[2].why).toBe("Mastered, not played for 20 days: keep it fresh");
+    expect((p.alternates[2][0].target as SongTarget).song).toBe(c.id); // the song in progress is one Swap away
+    expect(p.alternates[2].filter((x) => (x.target as SongTarget).song === a.id)).toHaveLength(0); // listed once
+  });
+  it("skips the review when a mastered song was played this week or none is due yet", () => {
+    const [a, b] = [SONGS[0], SONGS[1]];
+    const songs = { [a.id]: prog(3, day(30), { mastered: true }), [b.id]: prog(3, day(30), { mastered: true }) };
+    expect(songOf(plan([rec("songs", day(3), { [b.id]: t(1) })], settings({ songs }), NOW)).song).not.toBe(a.id);
+    const fresh = { [a.id]: prog(3, day(REVIEW_DAYS - 2), { mastered: true }) };
+    expect(plan([], settings({ songs: fresh }), NOW).steps[2].label).not.toMatch(/^Review/);
   });
   it("replays mastered songs last, and ignores progress of songs that are not built in", () => {
     const songs: Record<string, ReturnType<typeof prog>> = { "scale-c": prog(1, 5), "imported-x": prog(1, 5) };

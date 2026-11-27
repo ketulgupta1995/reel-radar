@@ -54,7 +54,7 @@ describe("piano data", () => {
     localStorage.setItem("reel-radar-piano-2026-11", "{nope");
     localStorage.setItem("reel-radar-piano-settings", "[1");
     expect(loadMonth("piano-2026-11")).toEqual({ items: {} });
-    expect(loadSettings()).toEqual({ unlocks: {}, slowSteps: {}, slowAt: {}, songs: {}, importedSongs: {}, months: [], updatedAt: 0 });
+    expect(loadSettings()).toEqual({ unlocks: {}, slowSteps: {}, slowAt: {}, songs: {}, importedSongs: {}, milestones: {}, months: [], updatedAt: 0 });
     localStorage.setItem("reel-radar-piano-2026-11", JSON.stringify({ items: 5 }));
     expect(loadMonth("piano-2026-11")).toEqual({ items: {} });
   });

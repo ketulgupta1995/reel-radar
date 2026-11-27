@@ -83,6 +83,36 @@ describe("Five-finger drill page", () => {
     expect(rec.items["RH-C-2"]).toMatchObject({ attempts: 1, misses: 0 });
   });
 
+  it("shows the evenness of touch after a round played on the keyboard: a hard thumb, a soft finger 2", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0); // RH C fingers 1, 2, 1, 2, ...
+    await open();
+    start();
+    for (let i = 0; i < 8; i++) {
+      const f = finger();
+      act(() => midi.noteOn(RH_C[f - 1], f === 1 ? 110 : 60, performance.now()));
+      act(() => midi.noteOff(RH_C[f - 1], performance.now()));
+    }
+    fireEvent.click(screen.getByRole("button", { name: "End round" }));
+    expect(screen.getByTestId("evenness").textContent).toBe("71");
+    expect(screen.getByTestId("touch-line").textContent).toBe("Your thumb plays hardest and finger 2 softest.");
+    expect(screen.getByLabelText("Finger 1: velocity 110")).toBeTruthy();
+    expect(screen.getByLabelText("Finger 5: not played")).toBeTruthy();
+  });
+
+  it("shows no evenness for a round played on the screen (its keys always send one velocity)", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    await open();
+    start();
+    for (let i = 0; i < 8; i++) {
+      const key = document.querySelector(`[aria-label="${finger() === 1 ? "C4" : "D4"}"]`)!;
+      fireEvent.pointerDown(key);
+      fireEvent.pointerUp(key);
+    }
+    fireEvent.click(screen.getByRole("button", { name: "End round" }));
+    expect(screen.getByTestId("accuracy")).toBeTruthy();
+    expect(screen.queryByTestId("touch")).toBeNull();
+  });
+
   it("with left-hand positions unlocked, finger 5 is the lowest key and finger 1 the highest", async () => {
     vi.spyOn(Math, "random").mockReturnValue(0.99); // last item: LH F finger 5, then finger 4
     localStorage.setItem("reel-radar-piano-settings", JSON.stringify({ unlocks: { fingers: 2 }, slowSteps: {}, updatedAt: 1 }));

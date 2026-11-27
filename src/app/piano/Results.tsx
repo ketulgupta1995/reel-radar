@@ -3,6 +3,7 @@ import { ReactNode } from "react";
 import { Summary } from "@/lib/pianoDrill";
 import { KeySpeed, NoteSpeed, SpeedBand } from "@/lib/pianoNoteSpeed";
 import { RhythmSummary } from "@/lib/pianoRhythm";
+import { TouchStats, touchLine } from "@/lib/pianoTouch";
 import type { SongResult } from "./songs/SongPlayer";
 
 // The results screen: one card per finished step and, for sessions that included the note drill, the note-speed
@@ -15,7 +16,7 @@ import type { SongResult } from "./songs/SongPlayer";
 //   rhythm (RhythmSummary), song (a SongPlayer SongResult; tag from songTag(title, hands)). tag is the small label on top.
 // - noteSpeed: output of noteSpeed(statsFrom(...)); omit it (or null) for no keyboard.
 // - primary / secondary: a button, or a link when href is set.
-export type DrillCardData = { kind: "drill"; tag: string; summary: Summary; prevAvgMs?: number | null };
+export type DrillCardData = { kind: "drill"; tag: string; summary: Summary; prevAvgMs?: number | null; touch?: TouchStats | null };
 export type RhythmCardData = { kind: "rhythm"; tag: string; summary: RhythmSummary };
 export type SongCardData = { kind: "song"; tag: string; result: SongResult }; // tag: songTag(title, hands)
 export type ResultCard = DrillCardData | RhythmCardData | SongCardData;
@@ -98,7 +99,38 @@ function DrillCard({ c }: { c: DrillCardData }) {
           Unlocked: {g}
         </p>
       ))}
+      {c.touch && <TouchBlock t={c.touch} />}
     </Shell>
+  );
+}
+
+// Evenness of touch: the score and one bar per finger (how hard it struck on average, velocity out of 127).
+export function TouchBlock({ t }: { t: TouchStats }) {
+  return (
+    <div data-testid="touch" className="space-y-1.5">
+      <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-pn-ivory/60">Evenness of touch</h3>
+      <p className="flex items-baseline gap-2">
+        <b data-testid="evenness" className="font-pnd text-2xl font-semibold tabular-nums">
+          {t.evenness}
+        </b>
+        <span className="text-xs text-pn-ivory/60">of 100 · {t.n} notes, velocity ±{t.spread}</span>
+      </p>
+      <ul aria-label="Velocity by finger" className="m-0 flex h-16 list-none items-end gap-2 p-0">
+        {[1, 2, 3, 4, 5].map((f) => {
+          const x = t.fingers.find((y) => y.finger === f);
+          const tone = f === t.weak ? "bg-orange-400" : f === t.strong ? "bg-sky-300" : "bg-pn-ivory/80";
+          return (
+            <li key={f} data-testid={`finger-${f}`} aria-label={x ? `Finger ${f}: velocity ${x.mean}` : `Finger ${f}: not played`} className="flex h-full w-7 flex-col items-center justify-end gap-0.5">
+              <span className={`w-full rounded-t-sm ${x ? tone : "bg-pn-line"}`} style={{ height: `${x ? Math.max(6, Math.round((x.mean / 127) * 100)) : 4}%` }} />
+              <span className="text-[10px] text-pn-ivory/70">{f}</span>
+            </li>
+          );
+        })}
+      </ul>
+      <p data-testid="touch-line" className="text-sm text-pn-ivory/80">
+        {touchLine(t)}
+      </p>
+    </div>
   );
 }
 

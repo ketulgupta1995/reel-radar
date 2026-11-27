@@ -35,7 +35,10 @@ export default function SongsPage() {
     <Link href={`/piano/songs/${s.id}`} className="flex items-center justify-between gap-3 py-3.5 outline-none transition-colors hover:bg-pn-felt/60 focus-visible:bg-pn-felt focus-visible:ring-2 focus-visible:ring-pn-brass sm:px-2">
       <span className="min-w-0">
         <span className="block truncate text-lg font-semibold">{s.title}</span>
-        <span className="block text-sm text-pn-ivory/60">{s.imported ? `${s.bpm} BPM` : `${s.key} · ${s.bpm} BPM`}</span>
+        <span className="block text-sm text-pn-ivory/60">
+          {s.imported ? `${s.bpm} BPM` : `${s.key} · ${s.bpm} BPM`}
+          {s.chords && <span data-testid={`chords-${s.id}`}> · melody + chords</span>}
+        </span>
         {songs[s.id] && (
           <span data-testid={`progress-${s.id}`} className="block text-xs text-pn-brass">
             {progressLine(songs[s.id])}

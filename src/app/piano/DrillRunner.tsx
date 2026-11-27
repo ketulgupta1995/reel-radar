@@ -5,6 +5,7 @@ import { DrillDef, DrillItem, DrillRecord, DrillRound, HINT_AFTER_MS, ROUND_MS, 
 import { NoteSpeed, todayNoteSpeed } from "@/lib/pianoNoteSpeed";
 import { drillSettings, loadSettings, newSessionId, recentSessions, saveDrillSettings, saveSession } from "@/lib/pianoData";
 import { noteName, noteOctave } from "@/lib/pianoMidi";
+import { TouchSample, TouchStats, touchStats } from "@/lib/pianoTouch";
 import { KeyboardStatus } from "./KeyboardStatus";
 import { Results } from "./Results";
 import { usePiano } from "./PianoProvider";
@@ -23,8 +24,9 @@ export type DrillRunnerProps<T extends DrillItem> = {
   lengthMs?: number; // round length (default 2 minutes)
   items?: readonly string[]; // only these item ids (see DrillRound); a filtered round never unlocks groups
   // After the round is saved. prevAvgMs: the mean reaction of the previous round of this drill (null = none), what a
-  // results card compares against (DrillCardData).
-  onFinish?: (summary: Summary, record: DrillRecord | null, prevAvgMs: number | null) => void;
+  // results card compares against (DrillCardData). touch: evenness of the right answers' velocity (drills with
+  // `fingerOf`, keyboard notes only; null when too few).
+  onFinish?: (summary: Summary, record: DrillRecord | null, prevAvgMs: number | null, touch: TouchStats | null) => void;
   top?: ReactNode; // extra top-bar content (a session's progress)
   autoStart?: boolean; // start the round on mount, skipping the start screen (a session step)
   backHref?: string;
@@ -38,7 +40,8 @@ export type DrillRunnerProps<T extends DrillItem> = {
 export function DrillRunner<T extends DrillItem>({ def, blurb, lengthMs = ROUND_MS, items, onFinish, top, autoStart, backHref = "/piano", backLabel = "All drills", showResults = true }: DrillRunnerProps<T>) {
   const { midi } = usePiano();
   const [round, setRound] = useState<DrillRound<T> | null>(null);
-  const [done, setDone] = useState<{ summary: Summary; prevAvgMs: number | null; speed: NoteSpeed | null } | null>(null);
+  const [done, setDone] = useState<{ summary: Summary; prevAvgMs: number | null; speed: NoteSpeed | null; touch: TouchStats | null } | null>(null);
+  const touch = useRef<TouchSample[]>([]); // velocity of each right answer, by finger (drills with fingerOf)
   const [now, setNow] = useState(0);
   const [held, setHeld] = useState<ReadonlySet<number>>(new Set());
   const [wrong, setWrong] = useState<number | null>(null); // the key last pressed wrongly
@@ -63,11 +66,12 @@ export function DrillRunner<T extends DrillItem>({ def, blurb, lengthMs = ROUND_
       saveDrillSettings(def.id, r.settings, Date.now());
       // Today's rounds of the note drill (this one included): only this drill's items are pitch-class names.
       const speed = def.id === "notes" ? todayNoteSpeed(recentSessions(Date.now(), 2), Date.now()) : null;
-      setDone({ summary: sum, prevAvgMs, speed });
+      const t = def.fingerOf ? touchStats(touch.current) : null;
+      setDone({ summary: sum, prevAvgMs, speed, touch: t });
       setRound(null);
       setWrong(null);
       refresh();
-      onFinishRef.current?.(sum, record, prevAvgMs);
+      onFinishRef.current?.(sum, record, prevAvgMs, t);
     },
     [def.id, refresh],
   );
@@ -76,6 +80,7 @@ export function DrillRunner<T extends DrillItem>({ def, blurb, lengthMs = ROUND_
     const history = statsFrom(recentSessions(Date.now()), def.id);
     setDone(null);
     setWrong(null);
+    touch.current = [];
     setNow(performance.now());
     setRound(
       new DrillRound({
@@ -111,14 +116,34 @@ export function DrillRunner<T extends DrillItem>({ def, blurb, lengthMs = ROUND_
           return next;
         });
         if (!round) return;
+        const item = round.current;
         const res = round.handle(e);
+        if (res.outcome === "correct" && e.type === "on" && e.source === "keyboard") {
+          const finger = def.fingerOf?.(item, e.note);
+          if (finger) touch.current.push({ finger, velocity: e.velocity });
+        }
         if (res.outcome === "miss") setWrong(e.note);
         if (res.advanced) setWrong(null);
         if (res.changed) saveDrillSettings(def.id, round.settings, Date.now());
         setNow(performance.now());
       }),
-    [midi, round, def.id],
+    [midi, round, def],
   );
+
+  // Ear training: the app plays the item when it comes up (a new item, or a new round), and again on "Hear again".
+  const hear = useCallback(
+    (item: T) => {
+      const snd = def.sound?.(item);
+      if (!snd) return;
+      const t0 = performance.now() + 120;
+      snd.groups.forEach((g, i) => g.forEach((n) => midi.play(n, snd.velocity?.[i] ?? 85, Math.round(snd.gapMs * 0.9), t0 + i * snd.gapMs)));
+    },
+    [def, midi],
+  );
+  const shownAt = round?.shownAt;
+  useEffect(() => {
+    if (round && !round.closed) hear(round.current);
+  }, [round, shownAt, hear]);
 
   useEffect(() => {
     if (!round) return;
@@ -161,7 +186,9 @@ export function DrillRunner<T extends DrillItem>({ def, blurb, lengthMs = ROUND_
   const sheet = (
     <>
       <KeyboardStatus />
-      <p className="text-sm text-pn-ivory/70">A hint lights the key after a miss or {HINT_AFTER_MS / 1000} seconds with no answer.</p>
+      <p className="text-sm text-pn-ivory/70">
+        {def.hintAfterMs === Infinity ? "A hint lights the keys after a miss." : `A hint lights the key after a miss or ${(def.hintAfterMs ?? HINT_AFTER_MS) / 1000} seconds with no answer.`}
+      </p>
       {limit !== null && <p className="text-sm text-pn-ivory/70">Slow limit: {limit / 1000} s</p>}
       <Groups def={def} open={open} />
     </>
@@ -193,23 +220,28 @@ export function DrillRunner<T extends DrillItem>({ def, blurb, lengthMs = ROUND_
                 {def.caption(round.current)}
               </p>
             )}
-            <div data-testid="target" className="py-1 font-pnd text-[clamp(4rem,min(30vh,38vw),11rem)] font-semibold leading-none tracking-tight text-pn-ivory">
-              {def.label(round.current)}
+            <div data-testid="target" className={`py-1 font-pnd font-semibold leading-none tracking-tight text-pn-ivory ${def.prompt ? "text-[clamp(2.5rem,min(18vh,14vw),6rem)]" : "text-[clamp(4rem,min(30vh,38vw),11rem)]"}`}>
+              {(def.prompt ?? def.label)(round.current)}
             </div>
+            {def.sound && (
+              <button type="button" onClick={() => hear(round.current)} className="mt-1 rounded-full border border-pn-ivory/30 px-4 py-1.5 text-sm text-pn-ivory hover:bg-pn-ivory/10">
+                Hear again
+              </button>
+            )}
             <p role="status" className="min-h-6 text-sm font-medium text-[#ffb59e]">
               {wrong !== null && `You pressed ${noteName(wrong)}${noteOctave(wrong)}. Wanted ${def.label(round.current)}.`}
             </p>
           </div>
           <div data-testid="next" className={`${side} order-2 ml-auto landscape:order-3 landscape:ml-0`}>
             <span className={sideLabel}>Next</span>
-            <span className="font-pnd text-4xl font-semibold">{next ? def.label(next) : "\u00a0"}</span>
+            <span className="font-pnd text-4xl font-semibold">{next ? (def.prompt ? "?" : def.label(next)) : "\u00a0"}</span>
             <span className="text-xs">&nbsp;</span>
           </div>
         </div>
       ) : done && showResults ? (
         <Results
           title="Round done"
-          cards={[{ kind: "drill", tag: def.title, summary: done.summary, prevAvgMs: done.prevAvgMs }]}
+          cards={[{ kind: "drill", tag: def.title, summary: done.summary, prevAvgMs: done.prevAvgMs, touch: done.touch }]}
           noteSpeed={done.speed}
           primary={{ label: "Done", href: backHref }}
           secondary={{ label: "Another round", onClick: start }}

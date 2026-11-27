@@ -16,7 +16,7 @@ const rec = (drill: string, daysAgo: number, items: Record<string, [number, numb
   items: Object.fromEntries(Object.entries(items).map(([id, [attempts, misses, slow]]) => [id, { attempts, misses, slow, avgMs: 900 }])),
   updatedAt: 0,
 });
-const settings = (over: Partial<PianoSettings> = {}): PianoSettings => ({ unlocks: {}, slowSteps: {}, slowAt: {}, months: [], songs: {}, importedSongs: {}, updatedAt: 0, ...over });
+const settings = (over: Partial<PianoSettings> = {}): PianoSettings => ({ unlocks: {}, slowSteps: {}, slowAt: {}, months: [], songs: {}, importedSongs: {}, milestones: {}, updatedAt: 0, ...over });
 const id = (s: string) => s;
 
 describe("weakSpot", () => {
@@ -51,7 +51,7 @@ describe("libraryRows", () => {
       settings({ unlocks: { notes: 3, chords: 9, rhythm: 2 } }),
       NOW,
     );
-    expect(rows.map((r) => [r.key, r.level])).toEqual([["notes", "L3"], ["chords", "L4"], ["fingers", "L1"], ["rhythm", "L2"], ["songs", `0/${SONGS.length}`], ["scales", "new"]]);
+    expect(rows.map((r) => [r.key, r.level])).toEqual([["notes", "L3"], ["chords", "L4"], ["fingers", "L1"], ["rhythm", "L2"], ["ear", "L1"], ["songs", `0/${SONGS.length}`], ["scales", "new"]]);
     expect(rows[0]).toMatchObject({ note: "Not started", weak: false, levelHint: "Level 3 of 4" });
     expect(rows[1]).toMatchObject({ note: "Missed: B♭m, E♭7", weak: true, href: "/piano/chords" });
     expect(rows[2].note).toBe("Slow: LH finger 4 in B♭, RH finger 2 in C");
@@ -72,13 +72,13 @@ describe("libraryRows", () => {
       }),
       NOW,
     );
-    expect(rows[4]).toMatchObject({ level: `1/${SONGS.length}` });
-    expect(rows[4].note).toContain(`${c.title} · Step 1 of 4`);
-    expect(rows[5].level).toMatch(/^\d+\/\d+$/);
-    expect(rows[5].note).toContain(`coordination 1/${EXERCISES.length}`);
+    expect(rows[5]).toMatchObject({ level: `1/${SONGS.length}` });
+    expect(rows[5].note).toContain(`${c.title} · Step 1 of 4`);
+    expect(rows[6].level).toMatch(/^\d+\/\d+$/);
+    expect(rows[6].note).toContain(`coordination 1/${EXERCISES.length}`);
   });
   it("shows a pick-next line when every started song is mastered", () => {
     const rows = libraryRows([], settings({ songs: { [SONGS[0].id]: { step: 3, tempo: 90, best: 95, mastered: true, at: 1 } } }), NOW);
-    expect(rows[4].note).toBe("Pick the next song");
+    expect(rows[5].note).toBe("Pick the next song");
   });
 });
