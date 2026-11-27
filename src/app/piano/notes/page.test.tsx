@@ -102,6 +102,8 @@ describe("Note drill page", () => {
   });
 
   it("ends early, shows accuracy, reaction time and weakest notes, and saves the round", async () => {
+    // Picks C, then D, then E: random picks could bring the first note back third (only back-to-back repeats are excluded).
+    vi.spyOn(Math, "random").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValueOnce(0.99);
     await open();
     start();
     const a = target();

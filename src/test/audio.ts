@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 
 // A fake AudioContext that records the notes the synth starts and stops.
-export type FakeVoice = { hz: number; started: boolean; stopped: boolean };
+export type FakeVoice = { hz: number; started: boolean; stopped: boolean; startAt?: number };
 
 export function installFakeAudio() {
   const voices: FakeVoice[] = [];
@@ -25,7 +25,10 @@ export function installFakeAudio() {
           },
         },
         connect: vi.fn(),
-        start: () => void (voice.started = true),
+        start: (t?: number) => {
+          voice.started = true;
+          voice.startAt = t;
+        },
         stop: () => void (voice.stopped = true),
       };
     }

@@ -6,7 +6,8 @@ import { deleteSession, loadSettings, newSessionId, openKeys, recentRecords, sav
 import { ManualRecord, SessionRecord } from "@/lib/pianoDrill";
 import { drillsIn, lastDays, minutesOf, streak, todayMs, weeklyTrend } from "@/lib/pianoLog";
 
-const DRILL_TITLES: Record<string, string> = { notes: "Note drill", chords: "Chord drill", fingers: "Five-finger positions" };
+const DRILL_TITLES: Record<string, string> = { notes: "Note drill", chords: "Chord drill", fingers: "Five-finger positions", rhythm: "Rhythm drill", songs: "Song", scales: "Scale" };
+const NO_TREND = new Set(["songs", "scales"]); // timed-practice drills: they count as minutes, their items aren't answers
 const HISTORY = 400; // days of records read: enough for the streak (counts up to about a year back) and the trends
 const dayName = (d: Date) => d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 const pct = (x: number | null) => (x === null ? "–" : `${Math.round(x * 100)}%`);
@@ -34,7 +35,7 @@ export default function PianoLog() {
   if (now === null) return <Shell>{null}</Shell>;
 
   const days = lastDays(records, now, 14);
-  const trends = drillsIn(records).map((d) => ({ drill: d, weeks: weeklyTrend(records, d, now) }));
+  const trends = drillsIn(records).filter((d) => !NO_TREND.has(d)).map((d) => ({ drill: d, weeks: weeklyTrend(records, d, now) }));
   const entries = [...records].sort((a, b) => b.startedAt - a.startedAt).filter((r) => r.startedAt >= days[days.length - 1].date.getTime());
   const mins = Number(minutes);
   const valid = Number.isFinite(mins) && mins >= 1 && mins <= 600;
@@ -118,7 +119,7 @@ export default function PianoLog() {
             <table className="w-full text-sm" aria-label={`${DRILL_TITLES[drill] ?? drill} trend`}>
               <caption className="pb-1 text-left font-medium">{DRILL_TITLES[drill] ?? drill}</caption>
               <thead className="text-white/60">
-                <tr><th className="text-left font-normal">Week ending</th><th className="text-right font-normal">Answers</th><th className="text-right font-normal">Accuracy</th><th className="text-right font-normal">Avg reaction</th></tr>
+                <tr><th className="text-left font-normal">Week ending</th><th className="text-right font-normal">{drill === "rhythm" ? "Patterns" : "Answers"}</th><th className="text-right font-normal">{drill === "rhythm" ? "Passed" : "Accuracy"}</th><th className="text-right font-normal">{drill === "rhythm" ? "Avg error" : "Avg reaction"}</th></tr>
               </thead>
               <tbody>
                 {weeks.map((w) => (
@@ -126,7 +127,7 @@ export default function PianoLog() {
                     <td>{w.end.toLocaleDateString(undefined, { day: "numeric", month: "short" })}</td>
                     <td className="text-right">{w.attempts}</td>
                     <td className="text-right">{pct(w.accuracy)}</td>
-                    <td className="text-right">{secs(w.avgMs)}</td>
+                    <td className="text-right">{drill === "rhythm" ? (w.avgMs === null ? "–" : `${Math.round(w.avgMs)} ms`) : secs(w.avgMs)}</td>
                   </tr>
                 ))}
               </tbody>

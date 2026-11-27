@@ -10,7 +10,12 @@ const ITEMS = [
   { href: "/piano/notes", title: "Note drill", text: "Find the note by its letter, in any octave." },
   { href: "/piano/chords", title: "Chord drill", text: "Play the chord shown: C, Am, G7, any inversion." },
   { href: "/piano/fingers", title: "Five-finger positions", text: "Hand on a position, then play the finger called." },
+  { href: "/piano/rhythm", title: "Rhythm drill", text: "Play a pattern of quarters, eighths and rests along with the click." },
+  { href: "/piano/songs", title: "Songs", text: "Falling notes with letters and fingers; wait for each key, one hand or both." },
+  { href: "/piano/scales", title: "Scales", text: "One octave up and down with the standard fingering, one hand then both; scored on evenness." },
+  { href: "/piano/songs#coordination", title: "Hand coordination", text: "Eight two-hand exercises: a held or repeated left hand under a right-hand melody, contrary and parallel motion." },
   { href: "/piano/log", title: "Practice log", text: "Minutes, streak and progress; add practice done away from the app." },
+  { href: "/piano/metronome", title: "Metronome", text: "Click on your keyboard's drum sounds, with a count-in and a tap-along check." },
   { href: "/piano/play", title: "Free play", text: "Press keys and see their names." },
 ];
 

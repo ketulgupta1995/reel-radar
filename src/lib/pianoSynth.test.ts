@@ -50,3 +50,23 @@ describe("synth", () => {
     delete (window as unknown as { webkitAudioContext?: unknown }).webkitAudioContext;
   });
 });
+
+describe("click", () => {
+  it("beeps higher on the accent, at the time asked for", () => {
+    const voices = installFakeAudio();
+    const s = createSynth();
+    s.click(true);
+    s.click(false, 250);
+    expect(voices.map((v) => [v.hz, v.started, v.startAt])).toEqual([
+      [1600, true, 0],
+      [1000, true, 0.25],
+    ]);
+    s.click(false, -5);
+    expect(voices[2].startAt).toBe(0);
+  });
+
+  it("does nothing without Web Audio", () => {
+    vi.stubGlobal("AudioContext", undefined);
+    createSynth().click(true);
+  });
+});

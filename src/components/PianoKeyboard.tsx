@@ -14,14 +14,29 @@ type Props = {
   pressed?: ReadonlySet<number>; // notes held right now
   lit?: ReadonlySet<number>; // target keys (a drill's hint)
   fingers?: Readonly<Record<number, number>>; // finger number to show on a key
+  tint?: Readonly<Record<number, string>>; // fill class for a lit key (e.g. "fill-sky-300"), for songs' two hands; default emerald
+  bare?: boolean; // no scroll wrapper: the caller scrolls it (songs draw the falling notes in the same scroller)
   labels?: boolean; // letter names on the keys
   onPress?: (note: number) => void;
   onRelease?: (note: number) => void;
 };
 
+// Where a key sits in the keyboard's viewBox (units; a white key is KEY_W wide). The falling notes use it to line up.
+export const KEY_W = W;
+export function keyLayout(low: number, high: number) {
+  const whites: number[] = [];
+  for (let n = low; n <= high; n++) if (!isBlack(n)) whites.push(n);
+  return {
+    width: whites.length * W,
+    whites: whites.length,
+    x: (n: number) => (isBlack(n) ? whites.filter((w) => w < n).length * W - BW / 2 : whites.indexOf(n) * W),
+    w: (n: number) => (isBlack(n) ? BW : W),
+  };
+}
+
 // A hand-drawn SVG keyboard. It narrows to fit, but never below ~28px per white key; the wrapper then
 // scrolls sideways, so a phone shows about two octaves at a time.
-export function PianoKeyboard({ low = 48, high = 84, pressed, lit, fingers, labels = true, onPress, onRelease }: Props) {
+export function PianoKeyboard({ low = 48, high = 84, pressed, lit, fingers, labels = true, tint, bare, onPress, onRelease }: Props) {
   const down = useRef(new Set<number>());
   const notes: number[] = [];
   for (let n = low; n <= high; n++) notes.push(n);
@@ -44,7 +59,7 @@ export function PianoKeyboard({ low = 48, high = 84, pressed, lit, fingers, labe
     const x = xOf(n);
     const state = lit?.has(n) ? "lit" : pressed?.has(n) ? "pressed" : "idle";
     const fill = {
-      lit: "fill-emerald-300",
+      lit: tint?.[n] ?? "fill-emerald-300",
       pressed: "fill-gold",
       idle: black ? "fill-slate-900" : "fill-white",
     }[state];
@@ -79,8 +94,7 @@ export function PianoKeyboard({ low = 48, high = 84, pressed, lit, fingers, labe
     );
   };
 
-  return (
-    <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-2">
+  const svg = (
       <svg
         viewBox={`0 0 ${whites.length * W} ${H}`}
         role="group"
@@ -91,6 +105,7 @@ export function PianoKeyboard({ low = 48, high = 84, pressed, lit, fingers, labe
         {notes.filter((n) => !isBlack(n)).map(key)}
         {notes.filter(isBlack).map(key)}
       </svg>
-    </div>
   );
+  if (bare) return svg;
+  return <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-2">{svg}</div>;
 }

@@ -78,6 +78,19 @@ describe("the Piano docs", () => {
     for (const key of ["piano", "piano-2026-1", "piano-settings-x", "piano-2026-11-01"]) expect((await route.GET(getReq(key))).status).toBe(400);
   });
 
+  it("store an imported song under its exact key, and answer only to strict look-alike-free keys", async () => {
+    const route = await load();
+    const song = { v: 1, id: "0123456789ab", title: "T", bpm: 100, beatsPerBar: 4, notes: [[0, 1, 60, 1, 1]] };
+    expect((await route.POST(post({ key: "piano-song-0123456789ab", data: song }))).status).toBe(200);
+    expect(await readTmp("piano-song-0123456789ab.json")).toEqual(song);
+    expect((await (await route.GET(getReq("piano-song-0123456789ab"))).json()).docs["piano-song-0123456789ab"].data).toEqual(song);
+    const lookAlikes = ["piano-song-", "piano-song-0123456789a", "piano-song-0123456789abc", "piano-song-0123456789AB", "piano-song-0123456789ag", "piano-song-../../x", "xpiano-song-0123456789ab", "piano-song-0123456789ab.json", "piano-song-0123456789ab/x", "piano-songs-0123456789ab"];
+    for (const key of lookAlikes) {
+      expect((await route.GET(getReq(key))).status).toBe(400);
+      expect((await route.POST(post({ key, data: song }))).status).toBe(400);
+    }
+  });
+
   it("refuse a write that no longer matches what's stored", async () => {
     const route = await load();
     await route.POST(post({ key: "piano-2026-11", data: month }));

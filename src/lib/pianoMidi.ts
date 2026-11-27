@@ -20,8 +20,13 @@ export type PianoMidi = {
   // A key pressed on the on-screen keyboard: emits a note event and sounds it.
   noteOn(note: number, velocity?: number): void;
   noteOff(note: number): void;
-  // App-made note (hints, songs later): sounds only, no event.
-  play(note: number, velocity: number, durationMs: number): void;
+  // App-made note (hints, songs): sounds only, no event. `at` is a time on the performance.now() clock:
+  // the keyboard gets note-on at `at` and note-off at `at + durationMs` as MIDI timestamps; the synth is
+  // started by a timer.
+  play(note: number, velocity: number, durationMs: number, at?: number): void;
+  // A metronome click. `at` is a time on the performance.now() clock (default: now): the keyboard
+  // gets it as the MIDI timestamp, the fallback click is scheduled on the audio clock to match.
+  click(accent: boolean, at?: number): void;
 };
 
 export const INITIAL: MidiSnapshot = { state: "disconnected", devices: [], deviceId: null };
@@ -32,6 +37,9 @@ export const noteOctave = (note: number) => Math.floor(note / 12) - 1; // 60 = C
 export const isBlack = (note: number) => noteName(note).includes("#");
 
 const SCREEN_VELOCITY = 90;
+// The click is a General MIDI percussion hit on channel 10 (status 0x99): Hi Wood Block (76) on the
+// accented beat, Low Wood Block (77) on the others. They are short one-shots, so no note-off is sent.
+export const CLICK = { status: 0x99, accent: { note: 76, velocity: 120 }, beat: { note: 77, velocity: 95 } };
 
 export function createPianoMidi(opts: { synth?: Synth } = {}): PianoMidi {
   const synth = opts.synth ?? createSynth();
@@ -63,6 +71,15 @@ export function createPianoMidi(opts: { synth?: Synth } = {}): PianoMidi {
     if (out) out.send([on ? 0x90 : 0x80, note, on ? velocity : 0]);
     else if (on) synth.noteOn(note, velocity);
     else synth.noteOff(note);
+  }
+
+  function click(accent: boolean, at?: number) {
+    const out = output();
+    const c = accent ? CLICK.accent : CLICK.beat;
+    if (out) {
+      if (at === undefined) out.send([CLICK.status, c.note, c.velocity]);
+      else out.send([CLICK.status, c.note, c.velocity], at);
+    } else synth.click(accent, at === undefined ? 0 : at - now());
   }
 
   function onMessage(e: MIDIMessageEvent) {
@@ -145,9 +162,21 @@ export function createPianoMidi(opts: { synth?: Synth } = {}): PianoMidi {
       sound(false, note, 0);
       emit({ type: "off", note, velocity: 0, time: now(), source: "screen" });
     },
-    play(note, velocity, durationMs) {
-      sound(true, note, velocity);
-      setTimeout(() => sound(false, note, 0), durationMs);
+    click,
+    play(note, velocity, durationMs, at) {
+      const out = output();
+      if (out && at !== undefined) {
+        out.send([0x90, note, velocity], at);
+        out.send([0x80, note, 0], at + durationMs);
+        return;
+      }
+      const go = () => {
+        sound(true, note, velocity);
+        setTimeout(() => sound(false, note, 0), durationMs);
+      };
+      const wait = at === undefined ? 0 : at - now();
+      if (wait > 0) setTimeout(go, wait);
+      else go();
     },
   };
 }

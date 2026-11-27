@@ -9,7 +9,7 @@ import path from "path";
 
 // Reel Radar's library and history, one doc per planner month, the daily tasks, the lists, tags and day templates, and the Money
 // app's settings and months, and the Books library with where you stopped in each book.
-export const DOC_KEY = /^(library|history|planner-daily|planner-log|planner-lists|planner-settings|planner-bin|planner-\d{4}-\d{2}|money-settings|money-\d{4}-\d{2}|books|piano-settings|piano-\d{4}-\d{2})$/;
+export const DOC_KEY = /^(library|history|planner-daily|planner-log|planner-lists|planner-settings|planner-bin|planner-\d{4}-\d{2}|money-settings|money-\d{4}-\d{2}|books|piano-settings|piano-\d{4}-\d{2}|piano-song-[0-9a-f]{12})$/;
 
 // Photos and voice notes attached to list items are one doc each ("media-<id>"). They are written
 // once and served by /api/media, never through /api/sync, so DOC_KEY leaves them out.

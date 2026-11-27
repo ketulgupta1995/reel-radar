@@ -9,7 +9,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const synth = () => ({ noteOn: vi.fn(), noteOff: vi.fn(), close: vi.fn() }) satisfies Synth;
+const synth = () => ({ noteOn: vi.fn(), noteOff: vi.fn(), click: vi.fn(), close: vi.fn() }) satisfies Synth;
 const record = (m: ReturnType<typeof createPianoMidi>) => {
   const events: NoteEvent[] = [];
   m.onNote((e) => events.push(e));
@@ -196,7 +196,7 @@ describe("sound", () => {
     const midi = fakeMidi();
     midi.install();
     midi.plug("In", "in");
-    midi.access.outputs.set("o", { id: "o", name: "Other", state: "connected", sent: [], send(d) { this.sent.push([...d]); } });
+    midi.access.outputs.set("o", { id: "o", name: "Other", state: "connected", sent: [], times: [], send(d) { this.sent.push([...d]); } });
     midi.access.outputs.delete("in");
     const m = createPianoMidi({ synth: synth() });
     await m.start();
@@ -250,5 +250,35 @@ describe("stop", () => {
     await p2;
     expect(m2.getSnapshot()).toBe(INITIAL);
     expect(denied.request).toHaveBeenCalled();
+  });
+});
+
+describe("click", () => {
+  it("sends a channel 10 wood block to the keyboard: high and loud on the accent, with the timestamp", async () => {
+    const midi = fakeMidi();
+    midi.install();
+    midi.plug();
+    const s = synth();
+    const m = createPianoMidi({ synth: s });
+    await m.start();
+    m.click(true, 5000);
+    m.click(false, 5500);
+    m.click(false);
+    expect(midi.sent()).toEqual([[0x99, 76, 120], [0x99, 77, 95], [0x99, 77, 95]]);
+    expect(midi.sentTimes()).toEqual([5000, 5500, undefined]);
+    expect(s.click).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the synth's click, delayed by how far ahead it is due", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    fakeMidi().install();
+    const s = synth();
+    const m = createPianoMidi({ synth: s });
+    await m.start();
+    const now = performance.now();
+    m.click(true, now + 80);
+    m.click(false);
+    expect(s.click.mock.calls).toEqual([[true, 80], [false, 0]]);
   });
 });

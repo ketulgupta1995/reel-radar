@@ -3,11 +3,14 @@
 export type Synth = {
   noteOn(note: number, velocity: number): void;
   noteOff(note: number): void;
+  // A short click (accent: higher and louder), starting delayMs from now (default at once).
+  click(accent: boolean, delayMs?: number): void;
   close(): void;
 };
 
 type AudioCtor = typeof AudioContext;
 
+export const CLICK_HZ = { accent: 1600, beat: 1000 };
 export const hertz = (note: number) => 440 * 2 ** ((note - 69) / 12);
 
 export function createSynth(): Synth {
@@ -52,6 +55,22 @@ export function createSynth(): Synth {
       live.set(note, { osc, gain });
     },
     noteOff: release,
+    click(accent, delayMs = 0) {
+      const c = context();
+      if (!c) return;
+      void c.resume?.();
+      const t = c.currentTime + Math.max(0, delayMs) / 1000;
+      const osc = c.createOscillator();
+      const gain = c.createGain();
+      osc.type = "square";
+      osc.frequency.value = accent ? CLICK_HZ.accent : CLICK_HZ.beat;
+      gain.gain.setValueAtTime(accent ? 0.35 : 0.22, t);
+      gain.gain.setTargetAtTime(0, t + 0.005, 0.01);
+      osc.connect(gain);
+      gain.connect(c.destination);
+      osc.start(t);
+      osc.stop(t + 0.06);
+    },
     close() {
       for (const n of [...live.keys()]) release(n);
       void ctx?.close?.();

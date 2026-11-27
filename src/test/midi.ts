@@ -3,7 +3,7 @@ import { vi } from "vitest";
 // A fake Web MIDI access for tests: plug and unplug devices, inject note events with timestamps and
 // read what the app sent out. Install it before the page starts, uninstall after.
 type FakePort = { id: string; name: string; state: "connected" | "disconnected"; onmidimessage: ((e: unknown) => void) | null };
-type FakeOut = { id: string; name: string; state: "connected" | "disconnected"; sent: number[][]; send(d: number[]): void };
+type FakeOut = { id: string; name: string; state: "connected" | "disconnected"; sent: number[][]; times: (number | undefined)[]; send(d: number[], timestamp?: number): void };
 
 export function fakeMidi() {
   const inputs = new Map<string, FakePort>();
@@ -19,7 +19,18 @@ export function fakeMidi() {
       const input: FakePort = { id, name, state: "connected", onmidimessage: null };
       inputs.set(id, input);
       const sent: number[][] = outputs.get(id)?.sent ?? [];
-      outputs.set(id, { id, name, state: "connected", sent, send: (d) => void sent.push([...d]) });
+      const times: (number | undefined)[] = outputs.get(id)?.times ?? []; // timestamp given to each send()
+      outputs.set(id, {
+        id,
+        name,
+        state: "connected",
+        sent,
+        times,
+        send: (d, t) => {
+          sent.push([...d]);
+          times.push(t);
+        },
+      });
       change(input);
     },
     // A pulled cable: browsers keep the port, marked disconnected.
@@ -39,6 +50,7 @@ export function fakeMidi() {
     raw(data: number[], timeStamp = 0, id = "CASIO USB-MIDI") {
       inputs.get(id)?.onmidimessage?.({ data: new Uint8Array(data), timeStamp });
     },
+    sentTimes: (id = "CASIO USB-MIDI") => outputs.get(id)?.times ?? [],
     sent: (id = "CASIO USB-MIDI") => outputs.get(id)?.sent ?? [],
     // Make navigator.requestMIDIAccess answer with this fake (or refuse, as when the user says no).
     install(opts: { deny?: boolean } = {}) {

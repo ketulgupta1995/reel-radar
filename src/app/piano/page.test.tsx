@@ -26,7 +26,9 @@ describe("Piano hub", () => {
     expect(screen.getByRole("link", { name: /Note drill/ }).getAttribute("href")).toBe("/piano/notes");
     expect(screen.getByRole("link", { name: /Chord drill/ }).getAttribute("href")).toBe("/piano/chords");
     expect(screen.getByRole("link", { name: /Five-finger/ }).getAttribute("href")).toBe("/piano/fingers");
+    expect(screen.getByRole("link", { name: /Rhythm drill/ }).getAttribute("href")).toBe("/piano/rhythm");
     expect(screen.getByRole("link", { name: /Free play/ }).getAttribute("href")).toBe("/piano/play");
+    expect(screen.getByRole("link", { name: /Metronome/ }).getAttribute("href")).toBe("/piano/metronome");
     expect(screen.getByRole("link", { name: /Practice log/ }).getAttribute("href")).toBe("/piano/log");
     expect(screen.getByText(/Plug in your keyboard/)).toBeTruthy();
     expect(screen.getByTestId("teaser").textContent).toBe("Today 0 min · streak 0 days");

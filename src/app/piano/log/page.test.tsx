@@ -37,6 +37,14 @@ describe("Practice log page", () => {
     expect(screen.getByText(/Finish a drill round/)).toBeTruthy();
   });
 
+  it("counts a song run in the minutes and the recent list, but gives it no weekly accuracy table", async () => {
+    seed({ s: { id: "s", kind: "drill", drill: "songs", startedAt: at(27, 8), durationMs: 600_000, items: { "ode-to-joy": { attempts: 1, misses: 3, slow: 0, avgMs: 0 } }, updatedAt: at(27, 8) } });
+    await open();
+    expect(screen.getByTestId("today-minutes").textContent).toBe("10 min");
+    expect(screen.getByText("Song")).toBeTruthy();
+    expect(screen.queryByRole("table", { name: /trend/ })).toBeNull();
+  });
+
   it("adds, edits and deletes a manual entry, updating today's minutes and the streak", async () => {
     await open();
     expect((screen.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
@@ -102,6 +110,16 @@ describe("Practice log page", () => {
     const table = screen.getByRole("table", { name: "Note drill trend" });
     expect(within(table).getByText("80%")).toBeTruthy();
     expect(within(table).getByText("1.3 s")).toBeTruthy();
+  });
+
+  it("lists a rhythm drill round and its weekly trend in milliseconds", async () => {
+    seed({ r: { id: "r", kind: "drill", drill: "rhythm", startedAt: at(27, 9), durationMs: 120_000, updatedAt: 1, items: { quarters: { attempts: 4, misses: 1, slow: 0, avgMs: 42 } } } });
+    await open();
+    expect(within(screen.getByTestId("entry")).getByText("Rhythm drill")).toBeTruthy();
+    const table = screen.getByRole("table", { name: "Rhythm drill trend" });
+    expect(within(table).getByText("75%")).toBeTruthy();
+    expect(within(table).getByText("42 ms")).toBeTruthy();
+    expect(within(table).getByText("Passed")).toBeTruthy();
   });
 
   it("reads entries from the previous month's doc for the streak", async () => {
